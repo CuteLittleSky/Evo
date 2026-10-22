@@ -214,7 +214,10 @@ def upload(snapshot, payload):
     token = (snapshot.get("device") or {}).get("token")
     if not token:
         raise CloudError("这台电脑还没配对")
-    result, _ = request(snapshot, "/battlestats/matches", payload, token=token)
+    try:
+        result, _ = request(snapshot, "/battlestats/matches", payload, token=token)
+    except CloudError as exc:
+        raise _upload_error(exc) from exc
     return result
 
 
@@ -223,8 +226,27 @@ def upload_rank(snapshot, payload):
     token = (snapshot.get("device") or {}).get("token")
     if not token:
         raise CloudError("这台电脑还没配对")
-    result, _ = request(snapshot, "/battlestats/rank", payload, token=token)
+    try:
+        result, _ = request(snapshot, "/battlestats/rank", payload, token=token)
+    except CloudError as exc:
+        raise _upload_error(exc) from exc
     return result
+
+
+def _upload_error(exc):
+    """上传失败时，把"配对码"那套说法换成"令牌"的说法。
+
+    实测（2026-10-22）：令牌无效时服务端回 404，服务器自己的说明是
+    "Page not found: /api/battlestats/battlestats/matches" —— 这条路由是不存在的，
+    但 401 也会走到这里。原文里的 "配对码无效或已过期" 只适用于出码场景，
+    上传时会让用户以为要重新生成配对码，其实这台电脑已经配对上、只是令牌要重新配对。
+    """
+    text = str(exc)
+    if "配对" not in text:
+        return exc
+    if "Page not found" in text or "还没有配对" in text or "配对已失效" in text:
+        return CloudError("这台电脑的配对已失效，请在「派喵云同步」页重新配对")
+    return exc
 
 
 # ---------- 取回 ----------
