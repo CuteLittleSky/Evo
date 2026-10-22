@@ -109,8 +109,9 @@ jobs:
           "EVO_SHA=dist/$name.sha256" >> $env:GITHUB_ENV
           "EVO_VER=$ver" >> $env:GITHUB_ENV
 
+      # 推 main（或手动 dispatch）就发布：不再要求打 tag。
       - name: 建 Release 并上传
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -126,7 +127,7 @@ jobs:
       # 再让 evo-latest.json 指向它，避免出现「版本更新了但包还没传上去」的空窗。
       # 用 rclone（S3 兼容端点），在 Windows runner 上用 choco 装一下即可。
       - name: 上传安装包到 R2
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -160,7 +161,7 @@ jobs:
           Write-Host "已上传：https://cfr2-apex.skycraft.cn/evo/$name"
 
       - name: 通知 ApexPacks 更新 evo-latest.json
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           # 用 repository_dispatch 让 ApexPacks 仓库去改 server/data/evo-latest.json。
