@@ -249,11 +249,20 @@ jobs:
           $files = ($env:R2_PURGE_PATHS -split ',') | ForEach-Object { "https://cfr2-apex.skycraft.cn/evo/$_" }
           $body = @{ files = $files } | ConvertTo-Json -Compress
           $uri = "https://api.cloudflare.com/client/v4/zones/$($env:CF_ZONE_ID)/purge_cache"
-          $resp = Invoke-RestMethod -Uri $uri -Method Post -TimeoutSec 30 `
-            -Headers @{ Authorization = "Bearer $($env:R2_PURGE_TOKEN)"; 'Content-Type' = 'application/json' } `
-            -Body $body
-          Write-Host "缓存清理响应：$($resp | ConvertTo-Json -Depth 5 -Compress)"
-          if ($LASTEXITCODE -ne 0) { Write-Error "清理 CDN 缓存请求失败（HTTP 层）"; exit 1 }
+          try {
+            $resp = Invoke-RestMethod -Uri $uri -Method Post -TimeoutSec 30 `
+              -Headers @{ Authorization = "Bearer $($env:R2_PURGE_TOKEN)"; 'Content-Type' = 'application/json' } `
+              -Body $body -ErrorAction Stop
+          } catch {
+            # 清缓存失败不应让整次发布失败：包已经传好了，只是边缘可能还挂着旧包。
+            # 同版本号重发前，手动在 CF 后台点一次「清除缓存」即可。
+            Write-Warning "清理 CDN 缓存失败（$($_.Exception.Message)），发布继续；同版本号重发前请手动清缓存。"
+            exit 0
+          }
+          if (-not $resp.success) {
+            Write-Warning "清理 CDN 缓存被拒绝：$($resp.errors | ConvertTo-Json -Compress)，发布继续。"
+            exit 0
+          }
           Write-Host "已清除 CDN 缓存：$($files -join ', ')"
 
       - name: 通知 ApexPacks 更新 evo-latest.json
