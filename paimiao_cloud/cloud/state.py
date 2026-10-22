@@ -15,6 +15,9 @@ STATE_FOLDER = "cloud-sync"   # 放在 Evo 数据文件夹下，不叫 cloud（�
 LOG_NAME = "cloud.log"
 
 # 派喵服务器。用户不需要填地址 —— 这是内置的、唯一的目标服务器。
+# 末尾的 /battlestats 是"战绩接口"这一族的前缀：匹配、段位、latest.json 都拼在它后面。
+# 但配对的两个接口不在这族里（服务端把 pair 移回了 /wx/pair，见 cloud/pairing.py），
+# 所以 pairing 那边用的是默认根 /apex/api/ + /wx/pair/xxx，不走这个常量。
 DEFAULT_SERVER = "https://tools.skycraft.cn/apex/api/battlestats"
 
 
@@ -24,6 +27,26 @@ def default_server() -> str:
     生产环境没有这个变量，行为就是上面那个常量。
     """
     return (os.environ.get("EVO_CLOUD_SERVER") or DEFAULT_SERVER).rstrip("/")
+
+
+# 配对接口的根：从 "/battlestats" 这一族里退回到 /apex/api。
+# 服务端 2026-10-22 把 pair/start、pair/poll 移回 /api/wx/pair（ApexPacks c07b909），
+# 它们不在 /battlestats 下，所以不能拿 DEFAULT_SERVER 直接拼。
+_PAIR_SUFFIX = "/battlestats"
+
+
+def pair_server(snapshot) -> str:
+    """返回配对接口的根（.../apex/api）。自检时 EVO_CLOUD_SERVER 指到哪就跟到哪。"""
+    base = (snapshot.get("pair_server") or "").rstrip("/")
+    if base:
+        return base
+    root = (os.environ.get("EVO_CLOUD_PAIR_SERVER") or "").rstrip("/")
+    if root:
+        return root
+    server = (snapshot.get("server") or default_server()).rstrip("/")
+    if server.endswith(_PAIR_SUFFIX):
+        return server[: -len(_PAIR_SUFFIX)]
+    return server
 
 # 协议版本：改了协议正文就必须改这里，老用户会被要求重新同意
 # 2026-10-22 → 2026-10-22b：正文加了「从云端取回」和「只读的唯一例外」两段，

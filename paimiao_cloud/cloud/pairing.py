@@ -1,15 +1,22 @@
 """Evo 派喵云同步 · 和派喵服务器对话（配对 + 上传都用这里）。
 
-接口形状（都在 /battlestats 下，和账号体系那套接口分开）：
+服务器根：战绩一族是 https://tools.skycraft.cn/apex/api/battlestats
+（cloud/state.py 的 DEFAULT_SERVER），配对一族退回到 https://tools.skycraft.cn/apex/api
+（同文件的 pair_server()）。路径都拼在各自的根后面：
 
-    POST /battlestats/pair/start   无 body
-                                   → { code, expiresAt }
-                                   响应头 Set-Cookie: apexpacks_pair=<ticket>   ← 配对票据
-    GET  /battlestats/pair/poll    带 apexpacks_pair cookie
-                                   → { status: 'pending'|'confirmed'|'expired', expiresAt }
-                                     确认时 Set-Cookie: apexpacks_sid=<token>   ← 会话令牌
-    POST /battlestats/matches      带 Authorization: Bearer <token>
-                                   → { accepted, skipped, total }
+    POST /wx/pair/start      无 body
+                             → { code, expiresAt }
+                             响应头 Set-Cookie: apexpacks_pair=<ticket>   ← 配对票据
+    GET  /wx/pair/poll       带 apexpacks_pair cookie
+                             → { status: 'pending'|'confirmed'|'expired', expiresAt }
+                               确认时 Set-Cookie: apexpacks_sid=<token>   ← 会话令牌
+    POST /battlestats/matches  带 Authorization: Bearer <token>
+                             → { accepted, skipped, total }
+
+⚠️ 配对三个接口在 /wx/pair 下，**不在** /battlestats/pair 下：服务端
+   2026-10-22 把 pair 从 battlestats 移回 wx（ApexPacks c07b909
+   "fix(api): pair 三个接口移回 /api/wx/pair，修复小程序配对 404"）。
+   改路径前先确认线上真的通，不然界面上只会出现"配对码无效或已过期"。
 
 两个关键点（踩过才知道）：
   · 配对票据和会话令牌**都只通过 Set-Cookie 下发**，响应体里没有。
@@ -43,9 +50,14 @@ def server_of(snapshot) -> str:
     return (snapshot.get("server") or cloud_state.default_server()).rstrip("/")
 
 
-def require_server(snapshot) -> str:
+def pair_server_of(snapshot) -> str:
+    """配对接口的根（.../apex/api）。见 cloud/state.py 的 pair_server()。"""
+    return cloud_state.pair_server(snapshot)
+
+
+def require_server(snapshot, base=None) -> str:
     """地址是我们自己内置的常量，正常不会不合规；留一道闸防止被环境变量改坏。"""
-    base = server_of(snapshot)
+    base = (base if base is not None else server_of(snapshot)).rstrip("/")
     if not base:
         raise CloudError("没有配置服务器地址")
     if not (base.startswith("http://127.0.0.1") or base.startswith("http://localhost")
@@ -70,12 +82,16 @@ def _cookie_of(response, name, sent_at):
     return ""
 
 
-def request(snapshot, path, payload=None, token=None, method="POST", want_cookie=None):
+def request(snapshot, path, payload=None, token=None, method="POST", want_cookie=None,
+            base=None):
     """发一个请求。want_cookie 给了 cookie 名就把响应里的它抓出来返回。
+
+    base 不给就用 DEFAULT_SERVER（.../battlestats 那一族）；
+    配对接口传 pair_server_of(snapshot)（.../apex/api）。
 
     返回 (解析后的 JSON, 抓到的 cookie 值或 "")。
     """
-    base = require_server(snapshot)
+    base = require_server(snapshot, base)
     headers = {"Content-Type": "application/json", "User-Agent": "Evo-Cloud/0.3"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -135,7 +151,8 @@ def _http_message(exc):
 
 def start(snapshot):
     """出一张配对码。返回 6 位码；失败抛 CloudError。"""
-    result, ticket = request(snapshot, "/battlestats/pair/start", {}, want_cookie=TICKET_COOKIE)
+    result, ticket = request(snapshot, "/wx/pair/start", {}, want_cookie=TICKET_COOKIE,
+                             base=pair_server_of(snapshot))
     code = str(result.get("code") or "")
     pair_ticket = ticket or snapshot.get("pair_ticket") or ""
     if len(code) != 6 or not pair_ticket:
@@ -156,8 +173,8 @@ def poll(snapshot):
     """
     if not snapshot.get("pair_ticket"):
         return False
-    result, session = request(snapshot, "/battlestats/pair/poll", None, method="GET",
-                              want_cookie=SESSION_COOKIE)
+    result, session = request(snapshot, "/wx/pair/poll", None, method="GET",
+                              want_cookie=SESSION_COOKIE, base=pair_server_of(snapshot))
     status = str(result.get("status") or "")
     if status == "expired":
         snapshot["pair_code"] = ""
