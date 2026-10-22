@@ -189,46 +189,72 @@ jobs:
 
           & $rclone copyto $env:EVO_ZIP $remote --s3-no-check-bucket
           if ($LASTEXITCODE -ne 0) { Write-Error "上传 $name 失败"; exit 1 }
+          $remoteInfo = & $rclone lsjson $remote --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          $remoteFacts = " 远端=$($remoteInfo.Size)B/$($remoteInfo.ModTime)"
+          if ($LASTEXITCODE -ne 0) { Write-Error "回读 $name 失败"; exit 1 }
           & $rclone copyto $env:EVO_ZIP "$bucketPath/evo/latest.zip" --s3-no-check-bucket
           if ($LASTEXITCODE -ne 0) { Write-Error "上传 latest.zip 失败"; exit 1 }
           & $rclone copyto $env:EVO_SHA "$bucketPath/evo/$name.sha256" --s3-no-check-bucket
           if ($LASTEXITCODE -ne 0) { Write-Error "上传 $name.sha256 失败"; exit 1 }
 
-          # 上传完必须回读校验：远端大小和 SHA-256 都要跟本地一致，否则流水线必须红。
-          # 光看 “rclone 返回 0” 不够——上面那次坑就是命令成功、内容却是旧的。
+          # 上传完必须校验，但**不能打 CDN 域名**。
+          # 这是第二个坑：cfr2-apex.skycraft.cn 前面挂着 Cloudflare 边缘缓存，
+          # 同版本号重发时边缘还留着上一次的旧包（实测 age=5074s 仍然 HIT），
+          # 于是「HEAD 一下看大小」读到的是缓存里的旧尺寸，把上传成功的构建判成失败。
+          # 校验必须问 R2 本体（S3 API），那才是真相。
           $localSize = (Get-Item $env:EVO_ZIP).Length
           $localHash = (Get-FileHash $env:EVO_ZIP -Algorithm SHA256).Hash.ToLower()
-          foreach ($pair in @(@{ Url = "https://cfr2-apex.skycraft.cn/evo/$name";      Label = $name },
-                              @{ Url = "https://cfr2-apex.skycraft.cn/evo/latest.zip"; Label = 'latest.zip' })) {
-            $ok = $false
-            for ($i = 1; $i -le 10; $i++) {
-              try {
-                $req = [System.Net.HttpWebRequest]::Create($pair.Url)
-                $req.Method = 'HEAD'
-                $req.Timeout = 20000
-                $req.CachePolicy = New-Object System.Net.Cache.RequestCachePolicy('NoCacheNoStore')
-                $resp = $req.GetResponse()
-                $remoteSize = $resp.ContentLength
-                $resp.Close()
-                if ($remoteSize -eq $localSize) { $ok = $true; break }
-                Write-Host "第 $i 次校验 $($pair.Label)：远端 $remoteSize 字节 ≠ 本地 $localSize 字节，等 5 秒重试"
-              } catch {
-                Write-Host "第 $i 次校验 $($pair.Label) 失败：$($_.Exception.Message)"
-              }
-              Start-Sleep -Seconds 5
-            }
-            if (-not $ok) { Write-Error "远端 $($pair.Label) 内容与本次构建不符（缓存或未覆盖），中止发布"; exit 1 }
-            Write-Host "校验通过：$($pair.Label) = $localSize 字节"
-          }
 
-          # 再核一次 .sha256：网站/一键更新会拿它比对，比错了就白发布
-          $remoteSha = (Invoke-WebRequest -Uri "https://cfr2-apex.skycraft.cn/evo/$name.sha256" -UseBasicParsing -TimeoutSec 20).Content
-          if ($remoteSha -notmatch [regex]::Escape($localHash)) {
-            Write-Error "远端 $name.sha256 与本地不一致：远端 $remoteSha / 本地 $localHash"
+          # 用 rclone 的 lsjson 拿远端大小——它走 S3 API，不经 CDN。
+          if (-not $remoteInfo -or $remoteInfo.Size -ne $localSize) {
+            Write-Error "R2 本体校验失败：$name$remoteFacts ≠ 本地 ${localSize}B"
             exit 1
           }
-          Write-Host "已上传并校验：https://cfr2-apex.skycraft.cn/evo/$name"
-          Write-Host "SHA-256: $localHash"
+          Write-Host "R2 本体校验通过：$name = $localSize 字节"
+
+          $latestInfo = & $rclone lsjson "$bucketPath/evo/latest.zip" --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $latestInfo -or $latestInfo.Size -ne $localSize) {
+            Write-Error "R2 本体校验失败：latest.zip 远端 $($latestInfo.Size) 字节 ≠ 本地 $localSize 字节"
+            exit 1
+          }
+          Write-Host "R2 本体校验通过：latest.zip = $localSize 字节"
+
+          # 再核 .sha256（同样走 S3 侧读取，不经 CDN）。网站/一键更新靠它比对。
+          $remoteShaInfo = & $rclone cat "$bucketPath/evo/$name.sha256" --s3-no-check-bucket 2>$null
+          if ($remoteShaInfo -notmatch [regex]::Escape($localHash)) {
+            Write-Error "R2 上 $name.sha256 与本地不一致：远端 $remoteShaInfo / 本地 $localHash"
+            exit 1
+          }
+          Write-Host "R2 本体校验通过：$name.sha256 匹配 $localHash"
+          $contentsList = $name + ',latest.zip,' + $name + '.sha256'
+          "R2_PURGE_PATHS=$contentsList" >> $env:GITHUB_ENV
+
+      # CDN 归档缓存必须主动清，不能等 TTL。
+      # 同版本号重发时，边缘缓存（cf-cache-status: HIT）会继续把旧包喂给用户，
+      # 网站按钮指向的就是它——0.3.6 重发时用户下到的仍是旧代码，根因就在这里。
+      # 需要 secret R2_PURGE_TOKEN（Cloudflare API Token，权限：Zone.Cache Purge）
+      # 和 vars CF_ZONE_ID；两者缺一时只告警不失败（新版本号首次上传本来就没缓存）。
+      - name: 清理 Cloudflare 缓存
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          R2_PURGE_TOKEN: ${{ secrets.R2_PURGE_TOKEN }}
+          CF_ZONE_ID: ${{ vars.CF_ZONE_ID }}
+          R2_PURGE_PATHS: ${{ env.R2_PURGE_PATHS }}
+        run: |
+          if (-not $env:R2_PURGE_TOKEN -or -not $env:CF_ZONE_ID) {
+            Write-Warning "未配置 R2_PURGE_TOKEN / CF_ZONE_ID，跳过 CDN 缓存清理。同版本号重发可能仍会下发旧包。"
+            exit 0
+          }
+          $files = ($env:R2_PURGE_PATHS -split ',') | ForEach-Object { "https://cfr2-apex.skycraft.cn/evo/$_" }
+          $body = @{ files = $files } | ConvertTo-Json -Compress
+          $uri = "https://api.cloudflare.com/client/v4/zones/$($env:CF_ZONE_ID)/purge_cache"
+          $resp = Invoke-RestMethod -Uri $uri -Method Post -TimeoutSec 30 `
+            -Headers @{ Authorization = "Bearer $($env:R2_PURGE_TOKEN)"; 'Content-Type' = 'application/json' } `
+            -Body $body
+          Write-Host "缓存清理响应：$($resp | ConvertTo-Json -Depth 5 -Compress)"
+          if ($LASTEXITCODE -ne 0) { Write-Error "清理 CDN 缓存请求失败（HTTP 层）"; exit 1 }
+          Write-Host "已清除 CDN 缓存：$($files -join ', ')"
 
       - name: 通知 ApexPacks 更新 evo-latest.json
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
