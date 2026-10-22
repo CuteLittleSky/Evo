@@ -286,7 +286,9 @@ def push(snapshot):
     """把"没传过、或者传过但内容变了"的局传上去。返回这次传了几局（对局数，不含大厅读数）。"""
     token = (snapshot.get("device") or {}).get("token")
     if not token:
-        return 0
+        # 不能安静地 return 0：页面上会显示成"还没有上传过"，看不出是没配对。
+        # 抛出去让 _loop / push_quiet 记账，用户能看到原因。
+        raise pairing.CloudError("这台电脑还没配对")
 
     known = snapshot.get("hashes") or {}
     lobby_known = snapshot.get("lobby_hashes") or {}
@@ -307,7 +309,7 @@ def push(snapshot):
         sent += int(result.get("accepted") or len(chunk))
         del chunk
 
-    # 大厅读数是另一张表，单独走 /battlestats/rank。老服务端没有这个接口时会抛 CloudError，
+    # 大厅读数是另一张表，单独走 /rank。老服务端没有这个接口时会抛 CloudError，
     # 不能让整个同步失败 —— 对局已经传成功了，段位下次再补。
     lobby_sent = 0
     for start in range(0, len(lobby_pending), LOBBY_BATCH):
