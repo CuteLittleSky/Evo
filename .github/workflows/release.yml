@@ -93,7 +93,10 @@ jobs:
           $readmeDst = "dist/Evo/使用说明（先看这个）.txt"
           $readmeSrc = "release/使用说明.txt"
           if (Test-Path $readmeSrc) {
-            $txt = (Get-Content $readmeSrc -Raw -Encoding utf8) -f $ver, (Get-Date -Format 'yyyy-MM-dd'), "github-actions"
+            # 用 .Replace 而不是 -f：说明书正文含 "{}"、"%" 等，-f 会把它们当格式占位符报
+            # "Input string was not in a correct format"。只替换三个已知标记，最稳。
+            $txt = Get-Content $readmeSrc -Raw -Encoding utf8
+            $txt = $txt.Replace('{version}', $ver).Replace('{date}', (Get-Date -Format 'yyyy-MM-dd')).Replace('{commit}', 'github-actions')
             # 去掉可能残留的 UTF-8 BOM，避免说明书首行多一个不可见字符
             $txt = $txt.TrimStart([char]0xFEFF)
             [IO.File]::WriteAllText((Join-Path (Get-Location) $readmeDst), $txt, (New-Object Text.UTF8Encoding($true)))
