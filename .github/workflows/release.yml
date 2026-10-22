@@ -109,11 +109,29 @@ jobs:
           "EVO_SHA=dist/$name.sha256" >> $env:GITHUB_ENV
           "EVO_VER=$ver" >> $env:GITHUB_ENV
 
-      # 推 main（或手动 dispatch）就发布：不再要求打 tag。
+      # 推 main（或手动 dispatch）就发布：不再要求手动打 tag。
+      # GitHub Releases 必须绑定 tag，因此这里先自动创建/更新 v<版本号> 的 tag 指向当前
+      # commit，再让 action 用它。版本号没变、tag 已存在时更新其指向（force），保证幂等可重跑。
+      - name: 自动打 tag（v版本号）
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v$($env:EVO_VER)"
+          Write-Host "目标 tag：$tag"
+          # 用 git 打 tag 并强推到当前 commit（已存在就覆盖，幂等）
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f $tag
+          git push -f origin "refs/tags/$tag"
+          Write-Host "已推送 tag $tag -> $($env:GITHUB_SHA)"
+
       - name: 建 Release 并上传
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.EVO_VER }}
           files: |
             ${{ env.EVO_ZIP }}
             ${{ env.EVO_SHA }}
