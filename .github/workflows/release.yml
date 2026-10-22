@@ -172,11 +172,63 @@ jobs:
           $env:RCLONE_CONFIG_R2_ACL = "public-read"
           $name = "Evo-$($env:EVO_VER)-win64.zip"
           $remote = "R2:$($env:R2_BUCKET)/evo/$name"
-          # 保留历史版本：不删旧包，只新增；再写一个 latest.zip 方便固定链接
-          & $rclone copyto $env:EVO_ZIP $remote --s3-no-check-bucket --checksum
-          & $rclone copyto $env:EVO_ZIP "R2:$($env:R2_BUCKET)/evo/latest.zip" --s3-no-check-bucket --checksum
-          & $rclone copyto $env:EVO_SHA  "R2:$($env:R2_BUCKET)/evo/$name.sha256" --s3-no-check-bucket
-          Write-Host "已上传：https://cfr2-apex.skycraft.cn/evo/$name"
+          $bucketPath = "R2:$($env:R2_BUCKET)"
+
+          # 注意：**不要加 --checksum**。
+          # 这是踩过的坑：同版本号重跑流水线时（比如 0.3.6 修完 bug 重发），
+          # --checksum 会让 rclone 先拿本地和远端比对，R2 侧对象不一定能给出可比对的
+          # 哈希，于是它可能判定“已相同”直接跳过，结果远端留着上一次失败跑上传的旧包——
+          # 那次 Evo-0.3.6-win64.zip 就停在 14:14 的旧内容，而 latest.zip 是新的，
+          # 用户点网站下载按钮拿到的正是旧包。S3 的 PUT 本身是幂等的，无条件上传最稳。
+
+          # 上传前先删掉同名对象：R2 的 public-read ACL 下，覆盖写个别情况会保留旧的
+          # Last-Modified/Cache-Control，删掉重建最干净。删不存在的键不报错。
+          & $rclone deletefile "$remote" 2>$null
+          & $rclone deletefile "$bucketPath/evo/latest.zip" 2>$null
+          & $rclone deletefile "$bucketPath/evo/$name.sha256" 2>$null
+
+          & $rclone copyto $env:EVO_ZIP $remote --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 $name 失败"; exit 1 }
+          & $rclone copyto $env:EVO_ZIP "$bucketPath/evo/latest.zip" --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 latest.zip 失败"; exit 1 }
+          & $rclone copyto $env:EVO_SHA "$bucketPath/evo/$name.sha256" --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 $name.sha256 失败"; exit 1 }
+
+          # 上传完必须回读校验：远端大小和 SHA-256 都要跟本地一致，否则流水线必须红。
+          # 光看 “rclone 返回 0” 不够——上面那次坑就是命令成功、内容却是旧的。
+          $localSize = (Get-Item $env:EVO_ZIP).Length
+          $localHash = (Get-FileHash $env:EVO_ZIP -Algorithm SHA256).Hash.ToLower()
+          foreach ($pair in @(@{ Url = "https://cfr2-apex.skycraft.cn/evo/$name";      Label = $name },
+                              @{ Url = "https://cfr2-apex.skycraft.cn/evo/latest.zip"; Label = 'latest.zip' })) {
+            $ok = $false
+            for ($i = 1; $i -le 10; $i++) {
+              try {
+                $req = [System.Net.HttpWebRequest]::Create($pair.Url)
+                $req.Method = 'HEAD'
+                $req.Timeout = 20000
+                $req.CachePolicy = New-Object System.Net.Cache.RequestCachePolicy('NoCacheNoStore')
+                $resp = $req.GetResponse()
+                $remoteSize = $resp.ContentLength
+                $resp.Close()
+                if ($remoteSize -eq $localSize) { $ok = $true; break }
+                Write-Host "第 $i 次校验 $($pair.Label)：远端 $remoteSize 字节 ≠ 本地 $localSize 字节，等 5 秒重试"
+              } catch {
+                Write-Host "第 $i 次校验 $($pair.Label) 失败：$($_.Exception.Message)"
+              }
+              Start-Sleep -Seconds 5
+            }
+            if (-not $ok) { Write-Error "远端 $($pair.Label) 内容与本次构建不符（缓存或未覆盖），中止发布"; exit 1 }
+            Write-Host "校验通过：$($pair.Label) = $localSize 字节"
+          }
+
+          # 再核一次 .sha256：网站/一键更新会拿它比对，比错了就白发布
+          $remoteSha = (Invoke-WebRequest -Uri "https://cfr2-apex.skycraft.cn/evo/$name.sha256" -UseBasicParsing -TimeoutSec 20).Content
+          if ($remoteSha -notmatch [regex]::Escape($localHash)) {
+            Write-Error "远端 $name.sha256 与本地不一致：远端 $remoteSha / 本地 $localHash"
+            exit 1
+          }
+          Write-Host "已上传并校验：https://cfr2-apex.skycraft.cn/evo/$name"
+          Write-Host "SHA-256: $localHash"
 
       - name: 通知 ApexPacks 更新 evo-latest.json
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
