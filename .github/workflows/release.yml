@@ -1,0 +1,192 @@
+# 打 Windows 包（派喵云同步版）并发到 GitHub Releases。
+#
+# 触发方式：
+#   - 推一个形如 v0.3.7 的 tag（版本号必须和 code/storage.py 里的 APP_VERSION 一致）
+#   - 或在 Actions 页面手动点「Run workflow」
+#
+# 做的事：
+#   1. 装依赖（rapidocr / onnxruntime / opencv / dxam / pyinstaller …）
+#   2. 用 paimiao_cloud/evo.spec 打包（exec 上游 tools/evo.spec，只多注入 runtime_hook + cloud 包）
+#   3. 压成 Evo-<版本>-win64.zip，算 SHA-256
+#   4. 建一个 GitHub Release，附上 zip 和 .sha256
+#   5. 通知 ApexPacks 仓库去更新 server/data/evo-latest.json（见 sync-evo-latest.yml）
+#
+# 说明：Windows 上 onnxruntime / rapidocr / dxcam 都能直接 pip 装，无需额外步骤。
+# 打包是 onedir（一个很小的 Evo.exe + _internal），PyInstaller 6.x。
+
+name: Release
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 建 Release、上传附件
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 装 Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          # 依赖清单不在仓库根目录（在 paimiao_cloud/ 下），必须显式指路，
+          # 否则 setup-python 会去 glob **/requirements.txt、**/pyproject.toml，找不到就报错。
+          cache: 'pip'
+          cache-dependency-path: paimiao_cloud/requirements-build.txt
+
+      - name: 装依赖
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r paimiao_cloud/requirements-build.txt
+
+      - name: 打包（派喵云同步版）
+        shell: pwsh
+        env:
+          # Windows runner 的控制台默认是 cp1252，脚本里 print 的中文（“图标：…”）会
+          # UnicodeEncodeError。开 UTF-8 模式：PYTHONUTF8 + PYTHONIOENCODING 双保险，
+          # 同时把 PowerShell 输出编码切成 UTF-8，避免别处再撞同样的码。
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
+          # 预下载 WebView2 引导程序到 build/webview2（build.py 见文件已存在就跳过它自己的
+          # urllib.urlretrieve）。CI 上 urlretrieve 偶尔拿到截断/重定向页，导致后面的
+          # Get-AuthenticodeSignature 拿到空 Status 直接判“签名不对”。这里用 Invoke-WebRequest
+          # 带重定向+重试、并校验大小/PE 头，稳定后再交给 build.py。
+          $setupDir  = "build/webview2"
+          $setupFile = Join-Path $setupDir "MicrosoftEdgeWebview2Setup.exe"
+          New-Item -ItemType Directory -Force -Path $setupDir | Out-Null
+          if (-not (Test-Path $setupFile) -or (Get-Item $setupFile).Length -lt 500KB) {
+            for ($i = 1; $i -le 3; $i++) {
+              try {
+                Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $setupFile -MaximumRedirection 5 -UseBasicParsing -TimeoutSec 120
+                $len = (Get-Item $setupFile).Length
+                $sig = [IO.File]::ReadAllBytes($setupFile)
+                # Windows PE：前两字节必须是 'MZ'
+                if ($len -gt 500KB -and $sig[0] -eq 0x4D -and $sig[1] -eq 0x5A) {
+                  Write-Host "WebView2 引导程序已就绪：$([math]::Round($len/1MB,2)) MB"
+                  break
+                }
+                Write-Host "第 $i 次下载不完整（$len 字节，非 PE），重试"
+              } catch {
+                Write-Host "第 $i 次下载失败：$($_.Exception.Message)"
+              }
+              if ($i -eq 3) { Write-Error "WebView2 引导程序下载失败"; exit 1 }
+              Start-Sleep -Seconds 3
+            }
+          }
+          python paimiao_cloud/build_evo.py
+
+      - name: 压缩 + 算 SHA-256
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path code/storage.py -Pattern 'APP_VERSION\s*=\s*"([\d.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $name = "Evo-$ver-win64.zip"
+          # 复制使用说明到程序文件夹内再压，保持和 tools/release.py 一致的包结构
+          $readmeDst = "dist/Evo/使用说明（先看这个）.txt"
+          $readmeSrc = "release/使用说明.txt"
+          if (Test-Path $readmeSrc) {
+            $txt = (Get-Content $readmeSrc -Raw -Encoding utf8) -f $ver, (Get-Date -Format 'yyyy-MM-dd'), "github-actions"
+            # 去掉可能残留的 UTF-8 BOM，避免说明书首行多一个不可见字符
+            $txt = $txt.TrimStart([char]0xFEFF)
+            [IO.File]::WriteAllText((Join-Path (Get-Location) $readmeDst), $txt, (New-Object Text.UTF8Encoding($true)))
+          }
+          Compress-Archive -Path "dist/Evo/*" -DestinationPath "dist/$name" -CompressionLevel Optimal
+          $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Out-File -Encoding ascii "dist/$name.sha256"
+          Write-Host "SHA-256: $hash"
+          "EVO_ZIP=dist/$name" >> $env:GITHUB_ENV
+          "EVO_SHA=dist/$name.sha256" >> $env:GITHUB_ENV
+          "EVO_VER=$ver" >> $env:GITHUB_ENV
+
+      - name: 建 Release 并上传
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.EVO_ZIP }}
+            ${{ env.EVO_SHA }}
+          generate_release_notes: true
+          body: |
+            派喵云同步版 Evo ${{ env.EVO_VER }}
+            下载 `Evo-${{ env.EVO_VER }}-win64.zip` 解压即用；`.sha256` 用于核对完整性。
+
+      # 把 zip 传到 Cloudflare R2（自定义域 cfr2-apex.skycraft.cn 公开下载）。
+      # 这一步放在「建 Release」之后、「通知 ApexPacks」之前：先确保包能在 R2 下到，
+      # 再让 evo-latest.json 指向它，避免出现「版本更新了但包还没传上去」的空窗。
+      # 用 rclone（S3 兼容端点），在 Windows runner 上用 choco 装一下即可。
+      - name: 上传安装包到 R2
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          EVO_VER: ${{ env.EVO_VER }}
+          EVO_ZIP: ${{ env.EVO_ZIP }}
+          EVO_SHA: ${{ env.EVO_SHA }}
+        run: |
+          if (-not $env:R2_ACCOUNT_ID -or -not $env:R2_ACCESS_KEY_ID -or -not $env:R2_SECRET_ACCESS_KEY) {
+            Write-Error "缺少 R2 凭据（R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY）"
+            exit 1
+          }
+          if (-not $env:R2_BUCKET) { Write-Error "缺少 R2_BUCKET 变量"; exit 1 }
+          choco install rclone -y --no-progress | Out-Null
+          $rclone = "rclone"
+          # 用环境变量注入 S3 配置，不落盘配置文件（避免凭据写进 runner 磁盘）
+          $env:RCLONE_CONFIG_R2_TYPE = "s3"
+          $env:RCLONE_CONFIG_R2_PROVIDER = "Cloudflare"
+          $env:RCLONE_CONFIG_R2_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:RCLONE_CONFIG_R2_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:RCLONE_CONFIG_R2_ENDPOINT = "https://$($env:R2_ACCOUNT_ID).r2.cloudflarestorage.com"
+          $env:RCLONE_CONFIG_R2_ACL = "public-read"
+          $name = "Evo-$($env:EVO_VER)-win64.zip"
+          $remote = "R2:$($env:R2_BUCKET)/evo/$name"
+          # 保留历史版本：不删旧包，只新增；再写一个 latest.zip 方便固定链接
+          & $rclone copyto $env:EVO_ZIP $remote --s3-no-check-bucket --checksum
+          & $rclone copyto $env:EVO_ZIP "R2:$($env:R2_BUCKET)/evo/latest.zip" --s3-no-check-bucket --checksum
+          & $rclone copyto $env:EVO_SHA  "R2:$($env:R2_BUCKET)/evo/$name.sha256" --s3-no-check-bucket
+          Write-Host "已上传：https://cfr2-apex.skycraft.cn/evo/$name"
+
+      - name: 通知 ApexPacks 更新 evo-latest.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          # 用 repository_dispatch 让 ApexPacks 仓库去改 server/data/evo-latest.json。
+          # 需要一个 PAT（repo 权限，classic）或 fine-grained token（对 ApexPacks 有 contents:write），
+          # 存在本仓库的 secret APEXPACKS_DISPATCH_TOKEN 里。
+          # zip 下载地址用 R2 自定义域（cfr2-apex.skycraft.cn，国内体验比 GitHub 好、出站免费）。
+          # 注意：Evo 的 cloud/upstream.py 白名单必须含 cfr2-apex.skycraft.cn，否则一键更新会静默降级。
+          $ver = "$env:EVO_VER"
+          $sha = (Get-Content "$env:EVO_SHA" -Raw).Split(' ')[0]
+          $size = (Get-Item "$env:EVO_ZIP").Length
+          $url = "https://cfr2-apex.skycraft.cn/evo/Evo-${ver}-win64.zip"
+          $notes = @()
+          if (Test-Path "release/更新内容.txt") {
+            $notes = Get-Content "release/更新内容.txt" -Encoding utf8 | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }
+          }
+          $payload = @{
+            event_type = "evo-release"
+            client_payload = @{
+              version = $ver
+              date = (Get-Date -Format 'yyyy-MM-dd')
+              page = "https://apex.skycraft.cn/#evo"
+              notes = $notes
+              download = @{ url = $url; sha256 = $sha; size = [int64]$size }
+            }
+          } | ConvertTo-Json -Depth 6 -Compress
+          $headers = @{
+            Authorization = "Bearer ${{ secrets.APEXPACKS_DISPATCH_TOKEN }}"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/${{ vars.APEXPACKS_REPO }}/dispatches" -Headers $headers -Body $payload -ContentType "application/json"
+          Write-Host "已通知 ApexPacks 更新 evo-latest.json"

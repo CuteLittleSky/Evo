@@ -1,0 +1,66 @@
+{#
+  派喵版 · 设置页的「关于本分支 / 第三方许可」卡片（片段，不是整页）。
+
+  ⚠️ 这里**只放一个片段**，配套的 CSS 在 cloud/notice.py 的 _CARD_CSS 里。
+     它由 notice.py 的 preprocess 钩子插进 settings.html 里
+     `<div class="settings-main">` 收尾之前，磁盘上的上游文件一个字节都不动。
+
+  为什么必须保留版权声明
+    MIT 许可要求再分发时"保留原版权声明与许可文本"。
+    界面上的"关于 Evo"如果不做区隔，容易被读成这就是上游作者的作品，
+    既违反第 2 条精神（不暗示背书），也让用户投诉找错人。
+
+  为什么用 .card.settings-card 这套 class
+    这张卡片是设置页主栏的最后一张，上面紧挨着「更新」那张
+    `<section class="card settings-card">`。底色、描边、圆角、24px 内边距、
+    标题字号全都复用上游那几条规则，才不会一眼看出是"外来样式"。
+
+  为什么默认折叠
+    许可全文 20 多行，展开着会把设置页拉得很长，而每天真要看它的人很少。
+    用 <details> 而不是自己写 JS：键盘操作、读屏播报 expanded/collapsed、
+    浏览器自带的 Ctrl+F 展开，全是原生行为，代价只有三行 HTML。
+#}
+<section class="card settings-card branch-card">
+  <details class="branch-fold">
+    <summary class="branch-summary">
+      <h2 id="{{ branch_anchor }}">关于本分支 / 第三方许可</h2>
+      <span class="branch-toggle" aria-hidden="true">
+        {#- 展开/收起两个词都用 CSS 切，不放 JS。#}
+        <span class="t-closed">展开</span><span class="t-open">收起</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" aria-hidden="true"><path d="M6 9 L12 15 L18 9"></path></svg>
+      </span>
+    </summary>
+
+    <div class="branch-body">
+      <p class="branch-lead">
+        本软件是 <strong>Evo 的非官方修改分支</strong>（{{ branch.name }}），
+        由 {{ branch.maintainer }} 维护，与上游项目
+        <a href="{{ branch.upstream_url }}" target="_blank" rel="noopener noreferrer">AugustHuangMX/Evo</a>
+        及其作者<strong>无隶属、合作或背书关系</strong>。
+        上游项目作者不对本分支的修改、新增功能及数据行为负责。
+      </p>
+
+      <dl class="branch-facts">
+        <dt>上游版本</dt>
+        <dd><span class="num">{{ branch.upstream_version or "未知" }}</span>（派喵版在此基础上修改）</dd>
+
+        <dt>本分支源代码</dt>
+        <dd><a href="{{ branch.source_url }}" target="_blank" rel="noopener noreferrer">{{ branch.source_url }}</a></dd>
+
+        <dt>问题反馈</dt>
+        <dd><a href="{{ branch.issues_url }}" target="_blank" rel="noopener noreferrer">GitHub Issues</a>
+          —— 请勿把本分支特有的问题提交到上游</dd>
+
+        <dt>本分支的修改</dt>
+        <dd>新增「派喵」微信小程序云同步（<a href="/cloud/">派喵云同步</a>），可选用；其余功能与上游一致。</dd>
+      </dl>
+
+      <h3 class="branch-sub">原始版权声明</h3>
+      <p class="branch-copy">{{ branch.copyright }}</p>
+
+      <h3 class="branch-sub">MIT License</h3>
+      <pre class="branch-license" tabindex="0">{{ branch.license_text }}</pre>
+    </div>
+  </details>
+</section>

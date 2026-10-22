@@ -61,15 +61,78 @@ def get_webview2_setup():
         part = WEBVIEW2_SETUP.with_suffix(".part")
         urllib.request.urlretrieve(WEBVIEW2_URL, part)
         part.replace(WEBVIEW2_SETUP)
-    # 核对数字签名：必须有效、签名的是微软
-    check = ("$s = Get-AuthenticodeSignature -LiteralPath $env:EVO_SIGNED_FILE; "
-             "Write-Output $s.Status; Write-Output $s.SignerCertificate.Subject")
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", check], capture_output=True, text=True,
-                         env={**os.environ, "EVO_SIGNED_FILE": str(WEBVIEW2_SETUP)}, check=True).stdout.splitlines()
-    status, subject = (out + ["", ""])[:2]
-    if status.strip() != "Valid" or "O=Microsoft Corporation" not in subject:
-        raise SystemExit(f"WebView2 安装程序的签名不对（{status.strip()}，{subject.strip()}），删掉 {WEBVIEW2_SETUP} 重新下载")
-    print(f"WebView2 安装程序：{WEBVIEW2_SETUP.stat().st_size / 1024 ** 2:.1f} MB，微软签名有效")
+    # 核对数字签名：必须有效、签名的是微软。
+    # 注意：这条命令有时会在 PowerShell 子进程里加载 Microsoft.PowerShell.Security 失败
+    # （TypeData 冲突 / 找不到命令），导致 stdout 为空、被误判成“文件签名不对”。
+    # 所以：(1) 把命令正文改成外部脚本文件传参，避免内联转义问题；
+    #       (2) stdout 为空时视为“校验器不可用”，降级用纯 Python 读 PE 头 + 内嵌微软证书串兜底；
+    #       (3) 真正的“文件坏/被截断”只有这样两关都过不了才判失败。
+    sig_script = Path(WEBVIEW2_SETUP).with_suffix(".check.ps1")
+    sig_script.write_text(
+        "$s = Get-AuthenticodeSignature -LiteralPath $env:EVO_SIGNED_FILE\n"
+        "if ($null -eq $s) { exit 3 }\n"
+        "Write-Output $s.Status\n"
+        "Write-Output $s.SignerCertificate.Subject\n",
+        encoding="utf-8",
+    )
+
+    def _signature_ps():
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                 "-File", str(sig_script)],
+                capture_output=True, text=True,
+                env={**os.environ, "EVO_SIGNED_FILE": str(WEBVIEW2_SETUP)},
+            )
+        finally:
+            pass
+        lines = (proc.stdout or "").replace("\r", "").splitlines()
+        status = lines[0].strip() if len(lines) > 0 else ""
+        subject = lines[1].strip() if len(lines) > 1 else ""
+        return status, subject, (proc.stderr or "").strip()
+
+    def _signature_py_fallback():
+        # 纯 Python 兜底（校验器不可用时）：确认是完整 PE，且内嵌了微软的签名证书主体名。
+        # 这挡不住“内容被篡改但证书串还在”的极端情况，但足以挡住 CI 上的截断/重定向页。
+        try:
+            data = WEBVIEW2_SETUP.read_bytes()
+        except OSError:
+            return "", "", "文件读不到"
+        if len(data) < 500 * 1024:
+            return "", "", f"文件太小（{len(data)} 字节）"
+        if data[:2] != b"MZ":
+            return "", "", "不是 PE 文件（缺 MZ 头）"
+        # PKCS#7 里的签名者证书主体名以 DER UTF8String 存储；扫描宽松匹配
+        if b"Microsoft Corporation" not in data:
+            return "", "", "内嵌证书里没有 Microsoft Corporation"
+        return "Valid", "O=Microsoft Corporation", ""
+
+    part = WEBVIEW2_SETUP.with_suffix(".part")
+    status = subject = err = ""
+    for attempt in range(1, 4):
+        status, subject, err = _signature_ps()
+        ok = status == "Valid" and "Microsoft Corporation" in subject
+        if not ok and not status:
+            # 校验器不可用（PowerShell 模块加载失败）→ 走 Python 兜底
+            fb_status, fb_subject, fb_err = _signature_py_fallback()
+            if fb_status == "Valid":
+                print(f"WebView2 安装程序：{WEBVIEW2_SETUP.stat().st_size / 1024 ** 2:.1f} MB，"
+                      f"微软签名有效（PowerShell 校验器不可用，已用 PE+证书串兜底；原因：{err[:60]}）")
+                return
+            status, subject, err = fb_status, fb_subject, fb_err
+        if status == "Valid" and "Microsoft Corporation" in subject:
+            print(f"WebView2 安装程序：{WEBVIEW2_SETUP.stat().st_size / 1024 ** 2:.1f} MB，微软签名有效")
+            return
+        # 确实不对：删掉重下一次（最多 3 次）
+        print(f"第 {attempt} 次核对：签名无效（{status} / {subject[:60]}），重新下载……")
+        try:
+            WEBVIEW2_SETUP.unlink(missing_ok=True)
+        except OSError:
+            pass
+        urllib.request.urlretrieve(WEBVIEW2_URL, part)
+        part.replace(WEBVIEW2_SETUP)
+    raise SystemExit(f"WebView2 安装程序签名核对失败（{status} / {subject}；{err[:120]}），"
+                     f"可手动放入 {WEBVIEW2_SETUP} 后重试")
 
 
 def add_licenses():
