@@ -72,6 +72,15 @@ def page_view(snapshot):
     agreed = cloud_state.agreed(snapshot)
     paired = cloud_state.paired(snapshot)
     left = seconds_left(snapshot)
+    # 过期即视为没生成过：把快照里的码真正清掉，整页回到「生成配对码」那一屏。
+    # 只在前端把文字改成「已过期」的话，那 6 位码还会明晃晃挂在那儿，
+    # 用户拿它去小程序里输，只会得到「配对码无效或已过期」。
+    if snapshot.get("pair_code") and left <= 0:
+        snapshot["pair_code"] = ""
+        snapshot["pair_ticket"] = ""
+        snapshot["pair_code_at"] = 0.0
+        snapshot["pair_expires_ms"] = 0
+        cloud_state.save(snapshot)
     stats = snapshot.get("stats") or {}
     device = snapshot.get("device") or {}
     return {

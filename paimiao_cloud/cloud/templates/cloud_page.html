@@ -309,17 +309,6 @@
     var left = {{ view.pair_left }};
     var box = document.getElementById("cloud-wait");
     var span = document.getElementById("cloud-left");
-    function tick() {
-      if (left <= 0) {
-        if (box) box.textContent = "配对码已过期，点上面的「重新生成」再试。";
-        return;
-      }
-      left -= 2;
-      if (span) span.textContent = Math.max(0, left);
-      setTimeout(tick, 2000);
-    }
-    setTimeout(tick, 2000);
-
     var body = new URLSearchParams();
     body.set("token", {{ token|tojson }});
     body.set("ajax", "1");
@@ -334,6 +323,20 @@
         }
       }).catch(function () {});
     }, 2000);
+    function expired() {
+      // 过期就整页重载回「生成配对码」那一屏，别把过期的码留在屏幕上。
+      // 后端 page_view() 会在重载时把快照里的码清掉。
+      clearInterval(timer);
+      location.reload();
+    }
+    function tick() {
+      if (left <= 0) { expired(); return; }
+      left -= 2;
+      if (span) span.textContent = Math.max(0, left);
+      if (left <= 0) { expired(); return; }
+      setTimeout(tick, 2000);
+    }
+    setTimeout(tick, 2000);
   })();
 </script>
 {% endif %}
