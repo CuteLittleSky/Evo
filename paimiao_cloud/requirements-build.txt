@@ -1,0 +1,22 @@
+# 打包 Evo（派喵云同步版）需要的运行时依赖 + PyInstaller。
+# 依据 docs/底座.md「截屏和识别用的库」这一节。版本区间是实测能用的下限/上限，
+# 上游升级依赖后如出现不兼容，优先对齐本机开发环境的版本（Python 3.13）。
+#
+# 注意：
+# - 用 opencv-python-headless，不要 opencv-python（两者冲突，headless 无 GUI 依赖）
+# - rapidocr / onnxruntime 必须一起装，模型随 rapidocr 包分发（tools/evo.spec 里 collect_data_files）
+# - dxcam 可选（首选 DXGI 截屏），mss 是零依赖备选
+
+numpy
+opencv-python-headless
+rapidocr>=3.10,<4
+onnxruntime>=1.20
+dxcam
+mss
+Flask
+pywebview
+pystray
+Pillow
+
+# 打包工具（不进程序，只在 CI 里用）
+pyinstaller>=6.10,<7

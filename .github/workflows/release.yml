@@ -1,0 +1,301 @@
+# 打 Windows 包（派喵云同步版）并发到 GitHub Releases。
+#
+# 触发方式：
+#   - 推一个形如 v0.3.7 的 tag（版本号必须和 code/storage.py 里的 APP_VERSION 一致）
+#   - 或在 Actions 页面手动点「Run workflow」
+#
+# 做的事：
+#   1. 装依赖（rapidocr / onnxruntime / opencv / dxam / pyinstaller …）
+#   2. 用 paimiao_cloud/evo.spec 打包（exec 上游 tools/evo.spec，只多注入 runtime_hook + cloud 包）
+#   3. 压成 Evo-<版本>-win64.zip，算 SHA-256
+#   4. 建一个 GitHub Release，附上 zip 和 .sha256
+#   5. 通知 ApexPacks 仓库去更新 server/data/evo-latest.json（见 sync-evo-latest.yml）
+#
+# 说明：Windows 上 onnxruntime / rapidocr / dxcam 都能直接 pip 装，无需额外步骤。
+# 打包是 onedir（一个很小的 Evo.exe + _internal），PyInstaller 6.x。
+
+name: Release
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 建 Release、上传附件
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 装 Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          # 依赖清单不在仓库根目录（在 paimiao_cloud/ 下），必须显式指路，
+          # 否则 setup-python 会去 glob **/requirements.txt、**/pyproject.toml，找不到就报错。
+          cache: 'pip'
+          cache-dependency-path: paimiao_cloud/requirements-build.txt
+
+      - name: 装依赖
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r paimiao_cloud/requirements-build.txt
+
+      - name: 打包（派喵云同步版）
+        shell: pwsh
+        env:
+          # Windows runner 的控制台默认是 cp1252，脚本里 print 的中文（“图标：…”）会
+          # UnicodeEncodeError。开 UTF-8 模式：PYTHONUTF8 + PYTHONIOENCODING 双保险，
+          # 同时把 PowerShell 输出编码切成 UTF-8，避免别处再撞同样的码。
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+        run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
+          # 预下载 WebView2 引导程序到 build/webview2（build.py 见文件已存在就跳过它自己的
+          # urllib.urlretrieve）。CI 上 urlretrieve 偶尔拿到截断/重定向页，导致后面的
+          # Get-AuthenticodeSignature 拿到空 Status 直接判“签名不对”。这里用 Invoke-WebRequest
+          # 带重定向+重试、并校验大小/PE 头，稳定后再交给 build.py。
+          $setupDir  = "build/webview2"
+          $setupFile = Join-Path $setupDir "MicrosoftEdgeWebview2Setup.exe"
+          New-Item -ItemType Directory -Force -Path $setupDir | Out-Null
+          if (-not (Test-Path $setupFile) -or (Get-Item $setupFile).Length -lt 500KB) {
+            for ($i = 1; $i -le 3; $i++) {
+              try {
+                Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $setupFile -MaximumRedirection 5 -UseBasicParsing -TimeoutSec 120
+                $len = (Get-Item $setupFile).Length
+                $sig = [IO.File]::ReadAllBytes($setupFile)
+                # Windows PE：前两字节必须是 'MZ'
+                if ($len -gt 500KB -and $sig[0] -eq 0x4D -and $sig[1] -eq 0x5A) {
+                  Write-Host "WebView2 引导程序已就绪：$([math]::Round($len/1MB,2)) MB"
+                  break
+                }
+                Write-Host "第 $i 次下载不完整（$len 字节，非 PE），重试"
+              } catch {
+                Write-Host "第 $i 次下载失败：$($_.Exception.Message)"
+              }
+              if ($i -eq 3) { Write-Error "WebView2 引导程序下载失败"; exit 1 }
+              Start-Sleep -Seconds 3
+            }
+          }
+          python paimiao_cloud/build_evo.py
+
+      - name: 压缩 + 算 SHA-256
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path code/storage.py -Pattern 'APP_VERSION\s*=\s*"([\d.]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $name = "Evo-$ver-win64.zip"
+          # 复制使用说明到程序文件夹内再压，保持和 tools/release.py 一致的包结构
+          $readmeDst = "dist/Evo/使用说明（先看这个）.txt"
+          $readmeSrc = "release/使用说明.txt"
+          if (Test-Path $readmeSrc) {
+            # 用 .Replace 而不是 -f：说明书正文含 "{}"、"%" 等，-f 会把它们当格式占位符报
+            # "Input string was not in a correct format"。只替换三个已知标记，最稳。
+            $txt = Get-Content $readmeSrc -Raw -Encoding utf8
+            $txt = $txt.Replace('{version}', $ver).Replace('{date}', (Get-Date -Format 'yyyy-MM-dd')).Replace('{commit}', 'github-actions')
+            # 去掉可能残留的 UTF-8 BOM，避免说明书首行多一个不可见字符
+            $txt = $txt.TrimStart([char]0xFEFF)
+            [IO.File]::WriteAllText((Join-Path (Get-Location) $readmeDst), $txt, (New-Object Text.UTF8Encoding($true)))
+          }
+          Compress-Archive -Path "dist/Evo/*" -DestinationPath "dist/$name" -CompressionLevel Optimal
+          $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Out-File -Encoding ascii "dist/$name.sha256"
+          Write-Host "SHA-256: $hash"
+          "EVO_ZIP=dist/$name" >> $env:GITHUB_ENV
+          "EVO_SHA=dist/$name.sha256" >> $env:GITHUB_ENV
+          "EVO_VER=$ver" >> $env:GITHUB_ENV
+
+      # 推 main（或手动 dispatch）就发布：不再要求手动打 tag。
+      # GitHub Releases 必须绑定 tag，因此这里先自动创建/更新 v<版本号> 的 tag 指向当前
+      # commit，再让 action 用它。版本号没变、tag 已存在时更新其指向（force），保证幂等可重跑。
+      - name: 自动打 tag（v版本号）
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v$($env:EVO_VER)"
+          Write-Host "目标 tag：$tag"
+          # 用 git 打 tag 并强推到当前 commit（已存在就覆盖，幂等）
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f $tag
+          git push -f origin "refs/tags/$tag"
+          Write-Host "已推送 tag $tag -> $($env:GITHUB_SHA)"
+
+      - name: 建 Release 并上传
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.EVO_VER }}
+          files: |
+            ${{ env.EVO_ZIP }}
+            ${{ env.EVO_SHA }}
+          generate_release_notes: true
+          body: |
+            派喵云同步版 Evo ${{ env.EVO_VER }}
+            下载 `Evo-${{ env.EVO_VER }}-win64.zip` 解压即用；`.sha256` 用于核对完整性。
+
+      # 把 zip 传到 Cloudflare R2（自定义域 cfr2-apex.skycraft.cn 公开下载）。
+      # 这一步放在「建 Release」之后、「通知 ApexPacks」之前：先确保包能在 R2 下到，
+      # 再让 evo-latest.json 指向它，避免出现「版本更新了但包还没传上去」的空窗。
+      # 用 rclone（S3 兼容端点），在 Windows runner 上用 choco 装一下即可。
+      - name: 上传安装包到 R2
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          EVO_VER: ${{ env.EVO_VER }}
+          EVO_ZIP: ${{ env.EVO_ZIP }}
+          EVO_SHA: ${{ env.EVO_SHA }}
+        run: |
+          if (-not $env:R2_ACCOUNT_ID -or -not $env:R2_ACCESS_KEY_ID -or -not $env:R2_SECRET_ACCESS_KEY) {
+            Write-Error "缺少 R2 凭据（R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY）"
+            exit 1
+          }
+          if (-not $env:R2_BUCKET) { Write-Error "缺少 R2_BUCKET 变量"; exit 1 }
+          choco install rclone -y --no-progress | Out-Null
+          $rclone = "rclone"
+          # 用环境变量注入 S3 配置，不落盘配置文件（避免凭据写进 runner 磁盘）
+          $env:RCLONE_CONFIG_R2_TYPE = "s3"
+          $env:RCLONE_CONFIG_R2_PROVIDER = "Cloudflare"
+          $env:RCLONE_CONFIG_R2_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:RCLONE_CONFIG_R2_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:RCLONE_CONFIG_R2_ENDPOINT = "https://$($env:R2_ACCOUNT_ID).r2.cloudflarestorage.com"
+          $env:RCLONE_CONFIG_R2_ACL = "public-read"
+          $name = "Evo-$($env:EVO_VER)-win64.zip"
+          $remote = "R2:$($env:R2_BUCKET)/evo/$name"
+          $bucketPath = "R2:$($env:R2_BUCKET)"
+
+          # 注意：**不要加 --checksum**。
+          # 这是踩过的坑：同版本号重跑流水线时（比如 0.3.6 修完 bug 重发），
+          # --checksum 会让 rclone 先拿本地和远端比对，R2 侧对象不一定能给出可比对的
+          # 哈希，于是它可能判定“已相同”直接跳过，结果远端留着上一次失败跑上传的旧包——
+          # 那次 Evo-0.3.6-win64.zip 就停在 14:14 的旧内容，而 latest.zip 是新的，
+          # 用户点网站下载按钮拿到的正是旧包。S3 的 PUT 本身是幂等的，无条件上传最稳。
+
+          # 上传前先删掉同名对象：R2 的 public-read ACL 下，覆盖写个别情况会保留旧的
+          # Last-Modified/Cache-Control，删掉重建最干净。删不存在的键不报错。
+          & $rclone deletefile "$remote" 2>$null
+          & $rclone deletefile "$bucketPath/evo/latest.zip" 2>$null
+          & $rclone deletefile "$bucketPath/evo/$name.sha256" 2>$null
+
+          & $rclone copyto $env:EVO_ZIP $remote --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 $name 失败"; exit 1 }
+          $remoteInfo = & $rclone lsjson $remote --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          $remoteFacts = " 远端=$($remoteInfo.Size)B/$($remoteInfo.ModTime)"
+          if ($LASTEXITCODE -ne 0) { Write-Error "回读 $name 失败"; exit 1 }
+          & $rclone copyto $env:EVO_ZIP "$bucketPath/evo/latest.zip" --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 latest.zip 失败"; exit 1 }
+          & $rclone copyto $env:EVO_SHA "$bucketPath/evo/$name.sha256" --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 $name.sha256 失败"; exit 1 }
+
+          # 上传完必须校验，但**不能打 CDN 域名**。
+          # 这是第二个坑：cfr2-apex.skycraft.cn 前面挂着 Cloudflare 边缘缓存，
+          # 同版本号重发时边缘还留着上一次的旧包（实测 age=5074s 仍然 HIT），
+          # 于是「HEAD 一下看大小」读到的是缓存里的旧尺寸，把上传成功的构建判成失败。
+          # 校验必须问 R2 本体（S3 API），那才是真相。
+          $localSize = (Get-Item $env:EVO_ZIP).Length
+          $localHash = (Get-FileHash $env:EVO_ZIP -Algorithm SHA256).Hash.ToLower()
+
+          # 用 rclone 的 lsjson 拿远端大小——它走 S3 API，不经 CDN。
+          if (-not $remoteInfo -or $remoteInfo.Size -ne $localSize) {
+            Write-Error "R2 本体校验失败：$name$remoteFacts ≠ 本地 ${localSize}B"
+            exit 1
+          }
+          Write-Host "R2 本体校验通过：$name = $localSize 字节"
+
+          $latestInfo = & $rclone lsjson "$bucketPath/evo/latest.zip" --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $latestInfo -or $latestInfo.Size -ne $localSize) {
+            Write-Error "R2 本体校验失败：latest.zip 远端 $($latestInfo.Size) 字节 ≠ 本地 $localSize 字节"
+            exit 1
+          }
+          Write-Host "R2 本体校验通过：latest.zip = $localSize 字节"
+
+          # 再核 .sha256（同样走 S3 侧读取，不经 CDN）。网站/一键更新靠它比对。
+          $remoteShaInfo = & $rclone cat "$bucketPath/evo/$name.sha256" --s3-no-check-bucket 2>$null
+          if ($remoteShaInfo -notmatch [regex]::Escape($localHash)) {
+            Write-Error "R2 上 $name.sha256 与本地不一致：远端 $remoteShaInfo / 本地 $localHash"
+            exit 1
+          }
+          Write-Host "R2 本体校验通过：$name.sha256 匹配 $localHash"
+          $contentsList = $name + ',latest.zip,' + $name + '.sha256'
+          "R2_PURGE_PATHS=$contentsList" >> $env:GITHUB_ENV
+
+      # CDN 归档缓存必须主动清，不能等 TTL。
+      # 同版本号重发时，边缘缓存（cf-cache-status: HIT）会继续把旧包喂给用户，
+      # 网站按钮指向的就是它——0.3.6 重发时用户下到的仍是旧代码，根因就在这里。
+      # 需要 secret R2_PURGE_TOKEN（Cloudflare API Token，权限：Zone.Cache Purge）
+      # 和 vars CF_ZONE_ID；两者缺一时只告警不失败（新版本号首次上传本来就没缓存）。
+      - name: 清理 Cloudflare 缓存
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          R2_PURGE_TOKEN: ${{ secrets.R2_PURGE_TOKEN }}
+          CF_ZONE_ID: ${{ vars.CF_ZONE_ID }}
+          R2_PURGE_PATHS: ${{ env.R2_PURGE_PATHS }}
+        run: |
+          if (-not $env:R2_PURGE_TOKEN -or -not $env:CF_ZONE_ID) {
+            Write-Warning "未配置 R2_PURGE_TOKEN / CF_ZONE_ID，跳过 CDN 缓存清理。同版本号重发可能仍会下发旧包。"
+            exit 0
+          }
+          $files = ($env:R2_PURGE_PATHS -split ',') | ForEach-Object { "https://cfr2-apex.skycraft.cn/evo/$_" }
+          $body = @{ files = $files } | ConvertTo-Json -Compress
+          $uri = "https://api.cloudflare.com/client/v4/zones/$($env:CF_ZONE_ID)/purge_cache"
+          try {
+            $resp = Invoke-RestMethod -Uri $uri -Method Post -TimeoutSec 30 `
+              -Headers @{ Authorization = "Bearer $($env:R2_PURGE_TOKEN)"; 'Content-Type' = 'application/json' } `
+              -Body $body -ErrorAction Stop
+          } catch {
+            # 清缓存失败不应让整次发布失败：包已经传好了，只是边缘可能还挂着旧包。
+            # 同版本号重发前，手动在 CF 后台点一次「清除缓存」即可。
+            Write-Warning "清理 CDN 缓存失败（$($_.Exception.Message)），发布继续；同版本号重发前请手动清缓存。"
+            exit 0
+          }
+          if (-not $resp.success) {
+            Write-Warning "清理 CDN 缓存被拒绝：$($resp.errors | ConvertTo-Json -Compress)，发布继续。"
+            exit 0
+          }
+          Write-Host "已清除 CDN 缓存：$($files -join ', ')"
+
+      - name: 通知 ApexPacks 更新 evo-latest.json
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          # 用 repository_dispatch 让 ApexPacks 仓库去改 server/data/evo-latest.json。
+          # 需要一个 PAT（repo 权限，classic）或 fine-grained token（对 ApexPacks 有 contents:write），
+          # 存在本仓库的 secret APEXPACKS_DISPATCH_TOKEN 里。
+          # zip 下载地址用 R2 自定义域（cfr2-apex.skycraft.cn，国内体验比 GitHub 好、出站免费）。
+          # 注意：Evo 的 cloud/upstream.py 白名单必须含 cfr2-apex.skycraft.cn，否则一键更新会静默降级。
+          $ver = "$env:EVO_VER"
+          $sha = (Get-Content "$env:EVO_SHA" -Raw).Split(' ')[0]
+          $size = (Get-Item "$env:EVO_ZIP").Length
+          $url = "https://cfr2-apex.skycraft.cn/evo/Evo-${ver}-win64.zip"
+          $notes = @()
+          if (Test-Path "release/更新内容.txt") {
+            $notes = Get-Content "release/更新内容.txt" -Encoding utf8 | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }
+          }
+          $payload = @{
+            event_type = "evo-release"
+            client_payload = @{
+              version = $ver
+              date = (Get-Date -Format 'yyyy-MM-dd')
+              page = "https://apex.skycraft.cn/#evo"
+              notes = $notes
+              download = @{ url = $url; sha256 = $sha; size = [int64]$size }
+            }
+          } | ConvertTo-Json -Depth 6 -Compress
+          $headers = @{
+            Authorization = "Bearer ${{ secrets.APEXPACKS_DISPATCH_TOKEN }}"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/${{ vars.APEXPACKS_REPO }}/dispatches" -Headers $headers -Body $payload -ContentType "application/json"
+          Write-Host "已通知 ApexPacks 更新 evo-latest.json"
