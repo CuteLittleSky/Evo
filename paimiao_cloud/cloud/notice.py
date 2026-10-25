@@ -246,7 +246,12 @@ def inject_card(source: str, branch: dict) -> str:
 
 def patch_source(source: str, template: str, branch: dict, version: str = "") -> str:
 
-    source = inject_dialog(source, version)
+    # 2026-10-25 用户决定：不再弹启动说明（上游 0.4.0 的引导页已经够多了），
+    # 设置页的「关于本分支 / 第三方许可」卡片保留。inject_dialog / dialog_html /
+    # should_show / mark_seen 的代码留着不删 —— /cloud/notice/ack 路由还在用它
+    # （已看过记录），想恢复弹窗时把下面这行 if 打开即可。
+    if False:
+        source = inject_dialog(source, version)
     if template == "settings.html":
         source = inject_card(source, branch)
     return source

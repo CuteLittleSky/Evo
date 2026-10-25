@@ -158,7 +158,9 @@ def _patch_template(source):
         source = _hide_follow_block(source)
     return source
 
-_SETTINGS_BLOCK_END = "{% endif %}\n    </section>"
+_SETTINGS_BLOCK_END = "</section>"
+
+_TELEMETRY_END = _SETTINGS_BLOCK_END
 
 def _hide_ask_card(source):
 
@@ -178,10 +180,10 @@ def _hide_telemetry_section(source):
     section = source.find(_TELEMETRY_SECTION, start)
     if section < 0:
         return source
-    end = source.find(_SETTINGS_BLOCK_END, section)
+    end = source.find(_TELEMETRY_END, section)
     if end < 0:
         return source
-    end += len(_SETTINGS_BLOCK_END)
+    end += len(_TELEMETRY_END)
     return source[:start] + source[end:].lstrip("\r\n")
 
 def _hide_follow_block(source):

@@ -101,7 +101,10 @@ jobs:
             $txt = $txt.TrimStart([char]0xFEFF)
             [IO.File]::WriteAllText((Join-Path (Get-Location) $readmeDst), $txt, (New-Object Text.UTF8Encoding($true)))
           }
-          Compress-Archive -Path "dist/Evo/*" -DestinationPath "dist/$name" -CompressionLevel Optimal
+          # 压 dist/Evo 这个文件夹本身（不带 /*）：zip 里要有顶层 Evo/ 目录，
+          # 和 tools/release.py 的结构一致；updater.py 的 extract 要求所有条目
+          # 都在 Evo/ 下，否则报「安装包里的文件位置不对」。
+          Compress-Archive -Path "dist/Evo" -DestinationPath "dist/$name" -CompressionLevel Optimal
           $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLower()
           "$hash  $name" | Out-File -Encoding ascii "dist/$name.sha256"
           Write-Host "SHA-256: $hash"

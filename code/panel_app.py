@@ -29,6 +29,8 @@ import app_settings
 import autostart
 import data_move
 import game_aspect
+import game_lang
+import global_stats
 import ranks
 import screenshots
 import sounds
@@ -37,13 +39,17 @@ import telemetry
 import update_check
 import updater
 import paths
+try:  # 设置页"微信小程序"一栏。小程序的文件只在开发者电脑上，不上传 GitHub、小程序上线前不打进安装包
+    import panel_cloud  # （2026-10-24 用户决定）：没有就不显示这一栏
+except ImportError:
+    panel_cloud = None
 from paths import CAPTURES_DIR, CONFIG_DIR, PANEL_DIR, data_absolute
 from post_match import COUNTED_KILLS_NOTES, NO_SUMMARY_NOTES
 
 # 面板文件的类型写死：Flask 按 Windows 注册表判断文件类型，有的软件会把 .css 改成 text/plain，
 # WebView2 和浏览器就不用这个样式表，面板只剩一堆没排好的文字
 for _type, _ext in (("text/css", ".css"), ("text/javascript", ".js"), ("font/woff2", ".woff2"),
-                    ("image/webp", ".webp"), ("image/png", ".png")):
+                    ("image/webp", ".webp"), ("image/png", ".png"), ("image/jpeg", ".jpg")):
     mimetypes.add_type(_type, _ext)
 
 PER_PAGE = 20
@@ -120,6 +126,8 @@ app = Flask(__name__, template_folder=str(PANEL_DIR / "templates"), static_folde
 app.secret_key = secrets.token_hex(16)  # 每次启动随机生成，用于页面上的提示消息
 app.config["TOKEN"] = secrets.token_urlsafe(16)  # 修改、删除时要带上的口令
 app.config["DB"] = storage.DB_PATH
+if panel_cloud is not None:
+    app.register_blueprint(panel_cloud.bp)  # 设置页"微信小程序"：绑定、解绑、立即同步（panel_cloud.py）
 
 
 # ---------- 数据库连接：每次网页请求打开一次，请求结束时关闭 ----------
@@ -343,6 +351,7 @@ def view(row):
         "no_summary": any(n in (row["review_note"] or "") for n in NO_SUMMARY_NOTES),  # 没有总结页的局：队友只能靠对局中认
         "has_evidence": bool(row["evidence_path"]),
         "evidence_recorded": screenshots.recorded(row["evidence_path"]),  # 记录程序存的截图：确认、删除这一局时会删掉
+        "evidence_summary": screenshots.is_summary(row["evidence_path"]),  # 总结页截图：确认时留着，删除这一局时才删
         "form": {name: "" if row[name] is None else row[name] for name in EDITABLE},
         "warn_fields": warn_fields(row["review_note"]) if row["needs_review"] else set(),
     }
@@ -618,6 +627,46 @@ def combo_table(rows, mates):
     return table, known
 
 
+WEAPONS = game_lang.load("weapons.json")  # 武器名单、"只算第一次拿到武器多少秒以后"（见 weapons.py）
+
+
+def duration_text(seconds):
+    """拿在手上的时间：如"2 小时 5 分"、"12 分 30 秒"、"40 秒"。"""
+    s = int(round(seconds))
+    if s >= 3600:
+        return f"{s // 3600} 小时 {s % 3600 // 60} 分"
+    if s >= 60:
+        return f"{s // 60} 分 {s % 60} 秒"
+    return f"{s} 秒"
+
+
+def weapon_table(rows, holds):
+    """最常用武器（2026-10-24 用户决定）：每把武器拿在手上多久，按时间从多到少；局数 = 拿过它的局。
+    只算每一局第一次拿到武器 count_after_seconds 秒以后的（不算落地后随手捡的；页面上不写这条规则，用户决定）。
+    rows：要统计的局；holds：weapon_holds 表的行（多了不要紧）。返回 (列表, 合计)；这个范围里没记下武器返回 ([], None)。"""
+    after = WEAPONS["count_after_seconds"]
+    games = {r["match_id"] for r in rows}
+    seconds, played = {}, {}
+    for h in holds:
+        counted = h["end_s"] - max(h["start_s"], after)
+        if h["match_id"] not in games or counted <= 0:
+            continue
+        seconds[h["weapon"]] = seconds.get(h["weapon"], 0) + counted
+        played.setdefault(h["weapon"], set()).add(h["match_id"])
+    total = sum(seconds.values())
+    if not total:
+        return [], None
+    top = max(seconds.values())
+    table = [{
+        "name": WEAPONS["weapons"].get(key, {}).get("zh", key),
+        "time": duration_text(s),
+        "share": "<1%" if s / total < 0.005 else f"{s / total:.0%}",
+        "bar": round(s / top * 100, 1),  # 横条长短：和拿得最久的那把比
+        "games": len(played[key]),
+    } for key, s in sorted(seconds.items(), key=lambda kv: -kv[1])]
+    return table, {"time": duration_text(total), "games": len(set().union(*played.values()))}
+
+
 def legend_table(rows):
     """传奇表现（详细版）：用过的每个传奇一行，按局数从多到少；名次分布的横条按这个传奇自己的局数算比例。
     返回 (列表, 没认出传奇的局数)。"""
@@ -852,7 +901,10 @@ def matches():
 
 @app.route("/stats")
 def stats():
-    """数据页：常一起玩的队友、传奇表现（详细版）。范围按钮和总览页一样（近 30 局 / 全部）。"""
+    """数据页：最常用武器、常一起玩的队友、传奇表现（详细版）、传奇组合。范围按钮和总览页一样（近 30 局 / 全部）。
+    顶部切换"我的 / 全体玩家"：view=all 是全体玩家（stats_everyone）。"""
+    if request.args.get("view") == "all":
+        return stats_everyone()
     range_key = request.args.get("range") if request.args.get("range") in RANGES else "30"
     names = account_view()["names"]
     rows = storage.all_matches(db(), names)
@@ -861,6 +913,7 @@ def stats():
     mates = teammate_table(in_range, all_mates)
     legends, no_legend = legend_table(in_range)
     combos, combo_known = combo_table(in_range, all_mates)
+    weapons, weapon_all = weapon_table(in_range, storage.all_weapon_holds(db(), names))
     return render_template(
         "stats.html",
         range_key=range_key,
@@ -874,9 +927,42 @@ def stats():
         combos=combos,
         combo_all=group_numbers(combo_known) if combo_known else None,  # 参照：全队传奇都认出的局
         min_combo_games=MIN_COMBO_GAMES,
+        weapons=weapons,
+        weapon_all=weapon_all,
         buckets=PLACE_BUCKETS,
         review_count=storage.count_review(db(), names),
     )
+
+
+def stats_everyone():
+    """数据页"全体玩家"（global_stats.py，2026-10-24 用户决定）：开了匿名统计的所有 Evo 玩家的汇总，和自己的比。
+    没开匿名统计：锁住的样子（蒙版 + 锁 + 开启按钮），不下载。开了：用存着的汇总；没有或超过 24 小时，
+    页面打开后脚本马上下载（POST /stats/everyone/refresh），下载好重新打开页面。"""
+    range_key, mode, tier = global_stats.choose(request.args)
+    allowed = global_stats.allowed()
+    cache = global_stats.cached() if allowed else None
+    view = None
+    if cache is not None:
+        names = account_view()["names"]
+        rows = storage.all_matches(db(), names)
+        rank = latest_rank(rows, storage.lobby_readings(db(), names))
+        view = global_stats.page(cache["summary"], rows, storage.all_teammates(db(), names), range_key, mode, tier,
+                                 your_tier=rank[0] if rank else None, icons=LEGEND_ICONS)
+    return render_template(
+        "stats_all.html",
+        allowed=allowed,
+        view=view,
+        fetch_now=allowed and global_stats.stale(cache),
+        range_key=range_key, mode=mode, tier=tier,
+        ranges=global_stats.RANGES, modes=global_stats.MODES, tiers=global_stats.TIERS,
+        review_count=storage.count_review(db(), account_view()["names"]),
+    )
+
+
+@app.post("/stats/everyone/refresh")
+def refresh_everyone():
+    """"全体玩家"右上角的刷新按钮（和页面打开时的自动下载）：现在下载一次汇总。回 {"ok", "error"}。"""
+    return jsonify(global_stats.fetch())
 
 
 def back_to_list(**changes):
@@ -920,7 +1006,7 @@ def update(match_id):
         if edited:
             fields["edited"] = ",".join(sorted(edited))
     fields["needs_review"] = 0  # 人工确认过了，不再标记待确认（review_note 保留，记录当初为什么待确认）
-    deleted = screenshots.discard(db(), row)  # 确认过了，截图不再需要（原则 2）
+    deleted = screenshots.discard(db(), row)  # 确认过了，截图不再需要（原则 2）；总结页截图留着
     if deleted:
         fields["evidence_path"] = None
     storage.update_match(db(), match_id, fields)
@@ -930,7 +1016,7 @@ def update(match_id):
 
 @app.post("/matches/<int:match_id>/delete")
 def delete(match_id):
-    deleted = screenshots.discard(db(), storage.get_match(db(), match_id))
+    deleted = screenshots.discard(db(), storage.get_match(db(), match_id), removing=True)
     storage.delete_match(db(), match_id)
     flash(f"已删除第 {match_id} 号对局" + ("和它的截图" if deleted else ""), "ok")
     return back_to_list()
@@ -1017,17 +1103,18 @@ def db_path():
 @app.route("/settings")
 def settings():
     shot_count, shot_bytes = folder_usage(CAPTURES_DIR / "live")
-    clean_count, clean_bytes = screenshots.cleanable(db())
+    clean = screenshots.cleanable(db())
     size = screen_size()
     return render_template(
         "settings.html",
         resolution=f"{size[0]} × {size[1]}" if size else None,
         aspect=aspect_view(size),
+        language=language_view(),
         move=move_view(),
         autostart={**autostart.status(), "blocked": autostart.unavailable(),
                    "failed": session.pop("autostart_failed", None)},
         sounds_on=sounds.enabled(),
-        sound_list=[{"key": key, "label": label, "when": SOUND_WHEN[key]} for key, label in sounds.SOUNDS.items()],
+        sound=sound_view(),
         data_dir=db_path().parent,
         db_file=db_path().name,
         db_size=size_text(db_path().stat().st_size) if db_path().exists() else "0 KB",
@@ -1039,15 +1126,15 @@ def settings():
         keep_shots=app_settings.get(screenshots.KEEP_ALL_KEY, False) is True,
         shots_locked=screenshots.in_project(),  # 用源码运行：永远保留全部，开关和删除按钮都不能用
         recording=screenshots.recording_folder() is not None,
-        clean_count=clean_count,
-        clean_size=size_text(clean_bytes),
+        clean_count=clean.deleted,
+        clean_convert=clean.converted,
+        clean_size=size_text(clean.freed),
         version=storage.APP_VERSION,
         source_url=SOURCE_URL,
         feedback_url=FEEDBACK_URL,
         feedback_group=FEEDBACK_GROUP,
         update_auto=app_settings.get("update_auto") is True,
-        stats=telemetry.status(),
-        stats_preview=telemetry.preview(db()),
+        stats_on=telemetry.consent() is True,
         last_check=app_settings.get("update_last_check"),
         newest=update_check.known_newer(),
         job=updater.state(update_check.known_newer()),
@@ -1064,6 +1151,13 @@ def aspect_view(size):
         found = size[0] / size[1]  # 没读到游戏设置：和屏幕一样
     return {"choice": game_aspect.choice(), "auto": game_aspect.AUTO, "options": list(game_aspect.ASPECTS),
             "detected": game_aspect.name(found) if found else None, "why": why}
+
+
+def language_view():
+    """设置页"游戏语言"：选了什么、下拉框里有哪几种（还没做好的显示但不能选，见 game_lang.options）。"""
+    options = [{"value": lang, "name": name, "ready": ready} for lang, name, ready in game_lang.options()]
+    return {"choice": game_lang.choice(), "auto": game_lang.AUTO, "options": options,
+            "pending": [o["name"] for o in options if not o["ready"]]}
 
 
 def move_view():
@@ -1118,6 +1212,18 @@ def game_aspect_setting():
     return redirect(url_for("settings"))
 
 
+@app.post("/settings/game-language")
+def game_language_setting():
+    """"游戏语言"：自动识别 / 某一种做好了的语言。记录程序每隔几秒看一眼设置，所以几秒内生效。"""
+    value = request.form.get("language")
+    if value != game_lang.AUTO and value not in game_lang.languages():
+        abort(400)
+    app_settings.set_value(game_lang.SETTING_KEY, value)
+    picked = "自动识别" if value == game_lang.AUTO else game_lang.label(value)
+    flash(f"游戏语言已改成\"{picked}\"：正在记录的话，几秒内就按新的设置识别。", "ok")
+    return redirect(url_for("settings"))
+
+
 @app.post("/settings/autostart")
 def autostart_setting():
     """"开机自动启动"：设置页的开关，和第一次打开时页面顶部的提问（next 回到原来的页面）。
@@ -1147,6 +1253,27 @@ SOUND_WHEN = {  # 设置页"提示音"一栏：每一声什么时候响（规则
 }
 
 
+def sound_view():
+    """设置页"提示音"一栏：声音包、音量、三声（自己的文件选了哪个、上次选文件没成功的原因）。"""
+    custom = sounds.custom_files()
+    failed = session.pop("sound_failed", None)
+    return {
+        "packs": sounds.packs(),
+        "pack": sounds.pack(),
+        "custom": sounds.CUSTOM,
+        "volume": sounds.volume(),
+        "volume_range": (sounds.VOLUME_MIN, sounds.VOLUME_MAX, sounds.VOLUME_STEP),
+        "max_seconds": sounds.MAX_SECONDS,
+        "list": [{"key": key, "label": label, "when": SOUND_WHEN[key], "file": custom.get(key),
+                  "failed": failed["error"] if failed and failed.get("name") == key else None}
+                 for key, label in sounds.SOUNDS.items()],
+    }
+
+
+def back_to_sounds():
+    return redirect(url_for("settings") + "#h-sounds")
+
+
 @app.post("/settings/sounds")
 def sounds_setting():
     """"提示音"开关（默认开）。记录程序每次要响时看一眼，所以马上生效。"""
@@ -1157,16 +1284,69 @@ def sounds_setting():
     return redirect(url_for("settings"))
 
 
+@app.post("/settings/sound-pack")
+def sound_pack():
+    """换声音包（三声一起换）。页面上选了就提交，回到"提示音"这一栏（换成"自己的文件"时下面出现选文件的按钮）。"""
+    try:
+        sounds.set_pack(request.form.get("pack"))
+    except ValueError:
+        abort(400)
+    return back_to_sounds()
+
+
+@app.post("/settings/sound-volume")
+def sound_volume():
+    """音量滑块：松手时页面用脚本提交（不刷新页面），回答存下的值；没有脚本时回到设置页。"""
+    try:
+        value = sounds.set_volume(request.form.get("volume", ""))
+    except ValueError:
+        abort(400)
+    if request.headers.get("X-Evo-Fetch") == "1":
+        return jsonify({"ok": True, "volume": value})
+    return back_to_sounds()
+
+
+@app.post("/settings/sound-file")
+def sound_file():
+    """"自己的文件"里某一声的"选择文件…"：窗口已经把选的文件转成 WAV（settings.html），这里核对、存进数据文件夹。
+    页面用脚本提交：回答成功没有、不成功的原因（显示在这一行下面）；没有脚本时回到设置页，原因同样写在这一行下面。"""
+    name = request.form.get("name")
+    upload = request.files.get("file")
+    if name not in sounds.SOUNDS or upload is None:
+        abort(400)
+    try:
+        sounds.save_custom(name, upload.read(sounds.MAX_BYTES + 1), request.form.get("filename"))
+        error = None
+    except sounds.SoundFileError as e:
+        error = str(e)
+    if request.headers.get("X-Evo-Fetch") == "1":
+        return jsonify({"ok": error is None, "error": error})
+    if error:
+        session["sound_failed"] = {"name": name, "error": error}
+    return back_to_sounds()
+
+
+@app.post("/settings/sound-file/clear")
+def sound_file_clear():
+    """"恢复默认"：这一声不用自己的文件了，用回 Evo 默认的。"""
+    name = request.form.get("name")
+    if name not in sounds.SOUNDS:
+        abort(400)
+    sounds.clear_custom(name)
+    return back_to_sounds()
+
+
 @app.post("/settings/sound-preview")
 def sound_preview():
-    """设置页的"试听"：不管开关，响一声。页面用脚本提交（不刷新页面），回答放出来没有；没有脚本时回到设置页。"""
+    """设置页的"试听"：按现在的声音包和音量，不管开关，响一声。页面用脚本提交（不刷新页面），回答放出来没有；
+    没有脚本时回到设置页。"""
     name = request.form.get("name")
     if name not in sounds.SOUNDS:
         abort(400)
     ok = sounds.preview(name)
     if request.headers.get("X-Evo-Fetch") == "1":
         return jsonify({"ok": ok})
-    return redirect(url_for("settings"))
+    return back_to_sounds()
 
 
 @app.post("/settings/open-folder")
@@ -1191,22 +1371,26 @@ def keep_shots_setting():
     if on:
         flash("已开启\"保留全部截图\"：从下一局开始，每局的截图都会留着。", "ok")
     else:
-        flash("已关闭\"保留全部截图\"：从下一局开始识别完就删。之前存下的截图不会自动删。", "ok")
+        flash("已关闭\"保留全部截图\"：从下一局开始识别完就删，总结页截图转成 WEBP 留着。之前存下的截图不会自动删。", "ok")
     return redirect(url_for("settings"))
 
 
 @app.post("/settings/clean-shots")
 def clean_shots():
-    """"删除已识别完的截图"按钮：只留"待确认"的局要用的截图，正在记录的这一次不动（screenshots.clean_up）。"""
+    """"删除已识别完的截图"按钮：留总结页截图（转成 WEBP）和"待确认"的局要用的截图，正在记录的这一次不动
+    （screenshots.clean_up）。"""
     if screenshots.in_project():
         abort(400)
-    deleted, freed = screenshots.clean_up(db())
-    left, _ = screenshots.cleanable(db())
-    if deleted:
-        flash(f"已删除 {deleted} 张截图，腾出 {size_text(freed)}"
-              + (f"。还有 {left} 张没删掉（可能正被别的程序打开），关掉后再试一次" if left else ""), "ok")
-    elif left:
-        flash(f"{left} 张截图没删掉（可能正被别的程序打开），关掉后再试一次", "error")
+    done = screenshots.clean_up(db())
+    left = screenshots.cleanable(db())
+    stuck = left.deleted + left.converted
+    if done.deleted or done.converted:
+        parts = ([f"删除 {done.deleted} 张截图"] if done.deleted else []) + (
+            [f"把 {done.converted} 张总结页截图转成了 WEBP"] if done.converted else [])
+        flash(f"已{'，'.join(parts)}，腾出 {size_text(done.freed)}"
+              + (f"。还有 {stuck} 张没处理（可能正被别的程序打开），关掉后再试一次" if stuck else ""), "ok")
+    elif stuck:
+        flash(f"{stuck} 张截图没处理（可能正被别的程序打开），关掉后再试一次", "error")
     else:
         flash("没有可以删的截图", "ok")
     return redirect(url_for("settings"))
@@ -1238,20 +1422,8 @@ def telemetry_setting():
     elif was is None:
         flash("好的，不发送。以后可以在\"设置\"里打开。", "ok")
     else:
-        flash("已关闭匿名统计，不会再发送任何数据。已经发送的可以在设置页删除。", "ok")
+        flash("已关闭匿名统计，不会再发送任何数据。", "ok")
     return back_to_page()
-
-
-@app.post("/settings/telemetry/delete")
-def telemetry_delete():
-    """"关闭并删除已发送的数据"：请服务器删掉这个匿名编号发过的所有数据（要联网，最多等十几秒）。"""
-    try:
-        telemetry.delete_sent()
-    except telemetry.SendError as e:
-        flash(f"没删成：{e}。稍后再试一次。", "error")
-    else:
-        flash("已删除发送过的数据，并关闭了匿名统计。", "ok")
-    return redirect(url_for("settings") + "#stats")
 
 
 # ---------- 检查更新（update_check.py） ----------

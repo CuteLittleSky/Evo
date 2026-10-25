@@ -2,9 +2,11 @@
 
 - 没回答、点了"不了"、关掉以后：一个请求都不发
 - 只发同意以后结束、已经结束 1 小时的局；只发说好的那几项（游戏名、ID、队友名字、备注、截图位置都不发）
-- 日活一天只发一次；发过的局不重发，改过（战绩页修正）的局再发一次，带上改了哪几项
+- 日活一天只发一次，没发出去的日子下次连上时补发（最多 30 天）；发过的局不重发，改过（战绩页修正）的局再发一次，
+  带上改了哪几项
 - 一次最多 100 局，多的分几次；连不上、服务器拒绝时不算发过，下次再发
-- 面板：前两个提问回答了才问这一个，两个按钮一样的样式；设置页的开关、状态、原样预览、删除已发送的数据（连不上时什么都不改）
+- 面板：前两个提问回答了才问这一个，两个按钮一样的样式；设置页只有开关和一句说明（2026-10-24 起不显示发送状态、
+  发送内容的原样，没有"关闭并删除已发送的数据"）
 
 运行：python tests/test_telemetry.py
 """
@@ -27,11 +29,12 @@ import storage
 import telemetry
 
 os.environ["no_proxy"] = "127.0.0.1,localhost"  # 电脑上设了代理时，本机的测试服务器也直接连
-KEYS = (telemetry.CONSENT_KEY, telemetry.SINCE_KEY, telemetry.ID_KEY, telemetry.PING_KEY, telemetry.LAST_KEY)
+KEYS = (telemetry.CONSENT_KEY, telemetry.SINCE_KEY, telemetry.ID_KEY, telemetry.PING_KEY, telemetry.LAST_KEY,
+        telemetry.MISSED_KEY)
 BODY_KEYS = {"id", "version", "matches", "ping"}
 PING_KEYS = {"day", "screen", "game_res", "game_mode", "aspect"}
-MATCH_KEYS = {"k", "day", "version", "mode", "map", "legend", "mates", "placement", "kills", "assists", "knockdowns",
-              "damage", "rp_delta", "tier", "rp_source", "review", "edited"}
+MATCH_KEYS = {"k", "day", "version", "mode", "map", "legend", "mates", "mate_stats", "placement", "kills", "assists",
+              "knockdowns", "damage", "rp_delta", "tier", "rp_source", "review", "edited"}
 SECRETS = ("测试玩家甲", "队友名字乙", "0123456789", "秘密备注", "captures/live")  # 这些一个字都不能发出去
 SINCE = "2026-10-20 12:00:00"
 NOW = datetime(2026, 10, 21, 10, 0)
@@ -68,7 +71,8 @@ def add_match(conn, ended_at, **extra):
              "needs_review": 1, "review_note": "名次对不上：秘密备注", "evidence_path": "captures/live/x/01.png", **extra}
     match_id = storage.insert_match(conn, match)
     storage.save_teammates(conn, match_id, [
-        {"slot": "hud1", "name": "队友名字乙", "player_id": "0123456789", "legend": "命脉", "kills": 2},
+        {"slot": "hud1", "name": "队友名字乙", "player_id": "0123456789", "legend": "命脉", "kills": 2, "assists": 1,
+         "knockdowns": 3, "damage": 640, "revives": 1},
         {"slot": "hud2", "name": "另一个队友", "player_id": "987", "legend": None}])
     return match_id
 
@@ -116,6 +120,9 @@ def send_checks(conn):
         one["mates"] == ["命脉", None] and one["placement"] == 3 and one["kills"] == 4 and one["damage"] == 1234
         and one["rp_delta"] == 56 and one["tier"] == "钻石" and one["review"] is True and one["day"] == "2026-10-20"
         and one["edited"] == [])
+    out["队友：传奇和这一局的击杀/助攻/击倒、伤害一一对应，别的项（救人、名字、ID）不发"] = (
+        one["mate_stats"] == [{"kills": 2, "assists": 1, "knockdowns": 3, "damage": 640},
+                              {"kills": None, "assists": None, "knockdowns": None, "damage": None}])
     out["没读出来的项发 null（不当作 0）"] = any(m["legend"] is None and m["damage"] is None for m in body["matches"])
     out["日活：日期、Apex 视频设置里的分辨率和显示模式、画面比例设置"] = (
         body["ping"]["day"] == "2026-10-21" and body["ping"]["game_res"] == "2560x1600"
@@ -168,7 +175,28 @@ def send_checks(conn):
     result = telemetry.send(now=later + timedelta(days=1))
     sizes = [len(body["matches"]) for _, body, _ in Handler.requests]
     out["又连上了：250 局分 3 次发（100、100、50）"] = result["ok"] and result["matches"] == 250 and sizes == [100, 100, 50]
-    for match_id in [before, first, second, recent, *many]:
+
+    # 日活没发出去：记着这一天，下次连上时补发（2026-10-24 用户决定）
+    day3, day4 = later + timedelta(days=2), later + timedelta(days=3)
+    telemetry.STATS_URL = "http://127.0.0.1:9"
+    telemetry.send(now=day3)
+    telemetry.STATS_URL = url
+    out["日活没发出去：记下这一天"] = app_settings.get(telemetry.MISSED_KEY) == ["2026-10-23"]
+    Handler.requests.clear()
+    last = add_match(conn, "2026-10-23 20:00:00")
+    result = telemetry.send(now=day4)
+    days = [(body.get("ping", {}).get("day"), len(body["matches"])) for _, body, _ in Handler.requests]
+    out["第二天连上了：先补发前一天的日活（和没发的局一起），再发今天的，一个请求一天"] = (
+        result["ok"] and result["matches"] == 1 and days == [("2026-10-23", 1), ("2026-10-24", 0)]
+        and app_settings.get(telemetry.MISSED_KEY) is None and app_settings.get(telemetry.PING_KEY) == "2026-10-24")
+    Handler.requests.clear()
+    out["补发完：再发一次不联网"] = not telemetry.send(now=day4)["ping"] and not Handler.requests
+    app_settings.set_value(telemetry.MISSED_KEY, [f"2026-09-{d:02d}" for d in range(1, 31)] + ["2026-08-31", "坏的", 5])
+    out["最多补 30 天（更早的不补），格式不对的去掉"] = (
+        telemetry._ping_days("2026-10-24") == [f"2026-09-{d:02d}" for d in range(1, 31)])
+    telemetry.set_consent(True)
+    out["重新打开匿名统计：以前没发出去的日活不补"] = app_settings.get(telemetry.MISSED_KEY) is None
+    for match_id in [before, first, second, recent, last, *many]:
         storage.delete_match(conn, match_id)
     return out
 
@@ -195,7 +223,8 @@ def panel_checks(conn):
     out["两个按钮一样的样式（不引导点同意）"] = (
         '<button type="submit" class="btn">同意</button>' in first
         and '<button type="submit" class="btn">不了</button>' in first)
-    out["提问里能点进设置页看原样"] = 'class="text-link" href="/settings#stats"' in first
+    out["提问里能点进设置页（关闭在那里），不再说能看原样、能删除"] = (
+        'class="text-link" href="/settings#stats"' in first and "原样" not in first and "删除已发送" not in first)
 
     with mock.patch.object(telemetry, "send") as sending:
         got = post("/settings/telemetry", on="0", next="/")
@@ -205,49 +234,37 @@ def panel_checks(conn):
         out["设置页：匿名统计一栏，开关关着，写着不发送"] = (
             '<h2 id="h-stats">匿名统计</h2>' in settings
             and 'aria-checked="false" aria-labelledby="stats-name"' in settings and "已关闭：不发送任何数据" in settings)
-        out["从没发过：没有删除按钮"] = "关闭并删除已发送的数据" not in settings
+        out["设置页的说明：Evo 会将数据用于改进识别（不写\"打开后，Evo ……\"）"] = (
+            "Evo 会将数据用于改进识别" in settings and "打开后，Evo" not in settings)
         got = post("/settings/telemetry", on="1", next="/settings")
         out["设置页打开：同意、马上在后台发一次、开关开着"] = (
             telemetry.consent() is True and sending.called
             and 'aria-checked="true" aria-labelledby="stats-name"' in got and "已开启匿名统计" in got)
+        got = post("/settings/telemetry", on="0", next="/settings")
+        out["设置页关掉：提示不再发送，不再提删除"] = (
+            telemetry.consent() is False and "已关闭匿名统计" in got and "删除" not in got.split("已关闭匿名统计")[1][:40])
+        telemetry.set_consent(True)
 
-    storage.insert_match(conn, {"ended_at": "2026-10-21 20:00:00", "player_name": "测试玩家甲", "legend": "恶灵",
-                                "review_note": "秘密备注"})
+    app_settings.set_value(telemetry.LAST_KEY, {"ok": True, "matches": 3, "ping": True, "error": None,
+                                                "at": "2026-10-21 21:00"})
     settings = page("/settings")
-    out["设置页：查看会发送的内容（原样，以最近一局为例），不含游戏名和备注"] = (
-        "查看会发送的内容" in settings and "&#34;legend&#34;: &#34;恶灵&#34;" in settings and "测试玩家甲" not in settings.split(
-            "查看会发送的内容")[1].split("</pre>")[0] and "秘密备注" not in settings)
-    out["设置页：随机编号和删除按钮"] = (
-        f"随机编号 {app_settings.get(telemetry.ID_KEY)}" in settings and "关闭并删除已发送的数据" in settings)
-    out["关于 Evo：写明只有更新和同意的匿名统计会联网"] = "只有更新和你同意的匿名统计会联网" in settings
-
-    Handler.requests.clear()
-    old_id = app_settings.get(telemetry.ID_KEY)
-    url = telemetry.STATS_URL
-    telemetry.STATS_URL = "http://127.0.0.1:9"
-    got = post("/settings/telemetry/delete")
-    out["删除时连不上：提示没删成，什么都不改"] = (
-        "没删成" in got and telemetry.consent() is True and app_settings.get(telemetry.ID_KEY) == old_id)
-    telemetry.STATS_URL = url
-    telemetry._save_sent({"x": "y"})
-    got = post("/settings/telemetry/delete")
-    out["删除：请服务器删掉这个编号的数据"] = Handler.requests == [("/v1/delete", {"id": old_id},
-                                                         f"Evo/{storage.APP_VERSION}")]
-    out["删除后：关闭发送、忘掉编号和发过的局，提示删好了"] = (
-        telemetry.consent() is False and app_settings.get(telemetry.ID_KEY) is None
-        and not telemetry.SENT_PATH.exists() and "已删除发送过的数据" in got)
-    telemetry.set_consent(True)
-    out["再打开：换了一个新编号"] = app_settings.get(telemetry.ID_KEY) not in (None, old_id)
+    stats = settings.split('<h2 id="h-stats">')[1].split("</section>")[0]
+    out["开着时：只有开关和说明，不显示从什么时候起、已发送几局、上次发送"] = (
+        'aria-checked="true" aria-labelledby="stats-name"' in stats and "已发送" not in stats
+        and "上次" not in stats and "起的对局" not in stats and "已关闭：不发送任何数据" not in stats)
+    out["没有\"查看会发送的内容\"、随机编号、\"关闭并删除已发送的数据\""] = (
+        "查看会发送的内容" not in settings and "随机编号" not in settings
+        and app_settings.get(telemetry.ID_KEY) not in settings and "关闭并删除已发送的数据" not in settings)
+    out["删除的地址已经去掉"] = client.post("/settings/telemetry/delete", data={"token": token}).status_code == 404
+    out["关于 Evo：不再写'全本地'（2026-10-24 用户决定：不强调不联网）"] = (
+        "关于 Evo" in settings and "全本地" not in settings and "会联网" not in settings)
 
     out["没带口令：拒绝"] = client.post("/settings/telemetry", data={"on": "1"}).status_code == 403
-    out["没带口令：不能删"] = client.post("/settings/telemetry/delete").status_code == 403
-    conn.execute("DELETE FROM matches WHERE review_note = '秘密备注'")
-    conn.commit()
     return out
 
 
 def main():
-    print("匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、连不上、面板的提问和设置页、删除）")
+    print("匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、连不上、面板的提问和设置页）")
     server, base = start_server()
     url = telemetry.STATS_URL
     telemetry.STATS_URL = base  # 绝不连到真正的统计服务器

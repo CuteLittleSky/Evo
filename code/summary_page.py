@@ -14,6 +14,7 @@ from pathlib import Path
 
 import cv2
 
+import game_lang
 from ocr import SMALL_CROP_PARAMS, create_engine, crop, load_config, load_image
 from paths import CAPTURES_DIR, data_relative
 from process_info import memory_mb
@@ -114,10 +115,11 @@ def read_summary(engine, img, cfg, save_crops=False):
 
 
 def is_champion(engine, img, cfg):
-    """总结页顶部的大字是不是"捍卫者"（拿冠军；被淘汰时是"全军覆没"）。"""
+    """总结页顶部的大字是不是"捍卫者"（拿冠军；被淘汰时是"全军覆没"）。配置里可以写几种（别的语言还没核实时）。"""
     banner = cfg["banner"]
+    names = [banner["champion"]] if isinstance(banner["champion"], str) else banner["champion"]
     result = engine(crop(img, banner["roi"], cfg, banner.get("anchor")))
-    return any(banner["champion"] in text for text in result.txts or ())
+    return any(name in text for text in result.txts or () for name in names)
 
 
 def to_seconds(duration):
@@ -176,9 +178,11 @@ def main():
     parser = argparse.ArgumentParser(description="从赛后总结页截图里读出本局数据")
     parser.add_argument("image", type=Path, help="截图路径")
     parser.add_argument("--save-crops", action="store_true", help="把裁出来的小块存到 captures/debug_crops/")
+    parser.add_argument("--lang", choices=game_lang.languages(), default=game_lang.DEFAULT,
+                        help="游戏语言（默认简体中文 zh-CN）")
     args = parser.parse_args()
 
-    cfg = load_config(CONFIG_NAME)
+    cfg = load_config(CONFIG_NAME, args.lang)
     img = load_image(args.image)
     if args.save_crops:
         CROPS_DIR.mkdir(parents=True, exist_ok=True)

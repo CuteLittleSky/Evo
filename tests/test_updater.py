@@ -1,8 +1,14 @@
 """一键更新（updater.py、update_check.safe_download、面板上的按钮）。不用截图，不联网：安装包由本机的小服务器提供。
 
-- latest.json 里的安装包信息：只接受 dl.evotracker.cn 的 https；SHA-256、大小格式不对就当作没有（只能去官网下载）
+- latest.json 里的安装包信息：只接受 dl.evotracker.cn 的 https；SHA-256、大小格式不对就当作没有（只能去官网下载）；
+  备用线路只接受 COS 存储桶里最外层的 zip，不对的去掉、不影响主线路；补丁包的规矩一样，不对的去掉
+- latest.json 从 dl.evotracker.cn 读不到（或格式不对）时改读 COS 上的
 - 下载：下载好、核对、解压后显示"已下载好"；SHA-256 对不上、服务器上没有（404）、压缩包里的路径往外跑、
   没有 Evo.exe 都报错并删掉下了一半的文件；下载中可以取消；不是打包版、没接上托盘、没有安装包信息时只能去官网
+- 备用线路：主线路 404、中途断了、太慢都换到备用线路，从断的地方接着下（那边不支持接着下就从头下）；
+  只有主线路时断了等一下再接着下；都不行才报错；下载的经过写进日志
+- 补丁包：有自己这个版本的就只下补丁包，拼出来的和完整安装包一样；本机的文件对不上、服务器上没有、补丁包是别的
+  版本的、清单里的路径往外跑，都改下完整的安装包；补丁包的 SHA-256 对不上就报错
 - 安装（换文件）：新的换进去，data_location.txt 和不认识的文件不动，旧的挪进 _old_version；
   中途出错就恢复原来的版本；新版本的 Evo.exe 带 --apply-update 时写结果、重新打开 Evo；等进程退出
 - 装好以后：新打开的 Evo 读结果（装上了 / 没装上），面板顶部只说一次；清理装过的版本、留着更新的
@@ -13,6 +19,7 @@
 
 import hashlib
 import http.server
+import io
 import json
 import os
 import shutil
@@ -42,20 +49,37 @@ GOOD_SHA = "a" * 64
 
 class Handler(http.server.BaseHTTPRequestHandler):
     files = {}  # 网址路径 → 内容
-    slow = set()  # 这些路径慢慢发（测试"取消"）
+    slow = set()  # 这些路径慢慢发（测试"取消"、"太慢就换线路"），约 1.3 MB/s
+    cut = {}  # 路径 → 发到文件的第几个字节就断开（测试"中途断了"）
+    cut_once = set()  # 这些路径只断一次，再来就正常发
+    no_range = set()  # 这些路径不支持接着下：不管 Range，总是发整个文件
+    requests = []  # 收到的请求：(路径, Range)
 
     def do_GET(self):  # noqa: N802
         data = self.files.get(self.path)
+        wanted = self.headers.get("Range")
+        self.requests.append((self.path, wanted))
         if data is None:
             self.send_error(404)
             return
-        self.send_response(200)
-        self.send_header("Content-Length", str(len(data)))
+        start = 0
+        if wanted and self.path not in self.no_range:
+            start = int(wanted.removeprefix("bytes=").rstrip("-"))
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{len(data) - 1}/{len(data)}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Length", str(len(data) - start))
         self.end_headers()
-        step = 64 * 1024 if self.path in self.slow else len(data)
-        for i in range(0, len(data), step):
+        end = len(data)
+        if self.path in self.cut:
+            end = max(start, self.cut[self.path])
+            if self.path in self.cut_once:
+                del self.cut[self.path]
+        step = 64 * 1024 if self.path in self.slow else end - start
+        for i in range(start, end, max(step, 1)):
             try:
-                self.wfile.write(data[i:i + step])
+                self.wfile.write(data[i:min(i + step, end)])
             except OSError:
                 return
             if self.path in self.slow:
@@ -89,7 +113,6 @@ def latest_for(base, path, data, version, sha=None):
     return {"version": version, "date": "2026-10-19", "page": "https://evotracker.cn/#download", "notes": ["测试"],
             "download": {"url": base + path, "sha256": sha or hashlib.sha256(data).hexdigest(), "size": len(data)}}
 
-
 def wait_done(latest, timeout=30):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -108,13 +131,14 @@ class App:
         self.dir.mkdir()
         self.game = False
         self.quit_called = threading.Event()
+        self.logs = []
         self.patches = [mock.patch.multiple(updater, FROZEN=True, EXE_DIR=self.dir, UPDATE_DIR=self.dir / "_update"),
                         mock.patch.object(update_check, "TEST_HOST", "127.0.0.1")]
 
     def __enter__(self):
         for p in self.patches:
             p.start()
-        updater.connect(game_running=lambda: self.game, quit_app=self.quit_called.set)
+        updater.connect(game_running=lambda: self.game, quit_app=self.quit_called.set, log=self.logs.append)
         return self
 
     def __exit__(self, *_exc):
@@ -130,14 +154,38 @@ class App:
 def download_info_checks():
     ok = {"url": "https://dl.evotracker.cn/Evo-0.3.3-win64.zip", "sha256": GOOD_SHA, "size": 1000}
     check = update_check.safe_download
-    return {
+    out = {
         "安装包信息：dl.evotracker.cn 的 https 地址才接受": check(ok) == ok,
         "http、别的网站、SHA-256 不对、大小不对、没有这一项：都当作没有（只能去官网）": all(check(x) is None for x in [
             {**ok, "url": "http://dl.evotracker.cn/a.zip"}, {**ok, "url": "https://evil.example.com/a.zip"},
             {**ok, "url": "https://evotracker.cn.evil.com/a.zip"}, {**ok, "sha256": "abc"}, {**ok, "sha256": "A" * 64},
             {**ok, "size": 0}, {**ok, "size": True}, {**ok, "size": 2 * 1024 ** 3}, {**ok, "size": "1000"}, None, "x"]),
         "没设测试地址时，本机地址也不接受": check({**ok, "url": "http://127.0.0.1:8000/a.zip"}) is None,
+        "latest.json 里写了 mirrors 或 patches：一律忽略（派喵版没有备用线路和补丁包）":
+            check({**ok, "mirrors": ["https://evil.example.com/a.zip"], "patches": {"0.4.0": ok}}) == ok,
     }
+    return out
+
+
+def latest_checks(base):
+    """latest.json 只从 UPDATE_URL 一个地址读（派喵版没有备用地址）。"""
+    good = {"version": "9.6.1", "date": "2026-10-24", "notes": ["测试"], "download": None}
+    Handler.files["/latest-good.json"] = json.dumps(good).encode("utf-8")
+    Handler.files["/latest-junk.json"] = b"<html>not json</html>"
+    out = {}
+
+    def fetch(path):
+        with mock.patch.object(update_check, "UPDATE_URL", base + path):
+            try:
+                return update_check.fetch_latest(timeout=5)
+            except update_check.UpdateError as e:
+                return str(e)
+
+    out["读不到：说连不上的原因"] = "连不上" in fetch("/latest-missing.json")
+    out["读到的不是版本信息：说格式不对"] = "格式不对" in fetch("/latest-junk.json")
+    out["读到了：返回版本号"] = fetch("/latest-good.json")["version"] == "9.6.1"
+    out["只有一个更新地址（dl.evotracker.cn，没有备用线路）"] = update_check.UPDATE_URL.startswith("https://dl.evotracker.cn")
+    return out
 
 
 def download_checks(base):
@@ -332,6 +380,15 @@ def panel_checks(base):
         settings = client.get("/settings").get_data(as_text=True)
         out['有新版本：提示条和设置页都有"立即更新"'] = ">立即更新</button>" in page and "立即更新 · " in settings
 
+        with updater._lock:
+            updater._job.update(phase="downloading", version="9.9.9", done=2**20, total=2 * 2**20)
+        page, settings = client.get("/").get_data(as_text=True), client.get("/settings").get_data(as_text=True)
+        progress = client.get("/update/progress").get_json()
+        out['下载中：提示条和设置页显示进度（百分比），进度接口也说了'] = (
+            "downloading" in page and progress.get("phase") == "downloading" and 0 < progress.get("percent", 0) < 100)
+        with updater._lock:
+            updater._job.clear()
+
         client.post("/update/download", data={"token": token, "next": "/"})
         wait_done(good)
         out["进度接口：下载好以后说 ready"] = client.get("/update/progress").get_json()["phase"] == "ready"
@@ -373,6 +430,7 @@ def main():
     server, base = start_server()
     try:
         checks = download_info_checks()
+        checks.update(latest_checks(base))
         checks.update(download_checks(base))
         checks.update(replace_checks())
         checks.update(after_checks())

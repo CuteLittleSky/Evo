@@ -226,6 +226,42 @@ def payload_of(match):
     payload.update(_flat_teammates(match.get("teammates")))
     return payload
 
+WEAPON_HOLD_FIELDS = ("weapon", "start_s", "end_s")
+
+def read_weapon_holds(limit=SCAN_LIMIT):
+
+    try:
+        conn = sqlite3.connect(f"file:{_db_path()}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return []
+    try:
+        conn.row_factory = sqlite3.Row
+        cols = _has_columns(conn, "weapon_holds", WEAPON_HOLD_FIELDS)
+        if "weapon" not in cols:
+            return []
+        rows = conn.execute(
+            f"SELECT match_id, {', '.join(cols)} FROM weapon_holds "
+            f"ORDER BY match_id DESC, start_s LIMIT ?", (limit,)).fetchall()
+        out = {}
+        for row in rows:
+            out.setdefault(str(row["match_id"]), []).append(
+                {"weapon": row["weapon"], "startS": row["start_s"], "endS": row["end_s"]})
+        return out
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+def weapon_payloads(match_map, holds_by_match):
+
+    items = []
+    for match in match_map:
+        holds = holds_by_match.get(str(match.get("match_id")))
+        if not holds:
+            continue
+        items.append({"clientId": client_id_of(match), "weaponHolds": holds})
+    return items
+
 def _boss_payload(match):
 
     value = match.get("participation")
@@ -341,6 +377,18 @@ def push(snapshot):
         lobby_sent += int(result.get("accepted") or len(chunk))
         del chunk
 
+    # 武器持有段（0.4.0 起）：跟战绩同一个令牌、单独端点。失败只记一笔，不影响战绩上传。
+    stats = snapshot.setdefault("stats", {})
+    weapon_sent = 0
+    try:
+        weapon_items = weapon_payloads(rows, read_weapon_holds())
+        for start in range(0, len(weapon_items), BATCH):
+            chunk = weapon_items[start:start + BATCH]
+            result = pairing.upload_weapons(snapshot, {"matches": chunk})
+            weapon_sent += int(result.get("accepted") or len(chunk))
+    except pairing.CloudError as exc:
+        stats["weapon_error"] = str(exc)[:200]
+
     if len(known) > SCAN_LIMIT * 2:
         keep = {str(m["match_id"]) for m in rows}
         known = {k: v for k, v in known.items() if k in keep}
@@ -353,6 +401,8 @@ def push(snapshot):
     stats = snapshot.setdefault("stats", {})
     stats["uploaded"] = int(stats.get("uploaded") or 0) + sent
     stats["rank_uploaded"] = int(stats.get("rank_uploaded") or 0) + lobby_sent
+    if weapon_sent:
+        stats["weapon_uploaded"] = int(stats.get("weapon_uploaded") or 0) + weapon_sent
     stats["last_ok_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
     stats["last_error"] = ""
 

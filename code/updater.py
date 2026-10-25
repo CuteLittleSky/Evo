@@ -5,8 +5,10 @@
 
 流程：
 1. 下载（托盘程序里的后台线程，面板每半秒问一次进度）：地址来自 latest.json（只接受 dl.evotracker.cn，见
-   update_check.safe_download），边下边写进程序文件夹里的 _update/，边算 SHA-256，和 latest.json 写的对不上就删掉、报错
-2. 解压到 _update/<版本号>/Evo/，确认里面有 Evo.exe 和 _internal，写 ready.json（"已下载好"，Evo 重新打开后也认得）
+   update_check.safe_download），边下边写进程序文件夹里的 _update/，边算 SHA-256，和 latest.json 写的对不上就删掉、报错。
+   派喵版不用上游的备用线路（mirrors）和增量补丁包（patches）：只从 dl.evotracker.cn 下完整的安装包
+2. 解压到 _update/<版本号>/Evo/，确认里面有 Evo.exe 和 _internal，写 ready.json
+   （"已下载好"，Evo 重新打开后也认得）
 3. 点"安装并重新启动"（Apex 开着时不能点，免得丢掉正在记录的那一局）：打开新版本自己的 Evo.exe --apply-update，
    等它写出 _update/started（说明它真的跑起来了，没被杀毒软件拦住），旧的 Evo 才退出
 4. 新版本（在 _update 里运行，apply_update）等旧的 Evo 完全退出，把程序文件夹里要换的东西挪进 _old_version/，
@@ -22,14 +24,17 @@
 
 import ctypes
 import hashlib
+import http.client
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
 import time
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from ctypes import wintypes
@@ -44,7 +49,9 @@ from storage import APP_VERSION
 UPDATE_DIR = EXE_DIR / "_update"  # 下载、解压、安装记录都在这里
 OLD_DIR = "_old_version"  # 安装时旧文件先挪到这里，装好后删掉；出错就挪回去
 CHUNK = 256 * 1024
-READ_TIMEOUT = 30  # 秒：下载时这么久收不到数据就算断了
+READ_TIMEOUT = 20  # 秒：下载时这么久收不到数据就算断了
+MAX_TURNS = 3  # 下载出错最多试这么多次（都是同一条线路：接着已下到的地方继续）
+RETRY_PAUSE = 2  # 秒：重试前先等一下
 STARTED_WAIT = 20  # 秒：新版本的 Evo.exe 这么久还没说"已经开始"，就当作没能启动（多半被杀毒软件拦住了）
 QUIT_DELAY = 1.0  # 秒：确认新版本跑起来后，旧的 Evo 等一下再退出，让页面先显示"正在安装"
 OLD_EXIT_WAIT = 120  # 秒：新版本最多等旧的 Evo 退出这么久
@@ -68,13 +75,18 @@ class _Cancelled(Exception):
 _lock = threading.Lock()
 _job = {}  # 正在进行的下载 / 安装：{"phase", "version", "done", "total", "error"}；空 = 没有
 _cancel = threading.Event()
-_hooks = None  # 托盘程序接上（connect）：{"game_running": 函数, "quit": 函数}；单独运行面板时没有，不能安装
+_hooks = None  # 托盘程序接上（connect）：{"game_running", "quit", "log"}；单独运行面板时没有，不能安装
 
 
-def connect(game_running, quit_app):
-    """托盘程序（evo_app.py）启动时接上：怎么知道 Apex 在不在运行、怎么让托盘程序退出。"""
+def connect(game_running, quit_app, log=None):
+    """托盘程序（evo_app.py）启动时接上：怎么知道 Apex 在不在运行、怎么让托盘程序退出、下载的经过写进哪个日志。"""
     global _hooks
-    _hooks = {"game_running": game_running, "quit": quit_app}
+    _hooks = {"game_running": game_running, "quit": quit_app, "log": log}
+
+
+def _log(message):
+    if _hooks is not None and _hooks.get("log"):
+        _hooks["log"](f"一键更新：{message}")
 
 
 def version_tuple(text):
@@ -120,8 +132,8 @@ def state(latest):
         return job
     if staged(version):
         return {"phase": "ready", "version": version, "blocked": install_blocker()}
-    return {"phase": "available", "version": version,
-            "size_mb": round(update_check.safe_download(latest["download"])["size"] / 2**20)}
+    info = update_check.safe_download(latest["download"])
+    return {"phase": "available", "version": version, "size_mb": max(1, round(info["size"] / 2**20))}
 
 
 def take_result():
@@ -175,31 +187,123 @@ def _download(version, info):
     try:
         check_folder(info["size"])
         UPDATE_DIR.mkdir(exist_ok=True)
-        digest, done = hashlib.sha256(), 0
-        request = urllib.request.Request(info["url"], headers={"User-Agent": f"Evo/{APP_VERSION}"})
-        with urllib.request.urlopen(request, timeout=READ_TIMEOUT) as response, open(part, "wb") as f:
-            while block := response.read(CHUNK):
-                if _cancel.is_set():
-                    raise _Cancelled
-                done += len(block)
-                if done > info["size"]:
-                    raise UpdateError("下载的文件比应有的大，已经停下。请稍后再试，或者去官网下载")
-                f.write(block)
-                digest.update(block)
-                _set_job(done=done)
-        if done != info["size"] or digest.hexdigest() != info["sha256"]:
-            raise UpdateError("下载的文件不完整或被改动过（SHA-256 对不上），请重试")
+        _get(info, part, f"{version} 的安装包")
         _set_job(phase="extracting")
         extract(part, UPDATE_DIR / version, version)
         _end_job()
     except _Cancelled:
+        _log("下载取消了")
         _end_job()
     except UpdateError as e:
+        _log(f"没下载好：{e}")
         _end_job(str(e))
-    except (OSError, zipfile.BadZipFile) as e:
+    except (OSError, http.client.HTTPException, zipfile.BadZipFile) as e:
+        _log(f"没下载好：{_short(e)}")
         _end_job(_describe(e))
     finally:
         part.unlink(missing_ok=True)
+
+
+def _get(info, path, what):
+    """从 latest.json 写的地址把这个文件下载到 path，核对大小和 SHA-256。"""
+    started = time.monotonic()
+    _log(f"开始下载 {what}（{_size_text(info['size'])}），线路：{_host(info['url'])}")
+    with open(path, "wb") as f:
+        progress = _Part(f, info["size"])
+        _fetch(info["url"], progress)
+    if progress.done != info["size"] or progress.digest.hexdigest() != info["sha256"]:
+        raise UpdateError("下载的文件不完整或被改动过（SHA-256 对不上），请重试")
+    seconds = max(time.monotonic() - started, 0.001)
+    _log(f"{what}下载好了，用时 {seconds:.0f} 秒（平均 {_speed_text(info['size'] / seconds)}）")
+
+
+class _Part:
+    """正在下载的文件：下到哪里了，边写边算 SHA-256。"""
+
+    def __init__(self, f, size):
+        self.f, self.size = f, size
+        self.digest, self.done = hashlib.sha256(), 0
+
+    def write(self, block):
+        if self.done + len(block) > self.size:
+            raise UpdateError("下载的文件比应有的大，已经停下。请稍后再试，或者去官网下载")
+        self.f.write(block)
+        self.digest.update(block)
+        self.done += len(block)
+        _set_job(done=self.done)
+
+
+def _fetch(url, part):
+    """从这个地址下载到下完，出错时最多重试 MAX_TURNS 次（接着已下到的地方继续，HTTP Range）。"""
+    error = None
+    for turn in range(MAX_TURNS):
+        if turn:
+            if _cancel.is_set():
+                raise _Cancelled
+            _log(f"{_host(url)} 出错（{_short(error)}），已下 {part.done / 2**20:.0f} / {part.size / 2**20:.0f} MB，"
+                 f"等 {RETRY_PAUSE} 秒再试")
+            if _cancel.wait(RETRY_PAUSE):
+                raise _Cancelled
+        try:
+            _pull(url, part)
+            return
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                raise  # 服务器上没有这个文件：再试也一样
+            error = e
+        except (OSError, http.client.HTTPException, UpdateError) as e:
+            error = e
+    raise error
+
+
+def _pull(url, part):
+    """从这个地址从 part.done 接着下到下完（服务器不支持 Range 时回 200，从头下）。"""
+    headers = {"User-Agent": f"Evo/{APP_VERSION}"}
+    if part.done:
+        headers["Range"] = f"bytes={part.done}-"
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=READ_TIMEOUT) as response:
+        _check_response(response, part)
+        while block := response.read(CHUNK):
+            if _cancel.is_set():
+                raise _Cancelled
+            part.write(block)
+    if part.done < part.size:
+        raise UpdateError("下载中途断了，请重试")
+
+
+def _check_response(response, part):
+    """服务器回的是不是要的那一段：接着下时应该是 206、从 part.done 开始；回 200 就是整个文件（从头下）。
+    文件的总大小要和 latest.json 写的一样。"""
+    wrong_size = "下载服务器上的安装包大小不对，请稍后再试，或者去官网下载"
+    if response.status == 206:
+        m = re.fullmatch(r"bytes (\d+)-\d+/(\d+)", response.headers.get("Content-Range", "").strip())
+        if not m or int(m.group(1)) != part.done or int(m.group(2)) != part.size:
+            raise UpdateError(wrong_size)
+    elif response.status == 200:
+        length = response.headers.get("Content-Length", "")
+        if length.isdigit() and int(length) != part.size:
+            raise UpdateError(wrong_size)
+        if part.done:
+            _log(f"{_host(getattr(response, 'url', '') or '')} 不支持接着下，从头下")
+            part.restart()
+
+
+def _host(url):
+    return urllib.parse.urlparse(url).hostname or url
+
+
+def _size_text(size):
+    return f"{size / 2**20:.0f} MB" if size >= 10 * 2**20 else f"{size / 2**20:.1f} MB"
+
+
+def _speed_text(per_second):
+    return f"{per_second / 2**20:.1f} MB/s" if per_second >= 2**20 else f"{per_second / 1024:.0f} KB/s"
+
+
+def _short(e):
+    """写进日志的出错原因（不给用户看）。"""
+    return (str(e) or type(e).__name__)[:150]
 
 
 def _describe(e):
@@ -210,6 +314,8 @@ def _describe(e):
         return "网络太慢或断了（超时），请重试"
     if isinstance(e, urllib.error.URLError):
         return "连不上下载服务器（网络不通，或者服务器暂时不可用），请稍后再试"
+    if isinstance(e, (ConnectionError, http.client.HTTPException)):
+        return "下载中途断了（网络不稳），请重试"
     if isinstance(e, zipfile.BadZipFile):
         return "安装包打不开（文件坏了），请重试"
     return f"写入文件失败（{e.strerror or e}），请重试"

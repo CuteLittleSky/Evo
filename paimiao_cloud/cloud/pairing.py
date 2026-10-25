@@ -193,6 +193,14 @@ def upload_rank(snapshot, payload):
     result, _ = request(snapshot, "/rank", payload, token=token)
     return result
 
+def upload_weapons(snapshot, payload):
+
+    token = (snapshot.get("device") or {}).get("token")
+    if not token:
+        raise CloudError("这台电脑还没配对")
+    result, _ = request(snapshot, "/weapon-holds", payload, token=token)
+    return result
+
 READ_BATCH = 200
 
 def download(snapshot, limit=READ_BATCH):

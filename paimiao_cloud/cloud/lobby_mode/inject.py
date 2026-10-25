@@ -84,23 +84,34 @@ def _after_import(module):
 
 
 def _install_screen_detector(module):
-    """把 ScreenDetector 换成带「顺手读大厅模式」的子类。"""
-    old = getattr(module, "ScreenDetector", None)
-    if old is None:
-        _log("[大厅模式] 上游没有 ScreenDetector，跳过接管")
-        return
-    if getattr(old, "_paimiao_lobby_mode", False):
-        _log("[大厅模式] 大厅判定已经接管过了（跳过）")
-        return
+    """把 ScreenDetector 换成带「顺手读大厅模式」的子类。
+
+    0.4.0 起 `live_collect` 用的是 `screens.GameScreens`（多语言包装器，
+    `from screens import GameScreens`），不再把 `ScreenDetector` 名字引进
+    `live_collect` 命名空间；而 `GameScreens.__init__` 用的是 **screens 模块
+    自己的全局名** `ScreenDetector`（code/screens.py:164 建 detectors）。
+    所以这里换成：把 `screens.ScreenDetector` 换成子类 —— GameScreens 之后
+    实例化的每个语言的 detector 就都带着大厅模式了。旧版（ScreenDetector
+    直接在 live_collect 里）也兼容：两边都在就都换。
+    """
     from cloud.lobby_mode import screen as lobby_screen  # noqa: PLC0415
 
-    new = lobby_screen.build(old)
-    module.ScreenDetector = new
-    # screens 命名空间里那个也换掉：否则两处名字指向不同的类，谁 new 了哪个全看运气
-    screens_module = sys.modules.get("screens")
-    base = getattr(screens_module, "ScreenDetector", None) if screens_module else None
-    if base is old:
-        screens_module.ScreenDetector = new
+    patched = False
+    for holder in (sys.modules.get("screens"), module):
+        if holder is None:
+            continue
+        old = getattr(holder, "ScreenDetector", None)
+        if old is None:
+            continue
+        if getattr(old, "_paimiao_lobby_mode", False):
+            _log("[大厅模式] 大厅判定已经接管过了（跳过）")
+            return
+        new = lobby_screen.build(old)
+        holder.ScreenDetector = new
+        patched = True
+    if not patched:
+        _log("[大厅模式] 上游没有 ScreenDetector，跳过接管")
+        return
     _log("[大厅模式] 已接管：大厅里读左下角模式卡片（进开局画面仍然照旧再读一次）")
 
 

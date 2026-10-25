@@ -23,6 +23,12 @@ installed_data_location.txt
 # 新版本宣传图（tools/feature_cards.py 随时能重新生成，见 release/做图流程.md）
 release/*截图/
 
+# ===== 小程序（微信开发者工具，见 docs/小程序.md）=====
+# 开发者工具在项目里存的个人设置（每台电脑不一样）
+miniprogram/project.private.config.json
+# 云函数的依赖（上传时在云端安装）
+miniprogram/cloud/*/node_modules/
+
 # ===== Python 自动生成的文件 =====
 __pycache__/
 *.pyc
@@ -42,3 +48,16 @@ Thumbs.db
 desktop.ini
 # 对局中样本的队友名字（别的玩家的名字），只留在本机（找不到时只检查读到了名字，见 tests/test_in_match.py）
 tests/in_match_teammates.json
+
+# ===== 微信小程序：只在本机，不上传 GitHub（2026-10-24 用户决定；原来的提交在本机分支 local/miniprogram-history）=====
+# 小程序本身（页面、云函数）和 Evo 里绑定、上传战绩的部分。GitHub 上的 Evo 没有这些文件也能运行（不显示那一栏、不同步）
+miniprogram/
+docs/小程序.md
+code/cloud_sync.py
+code/panel_cloud.py
+code/qr.py
+panel/templates/_cloud.html
+tests/test_cloud_sync.py
+tools/cloud_ping.py
+# 宣传片（onetake 做的，见 release/宣传片/分镜.md）：用到 onetake 的 motion.js（PolyForm Noncommercial 许可，不能放进 AGPL 的仓库），视频文件也很大，只留在本机
+release/宣传片/

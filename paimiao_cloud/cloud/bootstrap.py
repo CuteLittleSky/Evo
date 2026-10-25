@@ -20,6 +20,12 @@ class _PanelAppFinder:
         for finder in sys.meta_path:
             if finder is self:
                 continue
+            # 跳过注入层自己的 finder（cloud/importhook.py 的 _SharedFinder）：
+            # 2026-10-25 实测，"全体玩家关闭"把 panel_app 登记进 _WAITING 后，
+            # _SharedFinder 会转发 panel_app 的查找，而它又转发回这里 → 无限递归
+            # （RecursionError，Evo 起不来）。它已经会替我们触发回调，不需要再问一遍。
+            if getattr(finder, "_paimiao_shared_import_hook", False):
+                continue
             find_spec = getattr(finder, "find_spec", None)
             if find_spec is None:
                 continue
@@ -162,6 +168,14 @@ def attach(module):
     if not getattr(app, "_cloud_notice_installed", False):
         app._cloud_notice_installed = True
         cloud_notice.register(app, module)
+
+    if not getattr(app, "_paimiao_global_stats_installed", False):
+        app._paimiao_global_stats_installed = True
+        try:
+            from cloud.global_stats import inject as global_stats_inject
+            global_stats_inject.register(app)
+        except Exception as exc:
+            _log(f"全体玩家关闭注入失败（Evo 本身不受影响）：{exc!r}")
 
     if not getattr(app, "_cloud_obs_page_installed", False):
         app._cloud_obs_page_installed = True

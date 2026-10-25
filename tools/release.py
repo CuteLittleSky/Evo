@@ -15,10 +15,8 @@ Evo Tracker Data（规则见 paths.py）。
 只是想试一下流程、还有没提交的改动时：python tools/release.py --allow-dirty（文件名会带上 -dirty，不要发布这种；也不写 latest.json）
 
 做好以后用 python tools/publish.py 上传和核对（压缩包、官网、最后 latest.json，见 publish.py 开头）。
-它按下面的顺序做——上传到 R2（dl.evotracker.cn）：先传压缩包，确认能下载、SHA-256 对得上，最后再传 latest.json——
-latest.json 一换，所有开着自动检查的 Evo 就会提醒更新，所以压缩包必须先到位：
-    wrangler r2 object put evotracker/Evo-<版本号>-win64.zip --file dist/Evo-<版本号>-win64.zip --remote
-    wrangler r2 object put evotracker/latest.json --file dist/latest.json --remote --cache-control "max-age=300"
+它按下面的顺序做——上传到 R2（dl.evotracker.cn）：先传压缩包，确认能下载、SHA-256 对得上，
+最后再传 latest.json——latest.json 一换，所有开着自动检查的 Evo 就会提醒更新，所以压缩包必须先到位。
 latest.json 只让 CDN 缓存 5 分钟（max-age=300），换了以后很快就能被查到
 """
 
@@ -26,6 +24,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -44,6 +43,8 @@ README_NAME = "使用说明（先看这个）.txt"
 NOTES = ROOT / "release" / "更新内容.txt"
 DOWNLOAD_PAGE = "https://evotracker.cn/#download"
 DOWNLOAD_BASE = "https://dl.evotracker.cn"  # 压缩包传到 R2 后的地址（publish.py 也是这个）
+
+
 CHECK_IMAGE = ROOT / "captures" / "live" / "20261016_211452" / "05_222749.png"
 CHECK_EXPECT = "总结页 第 8 名，击杀/助攻/击倒 3/0/3，伤害 688"  # 这张截图的正确结果
 
@@ -113,6 +114,10 @@ def sha256(path):
         for block in iter(lambda: f.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def version_tuple(text):
+    return tuple(int(x) for x in text.split("."))
 
 
 def write_latest(today, name, digest, size):

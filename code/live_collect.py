@@ -22,7 +22,7 @@
 
 数据存在数据文件夹（见 paths.py；用源码运行时就是项目文件夹）的 data/evo.db（用 python code/storage.py 查看），
 截图存在 captures/live/<开始时间>/。截图留不留见 screenshots.py：
-- 默认识别完就删：只存总结页、经验值页（离开前最后一帧），一局结束时只留"待确认"的局要用的
+- 默认识别完就删：只存总结页、经验值页（离开前最后一帧），一局结束时只留总结页截图（转成 WEBP）和"待确认"的局要用的
 - 保留全部截图（攒测试集用；用源码运行时永远保留全部）：经验值页、开局画面、大厅、淘汰画面、冠军横幅也存，
   进入时一张、离开前最后一帧一张；每局结束时还存最后一张自己的界面（hud_时间_last.png，校准对局中的区域用）
 - 设置页的"保留全部截图"开关：每局结束时看一眼，改了从下一局开始生效（见 collect 里的 round_end）
@@ -42,6 +42,7 @@ from time import perf_counter, process_time  # 单独导入：测试会把本文
 import cv2
 import dxcam
 
+import game_lang
 import screenshots
 import sounds
 import storage
@@ -56,7 +57,7 @@ from paths import CAPTURES_DIR
 from player_name import PlayerNameReader
 from post_match import SOURCE_CHAMPION, SOURCE_SUMMARY, PostMatch
 from process_info import memory_mb, set_low_priority
-from screens import ScreenDetector
+from screens import GameScreens
 from summary_page import KEY_FIELDS, is_champion, read_summary, show, summary_readings, summary_to_match
 from teammates import describe, read_teammates
 from xp_page import read_xp
@@ -335,8 +336,6 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     返回这次一共记下了几局。"""
     set_low_priority()
     usage = Usage(log)
-    cfg = load_config("summary.json")
-    screens = load_config("screens.json")
     run_dir = CAPTURES_DIR / "live" / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     conn = storage.connect(db_path)
@@ -345,7 +344,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
         return screenshots.keep_all() if keep_all is None else keep_all
 
     keep = keep_now()
-    tidied = {"deleted": 0, "freed": 0}  # 这次记录识别完删掉的截图
+    tidied = {"deleted": 0, "converted": 0, "freed": 0}  # 这次记录识别完删掉的截图、转成 WEBP 的总结页截图
     protect = set()  # 中途关掉"保留全部截图"时，关之前存下的截图：不删（以前存下的不自动删）
 
     def round_end():
@@ -361,11 +360,13 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                 log(f"           设置页关掉了\"保留全部截图\"：从下一局开始识别完就删，之前存下的 {len(protect)} 张不删")
         if keep:
             return
-        deleted, freed = screenshots.tidy(conn, run_dir, protect)
-        if deleted:
-            tidied["deleted"] += deleted
-            tidied["freed"] += freed
-            log(f"           识别完删掉 {deleted} 张截图（{freed / 2 ** 20:.0f} MB）")
+        done = screenshots.tidy(conn, run_dir, protect)
+        if done.deleted or done.converted:
+            tidied["deleted"] += done.deleted
+            tidied["converted"] += done.converted
+            tidied["freed"] += done.freed
+            log(f"           识别完删掉 {done.deleted} 张截图，总结页截图 {done.converted} 张转成 WEBP"
+                f"（腾出 {done.freed / 2 ** 20:.0f} MB）")
 
     name_cfg = load_config("player_name.json")
     post = PostMatch(conn, log=log, name_slip=name_cfg["slip_similarity"], on_round_end=round_end)
@@ -373,19 +374,34 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     camera = dxcam.create(output_color="BGR", processor_backend="numpy")
     # clock 用 lambda 包一层：测试时会把本文件的 time 换成假时钟
     engine = LazyEngine(SMALL_CROP_PARAMS, MODEL_IDLE_SECONDS, clock=lambda: time.monotonic(), log=log)
-    detector = ScreenDetector(engine, screens)
-    hud = Hud(engine)
+    detector = GameScreens(engine, log=lambda message: log(f"[{datetime.now():%H:%M:%S}] {message}"))
+    lang = detector.lang  # 各部分现在用哪种游戏语言的规则（见 game_lang.py）
+    hud = Hud(engine, lang=lang)
     match_interval = hud.cfg["match_interval"] if match_interval is None else match_interval
     cues = SoundCues(log)
-    summary = SummaryWatcher(engine, cfg, conn, post, run_dir, log, summary_timeout, PlayerNameReader(engine, name_cfg),
-                             on_read=cues.summary_read)
-    other = ScreenWatcher(engine, screens, load_config("xp.json"), load_config("match_start.json"),
-                          load_config("eliminated.json"), post, run_dir, log, keep_all=keep)
+    summary = SummaryWatcher(engine, load_config("summary.json", lang), conn, post, run_dir, log, summary_timeout,
+                             PlayerNameReader(engine, name_cfg), on_read=cues.summary_read)
+    other = ScreenWatcher(engine, detector.cfg, load_config("xp.json", lang), load_config("match_start.json", lang),
+                          load_config("eliminated.json", lang), post, run_dir, log, keep_all=keep)
     in_match = InMatchWatcher(hud, post, log, name_cfg, save=lambda frame, name: save_png(run_dir / name, frame),
                               keep_all=lambda: other.keep_all)
-    lobby = LobbyWatcher(LobbyReader(engine), post, conn, log)
+    lobby = LobbyWatcher(LobbyReader(engine, load_config("lobby.json", lang)), post, conn, log)
     aspect = AspectWatcher(log, clock=lambda: time.monotonic(), fixed=game_aspect)
+
+    def use_language(lang):
+        """认定了游戏语言（或认出画面的语言变了，见 screens.GameScreens）：各部分换成这种语言的识别规则。"""
+        names = load_config("player_name.json", lang)
+        summary.cfg, summary.names.cfg = load_config("summary.json", lang), names
+        other.screens = detector.cfg
+        other.xp_cfg, other.start_cfg, other.elim_cfg = (load_config(n, lang) for n in
+                                                         ("xp.json", "match_start.json", "eliminated.json"))
+        hud.use_language(lang)
+        in_match.name_place = names["places"]["hud"]
+        lobby.reader.cfg = load_config("lobby.json", lang)
+
     log(f"屏幕: {camera.width}x{camera.height}")
+    if len(detector.detectors) > 1:
+        log(f"认得出的游戏语言：{'、'.join(game_lang.label(x) for x in detector.detectors)}（认出第一个画面时定下来）")
     log(f"数据库: {Path(db_path).resolve()}")
     log(f"截图保存到: {run_dir.resolve()}（{'保留全部' if keep else '识别完就删，只留待确认的局要用的'}；"
         "设置页改了开关，从下一局开始生效）")
@@ -406,6 +422,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
         return summary.saved + post.inserted
 
     frames, last_seen, warned = 0, time.monotonic(), False  # 截了几帧；最近一次认出画面的时刻
+    next_lang_check = time.monotonic()  # 下一次看设置页"游戏语言"的时刻
     try:
         while keep_going():
             tick = time.monotonic()
@@ -420,7 +437,13 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                 frames += 1
                 now = datetime.now()
                 aspect.check(frame)  # 游戏画面比例（16:10、4:3 时界面摆法不一样，见 layout.py）
+                if tick >= next_lang_check:  # 设置页的"游戏语言"：每隔几秒看一眼，改了几秒内生效
+                    next_lang_check = tick + game_lang.CHECK_SECONDS
+                    detector.use_choice(game_lang.choice())
                 screen = detector.detect(frame)
+                if detector.lang != lang:
+                    lang = detector.lang
+                    use_language(lang)
                 on_summary = screen == "summary"
                 cues.update(screen, now)  # 提示音：小队打完了、进经验值页（总结页读完了由 summary 告诉它）
                 in_match.update(screen, frame, now)  # 先交对局中的数据：结算画面上要用
@@ -457,8 +480,8 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
         aspect.reset()
         camera.release()
         conn.close()
-        left = len(list(run_dir.glob("*.png")))
-        if not left:
+        left = sum(1 for p in run_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".webp"))
+        if not any(run_dir.iterdir()):
             run_dir.rmdir()  # 一张截图都没留下：文件夹也删掉
         saved = total()
         log(f"本次记录：截屏 {frames} 次，其中外观像的 {detector.looked_alike} 次；识别 {engine.calls} 次，"
@@ -466,9 +489,10 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
             f"读玩家名 {summary.name_reads + in_match.name_reads} 次（对局中 {in_match.name_reads} 次），"
             f"玩家名 {post.player_name or '没认出'}；大厅读数 {lobby.saved} 次（读了 {lobby.reads} 次）；"
             f"{usage.total()}，内存峰值 {memory_mb()[1]:.0f} MB")
-        kinds = "保留全部" if keep else "待确认的局要用的" + ("、关掉开关之前存下的" if protect else "")
-        log(f"截图：留下 {left} 张（{kinds}）" + (f"，识别完删掉 {tidied['deleted']} 张（{tidied['freed'] / 2 ** 20:.0f} MB）"
-                                              if tidied["deleted"] or not keep else ""))
+        kinds = "保留全部" if keep else "总结页截图、待确认的局要用的" + ("、关掉开关之前存下的" if protect else "")
+        log(f"截图：留下 {left} 张（{kinds}）"
+            + (f"，识别完删掉 {tidied['deleted']} 张、总结页截图 {tidied['converted']} 张转成 WEBP"
+               f"（腾出 {tidied['freed'] / 2 ** 20:.0f} MB）" if tidied["deleted"] or tidied["converted"] or not keep else ""))
         del engine, detector, camera, summary, other, in_match, hud, lobby, aspect, cues  # 释放识别模型和截屏，交还内存
         gc.collect()
     if status is not None:

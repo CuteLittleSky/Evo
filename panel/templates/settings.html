@@ -49,13 +49,14 @@
       </div>
     </section>
 
-    {# 提示音（sounds.py，什么时候响见 live_collect.SoundCues）：开关 + 每一声的"试听"（不管开关；脚本提交，不刷新页面） #}
+    {# 提示音（sounds.py，什么时候响见 live_collect.SoundCues）：开关、声音包（三声一起换）、音量、每一声的"试听"（不管开关；
+       脚本提交，不刷新页面）。选"自己的文件"时每一声还能"选择文件…"（窗口先转成 WAV，见下面的脚本）、"恢复默认" #}
     <section class="card settings-card" aria-labelledby="h-sounds">
       <h2 id="h-sounds">提示音</h2>
       <div class="setting">
         <div class="setting-text">
           <div class="setting-name" id="sounds-name">对局结束时的提示音</div>
-          <div class="setting-desc">每局最多响三声，每一声只响一次。音量在 Windows 的"音量合成器"里调 Evo</div>
+          <div class="setting-desc">每局最多响三声，每一声只响一次</div>
         </div>
         <form method="post" action="{{ url_for('sounds_setting') }}">
           <input type="hidden" name="token" value="{{ token }}">
@@ -67,19 +68,77 @@
           </button>
         </form>
       </div>
-      {% for one in sound_list %}
+      {% set custom = sound.pack == sound.custom %}
+      <form method="post" action="{{ url_for('sound_pack') }}" class="setting" id="sound-pack-form">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div class="setting-text">
+          <label class="setting-name" for="sound-pack">声音</label>
+          <div class="setting-desc">三声一起换。选"{{ sound.packs[-1].name }}"可以把每一声换成你自己的音频</div>
+        </div>
+        <div class="setting-actions inline">
+          <select id="sound-pack" name="pack">
+            {% for one in sound.packs %}
+            <option value="{{ one.key }}" {{ 'selected' if one.key == sound.pack }}>{{ one.name }}</option>
+            {% endfor %}
+          </select>
+          <noscript><button type="submit" class="btn">保存</button></noscript>
+        </div>
+      </form>
+      <form method="post" action="{{ url_for('sound_volume') }}" class="setting" id="sound-volume-form">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div class="setting-text">
+          <label class="setting-name" for="sound-volume">音量</label>
+          <div class="setting-desc" id="sound-volume-desc">只调 Evo 的提示音，松开后按新音量响一声</div>
+        </div>
+        <div class="setting-actions inline sound-volume">
+          <input type="range" id="sound-volume" name="volume" min="{{ sound.volume_range[0] }}" max="{{ sound.volume_range[1] }}"
+                 step="{{ sound.volume_range[2] }}" value="{{ sound.volume }}" aria-describedby="sound-volume-desc"
+                 aria-valuetext="{{ sound.volume }}%">
+          <output for="sound-volume" class="num volume-value" id="sound-volume-value">{{ sound.volume }}%</output>
+          <noscript><button type="submit" class="btn">保存</button></noscript>
+        </div>
+      </form>
+      {% for one in sound.list %}
       <div class="setting">
         <div class="setting-text">
           <div class="setting-name" id="sound-{{ one.key }}">{{ one.label }}</div>
           <div class="setting-desc">{{ one.when }}</div>
+          {% if custom %}
+          <div class="setting-desc sound-file" id="sound-file-{{ one.key }}">
+            {%- if one.file %}你的文件：<span class="sound-file-name">{{ one.file.file }}</span>
+            {%- if one.file.seconds %}（<span class="num">{{ '%.1f'|format(one.file.seconds) }}</span> 秒）{% endif %}
+            {%- else %}还没选文件，响的是 Evo 默认的声音{% endif -%}
+          </div>
+          <div class="setting-desc update-error" id="sound-error-{{ one.key }}" role="alert"{{ ' hidden' if not one.failed }}>{{ one.failed or '' }}</div>
+          {% endif %}
         </div>
-        <form method="post" action="{{ url_for('sound_preview') }}" data-sound-preview>
-          <input type="hidden" name="token" value="{{ token }}">
-          <input type="hidden" name="name" value="{{ one.key }}">
-          <button type="submit" class="btn" aria-describedby="sound-{{ one.key }}">试听</button>
-        </form>
+        <div class="setting-actions">
+          <form method="post" action="{{ url_for('sound_preview') }}" data-sound-preview>
+            <input type="hidden" name="token" value="{{ token }}">
+            <input type="hidden" name="name" value="{{ one.key }}">
+            <button type="submit" class="btn" aria-describedby="sound-{{ one.key }}">试听</button>
+          </form>
+          {% if custom %}
+          <form method="post" action="{{ url_for('sound_file') }}" enctype="multipart/form-data" data-sound-file>
+            <input type="hidden" name="token" value="{{ token }}">
+            <input type="hidden" name="name" value="{{ one.key }}">
+            <input type="file" name="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.opus,.flac" hidden>
+            <button type="button" class="btn" aria-describedby="sound-{{ one.key }} sound-file-{{ one.key }}">选择文件…</button>
+          </form>
+          {% if one.file %}
+          <form method="post" action="{{ url_for('sound_file_clear') }}">
+            <input type="hidden" name="token" value="{{ token }}">
+            <input type="hidden" name="name" value="{{ one.key }}">
+            <button type="submit" class="btn-text" aria-describedby="sound-{{ one.key }}">恢复默认</button>
+          </form>
+          {% endif %}
+          {% endif %}
+        </div>
       </div>
       {% endfor %}
+      {% if custom %}
+      <p class="setting-desc sound-note">支持 MP3、WAV、M4A 等常见格式，每段最长 <span class="num">{{ sound.max_seconds }}</span> 秒。Evo 会转成 WAV 存在数据文件夹里，原来的文件不动。</p>
+      {% endif %}
     </section>
 
     <section class="card settings-card" aria-labelledby="h-rec">
@@ -89,12 +148,25 @@
           <div class="label">屏幕分辨率</div>
           <div class="info-value">自动检测{% if resolution %}（<span class="num">{{ resolution }}</span>）{% endif %}</div>
         </div>
-        <div>
-          <div class="label">游戏界面语言</div>
-          <div class="info-value">简体中文</div>
-          <div class="setting-desc">目前只支持中文游戏界面</div>
-        </div>
       </div>
+      {# 游戏语言（game_lang.py）：默认自动识别；选了某种语言就只按它认。还没做好的语言显示但不能选（2026-10-24 用户决定）。记录程序每隔几秒看一眼 #}
+      <form method="post" action="{{ url_for('game_language_setting') }}" class="setting">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div class="setting-text">
+          <label class="setting-name" for="language-select">游戏语言</label>
+          <div class="setting-desc">游戏界面用的语言。"自动识别"会在认出第一个画面时自己判断；选了某种语言，Evo 就只按这种语言识别</div>
+          {% if language.pending %}<div class="setting-desc">{{ language.pending | join('、') }} 还没做好，做好以后就能选</div>{% endif %}
+        </div>
+        <div class="setting-actions inline">
+          <select id="language-select" name="language">
+            <option value="{{ language.auto }}" {{ 'selected' if language.choice == language.auto }}>自动识别（推荐）</option>
+            {% for one in language.options %}
+            <option value="{{ one.value }}" {{ 'selected' if language.choice == one.value }}{{ ' disabled' if not one.ready }}>{{ one.name }}{{ '（还没做好）' if not one.ready }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="btn">保存</button>
+        </div>
+      </form>
       {# 游戏画面比例（game_aspect.py）：拉伸分辨率时截图还是显示器的比例，要另外知道游戏自己的比例。记录程序每隔几秒看一眼 #}
       <form method="post" action="{{ url_for('game_aspect_setting') }}" class="setting">
         <input type="hidden" name="token" value="{{ token }}">
@@ -234,7 +306,7 @@
           <div class="setting-name" id="keep-shots-name">保留全部截图</div>
           <div class="setting-desc">
             {%- if shots_locked %}用源码运行时总是保留全部：项目里的 <code>captures/</code> 是测试集
-            {%- else %}关着时，识别完就删，只留待确认的局要用的截图（确认后也删）。打开后每局的截图都留着，每局约 30–40 MB。改了从下一局开始生效
+            {%- else %}关着时，识别完就删，只留总结页截图（转成 WEBP，每局约 0.4 MB）和待确认的局要用的截图。打开后每局的截图都留着（原图），每局约 30–40 MB。改了从下一局开始生效
             {%- endif %}
           </div>
         </div>
@@ -254,15 +326,22 @@
           <div class="setting-name">删除已识别完的截图</div>
           <div class="setting-desc">
             {%- if shots_locked %}用源码运行时不删截图
-            {%- elif clean_count %}可以腾出 <span class="num">{{ clean_size }}</span>（<span class="num">{{ clean_count }}</span> 张）。待确认的局要用的截图{% if recording %}、正在记录的这一次{% endif %}不删
-            {%- else %}没有可以删的截图{% if shot_count %}：剩下的是待确认的局要用的{% if recording %}，或者正在记录{% endif %}{% endif %}
+            {%- elif clean_count or clean_convert %}可以腾出约 <span class="num">{{ clean_size }}</span>（
+              {%- if clean_count %}删掉 <span class="num">{{ clean_count }}</span> 张{% endif %}
+              {%- if clean_count and clean_convert %}，{% endif %}
+              {%- if clean_convert %}<span class="num">{{ clean_convert }}</span> 张总结页截图转成 WEBP{% endif %}）。
+              {%- if clean_convert %}总结页截图转成 WEBP 留着，{% else %}总结页截图、{% endif %}待确认的局要用的截图{% if recording %}、正在记录的这一次{% endif %}不删
+            {%- else %}没有可以删的截图{% if shot_count %}：剩下的是总结页截图、待确认的局要用的{% if recording %}，或者正在记录{% endif %}{% endif %}
             {%- endif %}
           </div>
         </div>
+        {% set clean_what = ('删除 %d 张已识别完的截图' % clean_count if clean_count else '')
+                            ~ ('、' if clean_count and clean_convert else '')
+                            ~ ('把 %d 张总结页截图转成 WEBP' % clean_convert if clean_convert else '') %}
         <form method="post" action="{{ url_for('clean_shots') }}" id="clean-form"
-              onsubmit="return confirm('确定删除 {{ clean_count }} 张已识别完的截图吗？可以腾出 {{ clean_size }}。\n待确认的局要用的截图会留着；已确认的局在战绩页就看不到识别截图了。\n删除后无法恢复。')">
+              onsubmit="return confirm('确定{{ clean_what }}吗？大约可以腾出 {{ clean_size }}。\n总结页截图会留着（转成 WEBP），战绩页照样能看；待确认的局要用的截图也留着。\n删除后无法恢复。')">
           <input type="hidden" name="token" value="{{ token }}">
-          <button type="submit" class="btn btn-danger" id="clean-btn" {{ 'disabled' if shots_locked or not clean_count }}>删除截图</button>
+          <button type="submit" class="btn btn-danger" id="clean-btn" {{ 'disabled' if shots_locked or not (clean_count or clean_convert) }}>删除截图</button>
         </form>
       </div>
       <div class="setting danger-zone">
@@ -278,53 +357,30 @@
       </div>
     </section>
 
-    {# 匿名统计（telemetry.py）：默认关；打开后每小时发送一次同意以后的对局。"查看会发送的内容"是原样（以最近一局为例）；
-       发过数据（有匿名编号）才显示"关闭并删除已发送的数据"（要联网，确认后按钮写"正在删除…"） #}
+    {# 微信小程序（_cloud.html、panel_cloud.py）：只在开发者电脑上、小程序上线前不打进安装包，没有就不显示 #}
+    {% if cloud_view is defined %}{% include "_cloud.html" %}{% endif %}
+
+    {# 匿名统计（telemetry.py）：默认关；打开后每小时发送一次同意以后的对局。只有开关和一句说明
+       （2026-10-24 用户决定：不显示发送状态、发送内容的原样，去掉"关闭并删除已发送的数据"） #}
     <section class="card settings-card" id="stats" aria-labelledby="h-stats">
       <h2 id="h-stats">匿名统计</h2>
       <div class="setting">
         <div class="setting-text">
           <div class="setting-name" id="stats-name">发送匿名的对局数据，帮助改进 Evo</div>
-          <div class="setting-desc">打开后，Evo 开着时每小时把打开以后的新对局（传奇、队友的传奇、名次、击杀、伤害、RP、段位和识别情况）连同一个随机编号发给开发者，用来统计有多少人在用、改进识别。不发送游戏名、ID、截图和日志</div>
-          <div class="setting-desc stats-status">
-            {%- if stats.consent %}{% if stats.since %}从 <span class="num">{{ stats.since[:16] }}</span> 起的对局 · {% endif %}已发送 <span class="num">{{ stats.sent }}</span> 局 ·
-              {% if not stats.last %}还没有发送过
-              {%- elif stats.last.ok %}上次发送：<span class="num">{{ stats.last.at }}</span>
-              {%- else %}上次没发出去（<span class="num">{{ stats.last.at }}</span>，{{ stats.last.error }}），下次再发{% endif %}
-            {%- else %}已关闭：不发送任何数据
-            {%- endif %}
-          </div>
+          <div class="setting-desc">Evo 会将数据用于改进识别</div>
+          {% if not stats_on %}<div class="setting-desc stats-status">已关闭：不发送任何数据</div>{% endif %}
         </div>
         <form method="post" action="{{ url_for('telemetry_setting') }}">
           <input type="hidden" name="token" value="{{ token }}">
-          <input type="hidden" name="on" value="{{ '0' if stats.consent else '1' }}">
+          <input type="hidden" name="on" value="{{ '0' if stats_on else '1' }}">
           <input type="hidden" name="next" value="{{ url_for('settings') }}">
-          <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if stats.consent else 'false' }}"
+          <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if stats_on else 'false' }}"
                   aria-labelledby="stats-name">
             <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
-            <span class="switch-state" aria-hidden="true">{{ '已开启' if stats.consent else '已关闭' }}</span>
+            <span class="switch-state" aria-hidden="true">{{ '已开启' if stats_on else '已关闭' }}</span>
           </button>
         </form>
       </div>
-      <details class="stats-preview">
-        <summary>查看会发送的内容</summary>
-        <p class="setting-desc">下面是一次发送的原样，每局的那一份以你最近一局为例。<code>null</code> 表示没读出来；<code>mates</code> 是两名队友的传奇，<code>edited</code> 是你在战绩页改过哪几项（不发改成了什么），<code>k</code> 是由随机编号算出来的对局编号。每天第一次发送时带上 <code>ping</code>（用来算有多少人在用）。</p>
-        <pre class="stats-json" tabindex="0" aria-label="会发送的内容">{{ stats_preview }}</pre>
-      </details>
-      {% if stats.id %}
-      <div class="setting danger-zone">
-        <div class="setting-text">
-          <div class="setting-name">关闭并删除已发送的数据</div>
-          <div class="setting-desc">让服务器删掉这个编号发过的所有数据，并关闭匿名统计。以后再打开会用一个新编号</div>
-          <div class="setting-path">随机编号 {{ stats.id }}</div>
-        </div>
-        <form method="post" action="{{ url_for('telemetry_delete') }}" data-busy="正在删除…"
-              onsubmit="return confirm('确定删除已经发送给开发者的所有数据吗？\n删除后无法恢复，匿名统计也会关闭。')">
-          <input type="hidden" name="token" value="{{ token }}">
-          <button type="submit" class="btn btn-danger">删除</button>
-        </form>
-      </div>
-      {% endif %}
     </section>
 
     {% import "_update.html" as upd with context %}
@@ -380,10 +436,9 @@
 
   <aside class="card about-card" aria-labelledby="h-about">
     <h2 id="h-about">关于 Evo</h2>
-    <div class="setting-desc">版本 <span class="num">{{ version }}</span> · MIT 开源许可</div>
+    <div class="setting-desc">版本 <span class="num">{{ version }}</span> · AGPL-3.0 开源许可</div>
     <ul class="principles">
       <li class="pr-1"><div class="setting-name">只看不动</div><div class="setting-desc">只读取屏幕画面（另外只读 Apex 视频设置里的分辨率），不接触游戏进程，不模拟任何操作</div></li>
-      <li class="pr-2"><div class="setting-name">全本地</div><div class="setting-desc">战绩只存在你的电脑上，不用注册登录；只有更新和你同意的匿名统计会联网，都由你决定</div></li>
       <li class="pr-3"><div class="setting-name">轻量</div><div class="setting-desc">后台运行占用低，不影响游戏帧数</div></li>
       <li class="pr-4"><div class="setting-name">开源</div><div class="setting-desc">所有代码公开，任何人都可以检查</div></li>
     </ul>
@@ -422,6 +477,99 @@
         });
     });
   });
+  // 提示音换声音包：选了就保存，回到"提示音"这一栏
+  var packSelect = document.getElementById("sound-pack");
+  packSelect.addEventListener("change", function () { packSelect.form.submit(); });
+
+  // 音量：拖动时数字跟着变；松手（或用方向键调完）0.3 秒后保存，再按新音量响一声"对局结束"
+  var volume = document.getElementById("sound-volume"), volumeValue = document.getElementById("sound-volume-value");
+  var volumeTimer = null;
+  volume.addEventListener("input", function () {
+    volumeValue.textContent = volume.value + "%";
+    volume.setAttribute("aria-valuetext", volume.value + "%");
+  });
+  volume.addEventListener("change", function () {
+    clearTimeout(volumeTimer);
+    volumeTimer = setTimeout(function () {
+      var form = volume.form, headers = { "X-Evo-Fetch": "1" };
+      fetch(form.action, { method: "POST", body: new FormData(form), headers: headers })
+        .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+        .then(function () {
+          var body = new FormData();
+          body.append("token", form.elements.token.value);
+          body.append("name", "match_end");
+          return fetch("{{ url_for('sound_preview') }}", { method: "POST", body: body, headers: headers });
+        })
+        .catch(function () { volumeValue.textContent = "没存上"; });
+    }, 300);
+  });
+
+  // 自己的文件：在窗口里把选的音频（MP3、WAV、M4A……）解码、转成 16 位 WAV，再交给 Evo 核对、保存。
+  // 窗口本身就是浏览器内核，能解码常见格式，Evo 不用另加解码的依赖，播放也照旧用 Windows 自带的
+  var MAX_SECONDS = {{ sound.max_seconds }}, MAX_FILE = 20 * 1024 * 1024;
+  function toWav(audio) {
+    var channels = Math.min(2, audio.numberOfChannels), n = audio.length, size = n * channels * 2;
+    var out = new DataView(new ArrayBuffer(44 + size)), data = [], at = 44;
+    function text(pos, s) { for (var i = 0; i < s.length; i++) out.setUint8(pos + i, s.charCodeAt(i)); }
+    text(0, "RIFF"); out.setUint32(4, 36 + size, true); text(8, "WAVE");
+    text(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, channels, true);
+    out.setUint32(24, audio.sampleRate, true); out.setUint32(28, audio.sampleRate * channels * 2, true);
+    out.setUint16(32, channels * 2, true); out.setUint16(34, 16, true);
+    text(36, "data"); out.setUint32(40, size, true);
+    for (var c = 0; c < channels; c++) data.push(audio.getChannelData(c));
+    for (var i = 0; i < n; i++) {
+      for (c = 0; c < channels; c++) {
+        var s = Math.max(-1, Math.min(1, data[c][i]));
+        out.setInt16(at, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        at += 2;
+      }
+    }
+    return new Blob([out], { type: "audio/wav" });
+  }
+  document.querySelectorAll("form[data-sound-file]").forEach(function (form) {
+    var input = form.querySelector("input[type=file]"), btn = form.querySelector("button");
+    var key = form.elements.name.value, error = document.getElementById("sound-error-" + key);
+    function fail(message) {
+      error.textContent = message;
+      error.hidden = false;
+      btn.disabled = false;
+      btn.removeAttribute("aria-busy");
+      btn.textContent = "选择文件…";
+      input.value = "";
+    }
+    btn.addEventListener("click", function () { input.click(); });
+    input.addEventListener("change", function () {
+      var file = input.files[0];
+      if (!file) return;
+      if (file.size > MAX_FILE) return fail("文件太大。请选一段不超过 " + MAX_SECONDS + " 秒的声音");
+      error.hidden = true;
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = "处理中…";
+      file.arrayBuffer()
+        .then(function (raw) { return new OfflineAudioContext(1, 1, 44100).decodeAudioData(raw); })
+        .catch(function () { throw new Error("读不出这个文件。请换一个 MP3 或 WAV 文件再试"); })
+        .then(function (audio) {
+          if (audio.duration > MAX_SECONDS + 0.05) {
+            throw new Error("这段声音有 " + audio.duration.toFixed(1) + " 秒，最长 " + MAX_SECONDS + " 秒。请剪短一些再选");
+          }
+          var body = new FormData();
+          body.append("token", form.elements.token.value);
+          body.append("name", key);
+          body.append("filename", file.name);
+          body.append("file", toWav(audio), key + ".wav");
+          return fetch(form.action, { method: "POST", body: body, headers: { "X-Evo-Fetch": "1" } })
+            .then(function (r) { return r.json(); }, function () { return { ok: false }; });
+        })
+        .then(function (s) {
+          if (!s.ok) throw new Error(s.error || "没存上，请再试一次");
+          history.replaceState(null, "", "#h-sounds");  // 重新打开页面后停在"提示音"这一栏，显示新的文件名
+          location.reload();
+        })
+        .catch(function (e) { fail(e.message); });
+    });
+  });
+
   // 开关（开机自动启动、提示音、保留全部截图、自动检查）：点下去先把圆点滑过去，再提交保存（页面会重新打开）
   document.querySelectorAll(".switch").forEach(function (sw) {
     sw.addEventListener("click", function () {

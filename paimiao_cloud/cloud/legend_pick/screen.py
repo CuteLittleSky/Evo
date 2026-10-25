@@ -120,14 +120,31 @@ def forget():
 
 
 def install(module):
-    """把 live_collect 里的 ScreenDetector 换成接过的。幂等；认不出结构时静默不生效。"""
+    """把 ScreenDetector 换成接过的。幂等；认不出结构时静默不生效。
+
+    0.4.0 起 `live_collect` 用 `screens.GameScreens`（多语言包装器），不再把
+    `ScreenDetector` 名字引进 live_collect；`GameScreens.__init__` 用 screens
+    模块的全局名 `ScreenDetector` 建各语言的 detector。所以优先 patch
+    `screens.ScreenDetector`；旧版（名字直接在 live_collect 里）也兼容。
+    """
     try:
-        detector = getattr(module, "ScreenDetector", None)
-        if detector is None:
+        import sys
+
+        patched = False
+        for holder in (sys.modules.get("screens"), module):
+            if holder is None:
+                continue
+            detector = getattr(holder, "ScreenDetector", None)
+            if detector is None:
+                continue
+            if getattr(detector, MARK, False):
+                patched = True
+                continue
+            holder.ScreenDetector = build(detector)
+            patched = True
+        if not patched:
             _log("[选取界面] 上游没有 ScreenDetector，这项不生效（Evo 本身不受影响）")
             return False
-        if not getattr(detector, MARK, False):
-            module.ScreenDetector = build(detector)
         label_watcher(module)      # 让日志能打出「选取界面」，见下面的说明
         return True
     except Exception as exc:
