@@ -9,6 +9,7 @@ Evo：一个轻量、全本地、开源的 Apex Legends 战绩记录器，面向
 | 什么时候 | 读 |
 |---|---|
 | 每次开工 | [claude/todo.md](claude/todo.md)（所有待办只放在那里）、[claude/progress.md](claude/progress.md)（已完成的里程碑和版本记录） |
+| **要改上游的任何东西之前** | [paimiao_cloud/AGENT_RULES.md](paimiao_cloud/AGENT_RULES.md)：注入规范的正式版（能改哪里、怎么注入、自检清单）。本文件只写要点，冲突时以它为准 |
 | 改模型（识别逻辑、`config/`） | [docs/模型流程.drawio](docs/模型流程.drawio)（实际怎么跑）、[docs/对局全流程图.md](docs/对局全流程图.md)（规则为什么这样定）、[docs/识别经验.md](docs/识别经验.md)（实测结论、游戏画面特征） |
 | 改页面 | [docs/面板.md](docs/面板.md) |
 | 打包、安装、发布、改托盘或窗口 | [docs/底座.md](docs/底座.md) |
@@ -21,6 +22,8 @@ Evo：一个轻量、全本地、开源的 Apex Legends 战绩记录器，面向
 
 | 名称 | 指什么 |
 |---|---|
+| 上游 | 原版 Evo：`code/`、`tools/`、`tests/`、`config/`、`panel/`、`webview/` 这些**只读**的代码。由原作者维护，我们不直接改 |
+| 注入 | 在运行时（内存里）把上游的行为改成我们要的样子，磁盘上的上游文件一个字节都不动。全部在 `paimiao_cloud/` 里 |
 | 模型 | 整套识别逻辑：画面判断、读数、校验、各来源合并、规则配置（`config/`）、测试集。最重要的部分 |
 | 引擎 | OCR 本身（RapidOCR + PP-OCRv6 模型文件），模型用到的一个工具 |
 | 页面 | Evo 窗口里的面板（`panel/`、`panel_app.py`） |
@@ -31,7 +34,10 @@ Evo：一个轻量、全本地、开源的 Apex Legends 战绩记录器，面向
 
 - 我是编程新手：懂一点 Python。
 - 遇到需要我做决定的地方，先问我，不要自己假设
-- 项目默认使用 VS Code 进行开发。
+- 我用 **DSH（DeepSeek Harness）** 干活，不是 Claude Code，也不是 Cursor。所以：
+  - 项目说明就是这个 `CLAUDE.md`（DSH 会读它），不要再找 `AGENTS.md`、`.cursor/rules`、`.claude/` 之类的东西
+  - 干活前先看当前有哪些 skill 可用；叫我用某个 skill 而它没装，就直说没装，别假装用了
+  - 需要显示第几行时用 DSH 的格式：文件链接后面接 `:24` 或 `:24–30`（如 `code/live_collect.py:249`），不要写 `L249` / `#L249`
 
 ## 项目原则（不可违背）
 
@@ -46,14 +52,38 @@ Evo：一个轻量、全本地、开源的 Apex Legends 战绩记录器，面向
 5. **数据可信优先**：识别置信度低时，不悄悄写入错误数据，而是保留截图并标记"待确认"，由用户在面板中修正；读不出来的项留空，不当作 0。
 6. **配置驱动**：识别规则（区域、模板、阈值）写在配置文件里（`config/`），而不是写死在代码中，以便适应赛季更新和社区贡献。
 7. **不提供竞技优势**：不做查看其他玩家段位、实时战术提示等功能。只记录用户自己和队友的数据：队友只记对局中左下角和赛后总结页上本来就显示的名字、ID、传奇和这一局的数据；对手的名字、ID 不记，任何人的段位都不记（自己的除外）。
-8. 在调整网页（面板、官网）的时候，永远使用 ui-ux-pro-max 这个 skill。
+8. **改上游只走注入**（2026-10-24 用户决定，排在所有下面的做法前面）：
+   - **上游文件只读**。`code/`、`tools/`、`tests/`、`config/`、`panel/`、`webview/`、`docs/`、`release/`、`assets/`、`build/`、`data/`、`logs/`、`.github/`、根目录的文档和配置，一个字节都不改（也不许用脚本、格式化工具、`sed`、Git 操作间接改）。
+   - 所有对上游的改动，一律在 `paimiao_cloud/` 里用**运行时注入**实现：改模块属性、包函数/方法、注册 Flask Blueprint、给 Jinja 模板套 preprocess。细节和踩过的坑全在 [paimiao_cloud/AGENT_RULES.md](paimiao_cloud/AGENT_RULES.md)。
+   - 不自作主张把上游文件整份复制进 `paimiao_cloud/` 顶替（上游一升级就成了新旧混合体）。
+   - 注入失败必须**静默降级**：删掉 `paimiao_cloud/` 后上游照常跑；有它但注入失败，也只写日志，不能让 Evo 起不来或白屏。
+   - 每次都自检：`git status --short` 里不能出现 `paimiao_cloud/` 以外的路径。出现了就全部还原。
+   - 遇到"做不到纯注入、必须改上游文件"的情况：**停下来问我**，别自己动手。
+9. **网页要审过再用**：改面板、官网这类界面，先看当前 DSH 会话里有没有界面设计类的 skill（技能选择器里列出的那些）。有就加载并按它的规范做；没有就用现有组件的样式和写法，别自己另起一套视觉风格 —— 风格统一比好看重要。
 
 ## 技术栈
 
 - Python 3.13（Windows）：新版 numpy 要求 3.12+，onnxruntime 暂不支持 3.15
-- 文件布局：程序代码在 `code/`（互相 import 时直接写模块名，如 `import storage`）；只在开发时用的脚本（打包、安装、发布、伪数据、探测工具、`evo.spec`）在 `tools/`（先 `import code_path` 才能 import 程序代码）；测试在 `tests/`；根目录只放文档和文件夹；素材放 `assets/`。运行命令都带上文件夹，如 `python code/evo_app.py`、`python tools/build.py`
+- 文件布局：程序代码在 `code/`（互相 import 时直接写模块名，如 `import storage`）；只在开发时用的脚本（打包、安装、发布、伪数据、探测工具、`evo.spec`）在 `tools/`（先 `import code_path` 才能 import 程序代码）；测试在 `tests/`；注入层在 `paimiao_cloud/`（见下面的「注入层」）；根目录只放文档和文件夹；素材放 `assets/`。运行命令都带上文件夹，如 `python code/evo_app.py`、`python tools/build.py`
 - 截屏 `dxcam`（备选 `mss`）；图像 `opencv-python-headless` + `numpy`（不要装 `opencv-python`，会冲突）；引擎 RapidOCR + onnxruntime（模型内置、单线程）；存储 SQLite；面板 Flask + 纯 HTML/CSS（不联网）；窗口 `pywebview` + WebView2；托盘 `pystray`；打包 PyInstaller（一个文件夹）。细节见 docs/底座.md
-- 打游戏用安装好的 Evo：程序在 `E:\Evo Tracker`，数据在 `E:\Evo Tracker Data`。用源码运行 `python code/evo_app.py` 时战绩也记进这个数据文件夹，所以源码版和安装版不能同时开；Evo 开着时不能重新安装
+- 数据位置：程序文件夹旁边的 `Evo Tracker Data`（设置页能改，指路文件 `data_location.txt`）。按 `docs/底座.md` 安装的话程序在 `E:\Evo Tracker`；**没装安装版时**，用源码运行 `python paimiao_cloud/run_evo.py` 或 `python code/evo_app.py` 战绩就记在仓库的 `data/` 里（`data/evo.db`、`data/cloud-sync/cloud.log`）。源码版和安装版不能同时开，否则两边各记一份；Evo 开着时不能重新安装
+
+## 注入层（`paimiao_cloud/`）
+
+上游一行不改，所有改动都在这里。**改之前先读 [paimiao_cloud/AGENT_RULES.md](paimiao_cloud/AGENT_RULES.md)**，它写了每一种注入方式的正确写法和踩过的坑。日常能用到的只有这些：
+
+| 想做什么 | 从哪进 |
+|---|---|
+| 源码运行（带注入） | `python paimiao_cloud/run_evo.py` |
+| 打包（带注入） | `python paimiao_cloud/build_evo.py` |
+| 改上游某个常量、包某个函数 | `cloud/upstream.py`；新功能照 `cloud/lobby_mode/`、`cloud/obs/`、`cloud/wildcard/` 的样子各开一个文件夹，各自的 `inject.py` 负责把钩子挂上去 |
+| 加页面 | 自己开 Blueprint（`cloud/panel.py`），前缀不要和上游撞 |
+| 改上游模板的内容 | 在 `app.jinja_env` 上套 `preprocess`（`cloud/upstream.py`、`cloud/notice.py`） |
+| 日志 | `cloud/state.py` 的 `log()`，写进 Evo 数据目录下的云同步日志 |
+
+- 注入都是**幂等**的：重复执行不会套两层、不会重复注册路由，用模块上的标记位判断
+- 上游改了名字/结构，我们那一项要**降级**（静默不生效 + 记日志），不许崩
+- 改完注入，源码运行和打包运行**两种形态都要验一遍**
 
 ## 模型（怎么识别、记录）
 
@@ -62,6 +92,7 @@ Evo：一个轻量、全本地、开源的 Apex Legends 战绩记录器，面向
 3. 对局中（每 0.3 秒一张）只比外观：认自己和队友的传奇、倒地、成盒观战；右上角那一小块存在内存里，一局结束时才读
 4. 一局结束时读对局中最后的右上角；结算画面上读名次、击杀、伤害、RP 等；回到大厅读段位和分数
 5. 各来源的读数都记进 `readings` 表，按优先级合并（`post_match.settle`），对不上标待确认；每次回大厅用总分校准各局 RP（`calibration.py`）
+6. 大厅模式（`paimiao_cloud/cloud/lobby_mode/`，注入实现）：大厅读到模式后**只要没回大厅就一直有效**，打完点"继续匹配"的第 2、3 局沿用；回大厅读不到就作废；开局横幅读到的永远优先
 
 ## 数据（`code/storage.py`，各列的说明在里面）
 
@@ -70,20 +101,24 @@ Evo：一个轻量、全本地、开源的 Apex Legends 战绩记录器，面向
 - `readings`：每局 × 每项 × 每个来源一行，不只记最后采用的那个
 - `lobby_readings`：每次回大厅读到的段位和总分
 - `player_names`：玩家名 → 账号（按名字区分账号，改名后合并）
-- 数据库升级：`SCHEMA_VERSION` + `MIGRATIONS`，只加列、加表
+- 库结构归上游：`SCHEMA_VERSION` + `MIGRATIONS`，只加列、加表。**要改库结构得先问我**（上游文件不能改），能靠注入解决的优先
+- 看库的时候优先用只读方式（`sqlite3` 的只读连接 / 先复制一份再看），别在正在运行的 Evo 上写
 
 RP：游戏里没有单一的"总 RP"，只有"段位 + 段内进度"。**总分以大厅为准**（打完一局通常不回大厅，所以每次回大厅都要抓住，用来校准）。每局 RP 的来源：经验值页明细 → 对局中右上角最后的 RP（只限自己最后被淘汰；先成盒、拿冠军时不是最终值）→ 前后两次大厅总分之差（只缺一局时补上）。
 
 ## 测试
 
-- 运行：`python tests/run_all.py`（约 5 分钟，20 组）。改了模型、记录程序或 `config/` 之后都要跑，新赛季更新后也要跑一遍
+- 运行：`python tests/run_all.py`（约 1 分钟，23 组；没有截图的组会跳过）。改了模型、记录程序或 `config/` 之后都要跑，改了注入之后**至少要跑一遍**（注入失败会让整组挂掉），新赛季更新后也要跑一遍
 - 做法：`tests/fake_game.py` 用"假摄像头"把真实截图按顺序喂给记录程序，数据写进临时文件夹（不碰正式数据），时钟是假的。正确答案写在 `tests/` 里的 CSV 和测试文件里
 - 测试只 import 项目代码，项目代码不能 import 测试（否则 PyInstaller 会把测试打进安装包）
+- 注入层的专项验证写在 `captures/mode_probe/`（不进 git），用假 dxcam + 假引擎 + 假 PostMatch 按主循环的真实顺序喂帧，比如大厅模式那条路：`python captures/mode_probe/test_continue_match.py`
+- 看日志：`data/cloud-sync/cloud.log`（源码运行时）；找 `[大厅模式]` 之类的标签就能定位是哪一项注入在说话
 
 ## 协作约定
 
 - 每完成一个能运行的小功能就提交一次，提交信息用中文简要说明
-- 改动前先说明计划，改动后说明如何验证
+- **提交前必做**：`git status --short` 里只允许出现 `paimiao_cloud/`（以及你自己新加的注入验证脚本）的路径，出现上游路径就还原
+- 改动前先说明计划，改动后说明如何验证（跑了什么、看到什么）
 - 新增依赖前先说明理由和对内存 / 体积的影响
 - 不要删除或覆盖我的截图样本
-- 不提交到仓库：`captures/`（测试截图）、`data/`、数据库文件、`site/`；别的玩家的名字和 ID（队友的测试答案只在本机：`tests/replay_20261016_teammates.csv`、`tests/in_match_teammates.json`）
+- 不提交到仓库：`captures/`（测试截图、注入验证脚本）、`data/`、数据库文件、`site/`；别的玩家的名字和 ID（队友的测试答案只在本机：`tests/replay_20261016_teammates.csv`、`tests/in_match_teammates.json`）

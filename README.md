@@ -6,14 +6,14 @@
 
 ![Evo 窗口的总览页：当前段位、RP 走势图、场均名次和伤害等统计、最近对局、传奇表现](docs/images/overview.png)
 
-> 现在是 **预览版**：只支持简体中文游戏界面，只在排位赛里测过。官网和下载：**[evotracker.cn](https://evotracker.cn)**
+> 现在是 **预览版**：只支持简体中文游戏界面，只在排位赛里测过。下载：[GitHub Releases](https://github.com/CuteLittleSky/Evo/releases)
 
 ## 功能
 
 - **自动记录每一局**：名次、击杀 / 助攻 / 击倒、老板分、伤害、生存时间、急救、重生，结算画面一出现就自动读取；开局时顺便记下模式和地图，对局中认出你和队友用的传奇。很快跳过了结算画面也不怕：击杀、助攻、伤害、RP 用对局中右上角最后读到的数
 - **RP 与段位走势**：从经验值页读出本局 RP 变化和段位进度；每次回到大厅读一次段位和分数，用它核对、补上每一局的 RP，连成走势图，上分还是掉分一眼看清
 - **读不准就问你**：识别把握不大的局不会悄悄写进错误数据，而是标成"待确认"，留着截图，你在战绩页对着截图改一下就行
-- **全本地**：没有账号，战绩只存在你的电脑上（只有你同意了匿名统计，才会发送不含游戏名和 ID 的对局数据）。战绩可以一键导出 CSV，用 Excel、Stata 等工具分析
+- **全本地**：没有账号，战绩只存在你的电脑上（只有你主动开启"派喵云同步"并配对，才会把战绩传到自己的派喵小程序）。战绩可以一键导出 CSV，用 Excel、Stata 等工具分析
 - **轻量**：平时安静地待在托盘里；发现游戏在运行才开始记录，游戏一关，识别程序就退出，内存还给系统
 - **多账号**：按游戏里的名字区分账号，大小号的战绩分开统计
 
@@ -48,7 +48,7 @@ Evo 和录屏软件一样，只截取屏幕上显示的画面，再在你自己�
 
 **安装：**
 
-1. 在 [官网](https://evotracker.cn/#download) 下载压缩包（约 103 MB，官网上有 SHA-256 可以核对）
+1. 在 [GitHub Releases](https://github.com/CuteLittleSky/Evo/releases) 下载压缩包（约 103 MB，页面上有 SHA-256 可以核对）
 2. 把整个压缩包**解压**到一个文件夹，比如 `D:\Evo`。不要在压缩包里直接双击运行
 3. 双击 `Evo.exe`。Evo 窗口会弹出来，右下角托盘里也会出现 Evo 的蓝色图标
 
@@ -79,18 +79,18 @@ Evo 和录屏软件一样，只截取屏幕上显示的画面，再在你自己�
 
 - 战绩数据库、截图和运行记录都在数据文件夹里，在 Evo 的设置页能看到、直接打开。0.3.5 起默认是程序旁边的 `Evo Tracker Data`（程序在 `D:\Evo`，数据就在 `D:\Evo Tracker Data`），设置页可以改到别的地方，Evo 会把数据一起搬过去；以前的版本放在 `%LOCALAPPDATA%\Evo`，0.3.5 第一次打开时自动搬到程序旁边
 - 截图默认识别完就删，只留需要你确认的那几局要用的（设置页可以改成保留全部）
-- 会联网的只有"检查新版本"（0.1.0 之后的版本才有）和一键更新（0.3.3 起）：自动检查第一次打开时先问你，只下载官网上一个公开的版本号文件，不发送任何战绩、截图或电脑信息，在设置页随时可以关掉；有新版本只提醒，你点了"立即更新"才下载新版本，再点"安装并重新启动"才安装；另外（0.3.4 起）电脑上没有 WebView2 时，Evo 会问你要不要安装，你点了"是"才运行微软的 WebView2 安装程序，由它从微软下载
-- 匿名统计（0.3.7 起，默认不发）：第一次打开时问你一次，你点了"同意"，Evo 才把以后每一局的传奇、队友的传奇、名次、击杀、伤害、RP、段位和识别情况，连同一个随机编号发给开发者，用来统计有多少人在用、改进识别；不发送游戏名、ID、截图和日志。设置页能看到发送内容的原样，随时可以关掉，也能删除已经发送的数据
+- 会联网的只有"检查新版本"（0.1.0 之后的版本才有）、一键更新（0.3.3 起）和派喵云同步：自动检查第一次打开时先问你，只下载版本信息文件，不发送任何战绩、截图或电脑信息，在设置页随时可以关掉；有新版本只提醒，你点了"立即更新"才下载新版本，再点"安装并重新启动"才安装；另外（0.3.4 起）电脑上没有 WebView2 时，Evo 会问你要不要安装，你点了"是"才运行微软的 WebView2 安装程序，由它从微软下载；派喵云同步只在你同意《数据传输指引》并配对后才上传，随时可以断开
+- 本分支默认不发送上游的"匿名统计"：它默认关闭，只有点了"同意"才会发送；想彻底去掉可以按 `claude/todo.md` 里的做法关掉
 
 完整说明见 [隐私政策](PRIVACY.md)。
 
 ## 反馈
 
-- 发 [GitHub Issue](https://github.com/AugustHuangMX/Evo/issues)，或者加 [QQ 群](https://qm.qq.com/q/6L2kTbmCWc)（群号 1128519951）
+- 发 [GitHub Issue](https://github.com/CuteLittleSky/Evo/issues)，或者加 [QQ 群](https://qm.qq.com/q/6L2kTbmCWc)（群号 1128519951）
 
 
 ## 许可证和声明
 
-- Evo 的代码使用 [MIT 许可证](LICENSE)
-- 面板里传奇名字前的小头像（`assets/legends/`、`panel/static/legends/`）不适用 MIT：来自 [Apex Legends Wiki](https://apexlegends.wiki.gg/)，每个文件的许可不一样（CC BY-NC-SA 3.0、CC BY-SA 3.0、公有领域，或版权属于 EA），逐个写在 [assets/legends/LICENSE.txt](assets/legends/LICENSE.txt) 里
+- Evo 的代码使用 [AGPL-3.0 许可证](LICENSE)，保留上游版权声明：`Copyright (c) 2026 AugustHuangMX`
+- 面板里传奇名字前的小头像（`assets/legends/`、`panel/static/legends/`）不适用 AGPL：来自 [Apex Legends Wiki](https://apexlegends.wiki.gg/)，每个文件的许可不一样（CC BY-NC-SA 3.0、CC BY-SA 3.0、公有领域，或版权属于 EA），逐个写在 [assets/legends/LICENSE.txt](assets/legends/LICENSE.txt) 里
 - Evo 是玩家自制的非官方工具，与 Electronic Arts、Respawn Entertainment 没有任何关系，也没有得到它们的认可。Apex Legends 是 Electronic Arts Inc. 的商标

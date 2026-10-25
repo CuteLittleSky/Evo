@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+{% block title %}派喵云同步 · Evo{% endblock %}
+
+{% block content %}
+<style>
+  
+    .cloud-layout { display: flex; flex-direction: column; gap: 20px; max-width: 900px; }
+  .cloud-layout .settings-card { padding: 24px; }
+  .cloud-layout .settings-card h2 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
+
+  .cloud-consent {
+    max-height: 320px; overflow-y: auto; padding: 16px 18px;
+    border: 1px solid var(--input-border); border-radius: 6px;
+    background: var(--inset); font-size: 13px; line-height: 1.75;
+  }
+  .cloud-consent h3 { margin: 18px 0 6px; font-size: 13px; font-weight: 600; }
+  .cloud-consent h3:first-child { margin-top: 0; }
+  .cloud-consent ul { margin: 6px 0; padding-left: 20px; }
+  .cloud-consent li { margin: 3px 0; }
+  .cloud-agree { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; }
+  .cloud-agree input { margin-top: 3px; flex: none; }
+  .cloud-code {
+    display: inline-block; padding: 10px 22px; border-radius: 8px;
+    border: 1px dashed var(--input-border); background: var(--inset);
+    font-size: 30px; font-weight: 700; letter-spacing: 8px;
+    font-family: "Chakra Petch", Consolas, monospace;
+  }
+  .cloud-steps { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.9; color: var(--muted); }
+
+    .cloud-pair-grid { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  .cloud-pair-code { flex: 1 1 320px; min-width: 280px; }
+  .cloud-qr { flex: none; }
+    .cloud-qr-img, .cloud-qr-fallback {
+    width: 188px; height: 188px; box-sizing: border-box; padding: 12px;
+    background: #fff; border: 1px solid var(--input-border); border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cloud-qr-img canvas, .cloud-qr-img svg, .cloud-qr-img img { display: block; width: 100%; height: 100%; }
+    img.cloud-qr-img { box-sizing: content-box; object-fit: contain; }
+  .cloud-qr-fallback {
+    flex-direction: column; text-align: center; font-size: 12px; line-height: 1.6;
+    color: #666; background: var(--inset);
+  }
+  .cloud-wait { color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+    .cloud-pair-busy .cloud-pair-btn-text { visibility: hidden; }
+  .cloud-pair-busy::after {
+        content: ""; position: absolute; top: 50%; left: 50%;
+    width: 16px; height: 16px; margin: -8px 0 0 -8px;
+    border: 2px solid rgba(255,255,255,.45); border-top-color: #fff;
+    border-radius: 50%; animation: cloud-spin .7s linear infinite;
+  }
+  #cloud-pair-btn { position: relative; }
+  #cloud-pair-btn[disabled] { opacity: .85; cursor: progress; }
+  @keyframes cloud-spin { to { transform: rotate(360deg); } }
+
+    .cloud-qr { position: relative; }
+  .cloud-qr-busy-mask {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+    background: rgba(255,255,255,.86); backdrop-filter: blur(2px);
+    border-radius: 10px; font-size: 12px; color: #555; text-align: center;
+  }
+  .cloud-pair-busy-page .cloud-qr-busy-mask { display: flex; }
+  .cloud-qr-busy-mask .cloud-spinner {
+    width: 26px; height: 26px; border: 3px solid #d8dee9; border-top-color: var(--accent-green);
+    border-radius: 50%; animation: cloud-spin .7s linear infinite;
+  }
+    .cloud-pair-busy-page .cloud-wait { visibility: hidden; }
+  @media (prefers-reduced-motion: reduce) {
+    .cloud-pair-busy::after, .cloud-qr-busy-mask .cloud-spinner { animation-duration: 2s; }
+  }
+  .cloud-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); margin-right: 6px; animation: cloud-blink 1.2s infinite;
+  }
+  @keyframes cloud-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  .cloud-server-input {
+    font: inherit; padding: 8px 12px; border-radius: 4px; width: 320px;
+    border: 1px solid var(--input-border); background: var(--card); color: var(--text);
+  }
+    .pull-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .pull-actions form { margin: 0; }
+  #pull-preview.ok { color: var(--text); }
+  #pull-preview.err { color: #d9534f; }
+</style>
+
+<div class="cloud-layout">
+
+    {% if not view.agreed %}
+<section class="card settings-card" aria-labelledby="h-consent">
+  <h2 id="h-consent">派喵云同步 · 数据传输指引</h2>
+  <p class="setting-desc" style="margin:0 0 14px">
+    在开启派喵云同步前，请先阅读本说明。本说明将告知您哪些数据会离开本机、传输至何处，以及如何停止传输。
+  </p>
+
+  <div class="cloud-consent" tabindex="0">
+    <h3>一、功能说明</h3>
+    <p>本功能用于将 Evo 已在本机识别的<strong>战绩记录</strong>上传至派喵服务器，以便您在微信小程序「派喵」中查看。</p>
+    <p>此外，您也可以主动把已经上传的记录<strong>取回</strong>到本机（例如换了电脑或重装 Evo 之后）。取回只在您点击按钮时发生，不会自动执行。</p>
+
+    <h3>二、上传的数据范围</h3>
+    <ul>
+      <li>对局时间（结束时间；如能获取，还包括开局时间）、游戏模式、地图及使用的传奇</li>
+      <li>名次、击杀、助攻、击倒、伤害、参与度，以及小队总击杀</li>
+      <li>救援队友次数、复活次数</li>
+      <li>RP 变化及存活时长</li>
+      <li>段位信息：段位名称（如「钻石」）、段位等级（如「II」）、段内排位点数及换算后的总分。</li>
+      <li>您的游戏内玩家名</li>
+      <li>同队队友的玩家名、传奇、击杀数、助攻数、击倒数、伤害、存活时长及救援次数（该等信息属于战绩记录的组成部分）</li>
+    </ul>
+
+    <h3>三、不会上传的数据</h3>
+    <ul>
+      <li><strong>不上传截图</strong>。Evo 截取的图片仅保留在本机，不会对外发送任何字节</li>
+      <li>不上传数据库文件、账号密码及本地文件路径</li>
+      <li>不上传电脑名称、硬件信息，以及除 IP 地址之外的任何设备指纹信息</li>
+      <li>不会改动本机数据库。读取过程采用只读方式，不会对数据库产生写入影响</li>
+    </ul>
+    <p>唯一的例外是「从云端取回」：该操作会把您<strong>本人已上传的</strong>战绩写回本机数据库。
+    它<strong>只新增、不修改也不删除</strong>任何已有记录，本地已经有的会自动跳过，
+    并且在写入前会自动备份一次数据库。</p>
+
+    <h3>五、数据使用目的、存储位置及访问权限</h3>
+    <p>派喵项目维护者（以下简称“维护者”）仅为下列目的处理您的战绩数据：</p>
+    <ol>
+      <li><strong>提供战绩查询服务</strong>：将战绩与您的微信账号绑定，供您在微信小程序「派喵」中查看。</li>
+      <li><strong>匿名统计分析</strong>：在去标识化或匿名化处理后，用于生成传奇选取率等汇总统计，以改进服务。该统计不会用于识别或追踪特定个人。</li>
+    </ol>
+    <p>上传目标为派喵小程序的服务器（<span class="num">{{ view.server_host }}</span>），由维护者负责维护。在可识别个人层面，相关战绩与您的微信账号绑定，<strong>仅您本人可在小程序中查看</strong>。Evo 原作者<strong>不参与处理，亦无法访问</strong>该等数据。除提供上述服务所必需外，维护者不会向无关第三方出售您的战绩数据。</p>
+
+    <h3>六、关闭与停止处理</h3>
+    <p>您可通过以下方式控制数据上传及使用：</p>
+    <ul>
+      <li><strong>解除配对</strong>：立即停止全部上传。</li>
+      <li><strong>撤回同意</strong>：停止上传，并清除本机设备令牌及同步记录。</li>
+      <li><strong>关闭 Evo</strong>：不会执行上传。</li>
+      <li><strong>关闭匿名统计分析</strong>：在派喵小程序内选择「设置」-「关闭匿名统计分析」。关闭后，后续上传的数据将不再用于该目的。</li>
+      <li><strong>删除已上传的历史记录</strong>：在派喵小程序内选择「设置」-「删除云端用户数据」，该操作将删除您在派喵小程序服务器中存储的所有数据。</li>
+    </ul>
+
+    <p>已上传至服务器的历史记录不会因本机操作而自动删除。如需删除，请按上述方式操作。</p>
+    <h3>七、可选功能说明</h3>
+    <p>本功能为可选项。未开启本功能时，Evo 的其他功能均可正常使用。除检查更新外，Evo 本身不会联网，此点未发生变化。</p>
+    <p>「从云端取回」同样是可选的，且需要您主动点击。未点击时不会发生任何取回行为。</p>
+  </div>
+</section>
+
+      <form method="post" action="{{ url_for('cloud.consent') }}">
+        <input type="hidden" name="token" value="{{ token }}">
+        <label class="cloud-agree">
+          <input type="checkbox" name="agree" value="1" required>
+          <span class="setting-desc">我已阅读并同意《派喵云同步 · 数据传输指引》，愿意把上述战绩数据上传到派喵小程序的服务器。</span>
+        </label>
+        <div class="setting-actions" style="margin-top:16px; justify-content:flex-start">
+          <button type="submit" class="btn btn-primary">同意并继续</button>
+        </div>
+      </form>
+    </section>
+
+    {% elif not view.paired %}
+    <section class="card settings-card" aria-labelledby="h-pair">
+      <h2 id="h-pair">配对</h2>
+      <p class="setting-desc" style="margin:0 0 4px">
+        《派喵云同步 · 数据传输指引》同意于 <span class="num">{{ view.consent_at }}</span>（指引版本 {{ view.consent_version }}）。
+      </p>
+
+      <div class="setting">
+        <div class="setting-text">
+          <div class="setting-name">配对码</div>
+          <div class="setting-desc">
+            {% if view.pair_code %}
+            到派喵微信小程序「游戏战绩」中输入配对码，即可完成数据同步。
+            {% else %}
+            生成配对码，然后到派喵微信小程序「游戏战绩」中输入配对码，即可完成数据同步。
+            {% endif %}
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('cloud.pair') }}" id="cloud-pair-form">
+          <input type="hidden" name="token" value="{{ token }}">
+          <button type="submit" class="btn btn-primary" id="cloud-pair-btn">
+            <span class="cloud-pair-btn-text">{{ '重新生成' if view.pair_code else '生成配对码' }}</span>
+          </button>
+        </form>
+      </div>
+
+      {% if view.pair_code %}
+      <div class="cloud-pair" style="flex-direction:column;align-items:flex-start;gap:14px">
+        <div class="cloud-pair-grid">
+          <div class="cloud-qr">
+            <div class="cloud-qr-busy-mask">
+              <span class="cloud-spinner"></span>
+              <span>正在生成新的配对码…</span>
+            </div>
+            {% if view.pair_mini_code %}
+            <img id="cloud-mini-img" class="cloud-qr-img" alt="小程序码" src="{{ view.pair_mini_code }}">
+            {% elif view.pair_qr_url %}
+            <div id="cloud-qr-img" class="cloud-qr-img" data-url="{{ view.pair_qr_url }}"></div>
+            {% else %}
+            <div class="cloud-qr-fallback">二维码暂不可用<br>请用下面的配对码</div>
+            {% endif %}
+          </div>
+          <div class="cloud-pair-code">
+            <div class="cloud-code">{{ view.pair_code }}</div>
+            <ol class="cloud-steps">
+              <li>用微信「扫一扫」扫左边的码，直接打开小程序并自动配对</li>
+              <li>也可以打开「派喵」小程序 →「游戏战绩」→「扫一扫配对」，或在下面直接输入这 6 位码</li>
+              <li>配对成功后，这个页面会自动变成已配对</li>
+            </ol>
+          </div>
+        </div>
+        <div class="cloud-wait" id="cloud-wait">
+          <span class="cloud-dot"></span>等待手机确认…（还剩 <span id="cloud-left">{{ view.pair_left }}</span> 秒）
+        </div>
+      </div>
+      {% endif %}
+    </section>
+
+    {% else %}
+    <section class="card settings-card" aria-labelledby="h-sync">
+      <h2 id="h-sync">派喵战绩云同步</h2>
+
+      <div class="setting">
+        <div class="setting-text">
+          <div class="setting-name">已配对</div>
+          <div class="setting-desc">
+            <span class="num">{{ view.device.name }}</span>
+            {%- if view.device.expires_text %} · 有效期至 {{ view.device.expires_text }}{% endif %}
+          </div>
+        </div>
+        <div class="setting-actions">
+          <form method="post" action="{{ url_for('cloud.unpair') }}">
+            <input type="hidden" name="token" value="{{ token }}">
+            <button type="submit" class="btn btn-danger">解除配对</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="setting">
+        <div class="setting-text">
+          <div class="setting-name">自动同步</div>
+          <div class="setting-desc">
+            每 30 秒检查一次新对局，只有没传过、或者内容变了才会上传。
+            {% if not view.enabled %}<strong>现在是关闭状态，不会上传任何数据。</strong>{% endif %}
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('cloud.toggle') }}">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="enabled" value="{{ '0' if view.enabled else '1' }}">
+          <button type="submit" class="btn {{ '' if view.enabled else 'btn-primary' }}">
+            {{ '关闭同步' if view.enabled else '开启同步' }}
+          </button>
+        </form>
+      </div>
+
+      <div class="setting">
+        <div class="setting-text">
+          <div class="setting-name">上传情况</div>
+          <div class="setting-desc" id="cloud-upload">
+            {%- if view.uploaded %}
+            已上传 <span class="num" id="cloud-uploaded">{{ view.uploaded }}</span> 局
+            {%- if view.last_ok_at %}<span id="cloud-ok"> · 最近一次 {{ view.last_ok_at }}</span>{% endif %}
+            {%- else %}
+            还没有上传过
+            {%- endif %}
+            {%- if view.failed %}
+            <br><span id="cloud-failed">失败 <span class="num">{{ view.failed }}</span> 次</span>
+            {%- endif %}
+            {%- if view.last_error %}
+            <br><span id="cloud-error">最近一次错误：{{ view.last_error }}</span>
+            {%- endif %}
+            <br><span id="cloud-result" class="muted" role="status"></span>
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('cloud.sync_now') }}" id="cloud-sync-form">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="ajax" value="1">
+          <button type="submit" class="btn" id="cloud-sync-btn" {{ 'disabled' if not view.enabled }}>立即同步</button>
+        </form>
+      </div>
+
+      <div class="setting">
+        <div class="setting-text">
+          <div class="setting-name">从云端取回</div>
+          <div class="setting-desc">
+            换了电脑或重装 Evo 之后，把已经同步到云端的战绩拉回本机。
+            <br>本地已经有的不会重复插入；取回前会自动备份一次数据库。
+            <br><span id="pull-preview" class="muted">点「看看会拉回什么」先看一眼，不会写库。</span>
+          </div>
+        </div>
+        <div class="pull-actions">
+          <button type="button" class="btn" id="pull-check">看看会拉回什么</button>
+          <form method="post" action="{{ url_for('cloud.pull_now') }}">
+            <input type="hidden" name="token" value="{{ token }}">
+            <button type="submit" class="btn btn-primary">从云端取回</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="card settings-card" aria-labelledby="h-danger">
+      <h2 id="h-danger">退出</h2>
+      <div class="setting">
+        <div class="setting-text">
+          <div class="setting-name">撤回同意</div>
+          <div class="setting-desc">
+            停止上传，并清掉这台电脑上的设备令牌和同步记录。下次要用得重新同意、重新配对。
+          </div>
+        </div>
+        <div class="setting-actions">
+          <form method="post" action="{{ url_for('cloud.revoke') }}">
+            <input type="hidden" name="token" value="{{ token }}">
+            <button type="submit" class="btn btn-danger">撤回同意</button>
+          </form>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if view.agreed and view.paired %}
+<script>
+  (function () {
+    var form = document.getElementById("cloud-sync-form");
+    var btn = document.getElementById("cloud-sync-btn");
+    var out = document.getElementById("cloud-result");
+    if (!form || !btn || !out) return;
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      btn.disabled = true;
+      out.className = "muted";
+      out.textContent = "正在同步…";
+      fetch(form.action, {
+        method: "POST", body: new FormData(form),
+        headers: { "Accept": "application/json" }
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        if (!data || data.status !== "ok") {
+          out.className = "flash-error";
+          out.textContent = (data && data.message) || "同步失败：未知错误";
+          return;
+        }
+        show(data.view, data.sent);
+      }).catch(function (e) {
+        out.className = "flash-error";
+        out.textContent = "同步失败：" + e;
+      }).then(function () {
+        btn.disabled = false;
+      });
+    });
+
+    function show(v, sent) {
+      var uploaded = document.getElementById("cloud-uploaded");
+      if (uploaded) uploaded.textContent = v.uploaded;
+      var ok = document.getElementById("cloud-ok");
+      if (ok && v.last_ok_at) ok.textContent = " · 最近一次 " + v.last_ok_at;
+      var failed = document.getElementById("cloud-failed");
+      if (failed) {
+        failed.textContent = "失败 " + v.failed + " 次";
+        failed.style.display = v.failed ? "" : "none";
+      }
+      var err = document.getElementById("cloud-error");
+      if (err) {
+        err.textContent = "最近一次错误：" + v.last_error;
+        err.style.display = v.last_error ? "" : "none";
+      }
+      var text;
+      if (v.last_error) {
+        out.className = "flash-error";
+        text = "同步没成功：" + v.last_error;
+      } else if (sent) {
+        out.className = "flash-ok";
+        text = "同步完成，这次上传了 " + sent + " 局。";
+      } else {
+        out.className = "flash-ok";
+        text = "同步完成，没有新数据需要上传。";
+      }
+      var stamp = new Date().toLocaleTimeString();
+      out.textContent = text + "（" + stamp + "）";
+    }
+  })();
+</script>
+<script>
+  (function () {
+    var btn = document.getElementById("pull-check");
+    var out = document.getElementById("pull-preview");
+    if (!btn || !out) return;
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      out.className = "muted";
+      out.textContent = "正在向云端查询…";
+      fetch({{ url_for('cloud.pull_preview')|tojson }}, { headers: { "Accept": "application/json" } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data || data.status !== "ok") {
+            out.className = "err";
+            out.textContent = "查询失败：" + ((data && data.message) || "未知错误");
+            return;
+          }
+          var v = data.view;
+          out.className = "ok";
+          out.textContent = "云端有 " + v.fetched + " 局，其中 "
+            + v.added + " 局本地没有（会插入），" + v.skipped + " 局已经有了（会跳过）。"
+            + (v.lobby_added ? " 另有 " + v.lobby_added + " 条段位读数。" : "")
+            + (v.lobby_error ? " 段位读数取不到：" + v.lobby_error : "");
+        })
+        .catch(function (e) {
+          out.className = "err";
+          out.textContent = "查询失败：" + e;
+        })
+        .then(function () { btn.disabled = false; });
+    });
+  })();
+</script>
+{% endif %}
+{% if view.agreed and not view.paired and view.pair_code %}
+<script>
+  (function () {
+    var box = document.getElementById("cloud-qr-img");
+    if (!box) return;
+    var url = box.getAttribute("data-url") || "";
+    if (!url) return;
+    var token = {{ token|tojson }};
+    fetch({{ url_for('cloud.qrcode')|tojson }}, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "Accept": "application/json"
+      },
+      body: new URLSearchParams({ token: token, url: url }).toString()
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (!data || data.status !== "ok" || !Array.isArray(data.rows)) {
+        throw new Error((data && data.message) || "二维码生成失败");
+      }
+      box.innerHTML = qrSvg(data.rows);
+    }).catch(function () {
+      box.className = "cloud-qr-fallback";
+      box.textContent = "二维码生成失败，请用旁边的配对码";
+    });
+
+    function qrSvg(rows) {
+      var n = rows.length, d = "", quiet = 4, total = n + quiet * 2;
+      for (var y = 0; y < n; y++) {
+        for (var x = 0; x < n; x++) {
+          if (rows[y][x]) d += "M" + (x + quiet) + " " + (y + quiet) + "h1v1h-1z";
+        }
+      }
+      return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + total + " " + total +
+        '" shape-rendering="crispEdges"><rect width="' + total + '" height="' + total +
+        '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+    }
+  })();
+
+  (function () {
+    var fired = false;
+    function revoke() {
+      if (fired) return;
+      fired = true;
+      var body = new Blob(
+        [new URLSearchParams({ token: {{ token|tojson }} }).toString()],
+        { type: "application/x-www-form-urlencoded;charset=UTF-8" });
+      var ok = false;
+      try { ok = navigator.sendBeacon({{ url_for('cloud.revoke_qr')|tojson }}, body); } catch (e) { ok = false; }
+      if (!ok) {
+        try {
+          fetch({{ url_for('cloud.revoke_qr')|tojson }}, {
+            method: "POST", keepalive: true,
+            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+            body: new URLSearchParams({ token: {{ token|tojson }} }).toString()
+          });
+        } catch (e2) {  }
+      }
+    }
+    window.addEventListener("pagehide", revoke);
+  })();
+</script>
+<script>
+  (function () {
+    var left = {{ view.pair_left }};
+    var box = document.getElementById("cloud-wait");
+    var span = document.getElementById("cloud-left");
+    var body = new URLSearchParams();
+    body.set("token", {{ token|tojson }});
+    body.set("ajax", "1");
+    var timer = setInterval(function () {
+      fetch({{ url_for('cloud.poll')|tojson }}, {
+        method: "POST", body: body,
+        headers: { "Accept": "application/json" }
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        if (data && data.status === "confirmed") {
+          clearInterval(timer);
+          location.reload();
+        }
+      }).catch(function () {});
+    }, 2000);
+    function expired() {
+      clearInterval(timer);
+      location.reload();
+    }
+    function tick() {
+      if (left <= 0) { expired(); return; }
+      left -= 2;
+      if (span) span.textContent = Math.max(0, left);
+      if (left <= 0) { expired(); return; }
+      setTimeout(tick, 2000);
+    }
+    setTimeout(tick, 2000);
+  })();
+</script>
+{% endif %}
+<script>
+  (function () {
+    var form = document.getElementById("cloud-pair-form");
+    var btn = document.getElementById("cloud-pair-btn");
+    if (!form || !btn) return;
+
+    window.addEventListener("pageshow", function (event) {
+      if (!event.persisted) return;
+      btn.disabled = false;
+      btn.classList.remove("cloud-pair-busy");
+      document.body.classList.remove("cloud-pair-busy-page");
+    });
+
+    form.addEventListener("submit", function () {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.classList.add("cloud-pair-busy");
+      document.body.classList.add("cloud-pair-busy-page");
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,49 @@
+<section class="card settings-card branch-card">
+  <details class="branch-fold">
+    <summary class="branch-summary">
+      <h2 id="{{ branch_anchor }}">关于本分支 / 第三方许可</h2>
+      <span class="branch-toggle" aria-hidden="true">
+        <span class="t-closed">展开</span><span class="t-open">收起</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" aria-hidden="true"><path d="M6 9 L12 15 L18 9"></path></svg>
+      </span>
+    </summary>
+
+    <div class="branch-body">
+      <p class="branch-lead">
+        本软件是 <strong>Evo 的非官方修改分支</strong>（{{ branch.name }}），
+        由 {{ branch.maintainer }} 维护，与上游项目
+        <a href="{{ branch.upstream_url }}" target="_blank" rel="noopener noreferrer">AugustHuangMX/Evo</a>
+        及其作者<strong>无隶属、合作或背书关系</strong>。
+        上游项目作者不对本分支的修改、新增功能及数据行为负责。
+      </p>
+
+      <dl class="branch-facts">
+        <dt>上游版本</dt>
+        <dd><span class="num">{{ branch.upstream_version or "未知" }}</span>（派喵版在此基础上修改）</dd>
+
+        <dt>本分支源代码</dt>
+        <dd><a href="{{ branch.source_url }}" target="_blank" rel="noopener noreferrer">{{ branch.source_url }}</a></dd>
+
+        <dt>问题反馈</dt>
+        <dd><a href="{{ branch.issues_url }}" target="_blank" rel="noopener noreferrer">GitHub Issues</a>
+          —— 请勿把本分支特有的问题提交到上游</dd>
+
+        <dt>本分支的修改</dt>
+        <dd>详见源代码/paimiao_cloud/</dd>
+      </dl>
+
+      <h3 class="branch-sub">原始版权声明</h3>
+      <p class="branch-copy">{{ branch.copyright }}</p>
+
+      <h3 class="branch-sub">许可证</h3>
+      <pre class="branch-license" tabindex="0">{{ branch.license_text }}</pre>
+
+      <h3 class="branch-sub">派喵后端服务</h3>
+      <p class="branch-note">
+        「派喵云同步」所连接的派喵后端服务（小程序及服务端）是独立开发的软件，
+        仅通过公开 API 与本程序交互，不属于本程序衍生作品，<strong>不受上述许可证约束，不开放源代码</strong>。
+      </p>
+    </div>
+  </details>
+</section>
