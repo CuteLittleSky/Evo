@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% from "_legend.html" import legend_icon %}
+{% block title %}榜单 · Evo{% endblock %}
+
+{% block content %}
+<style>
+  /* 只补上游没有的零件：职业标签底色、走势箭头颜色、段位条折行。 */
+  .pickrate-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  .pickrate-head h1 { margin: 0; }
+  .pickrate-when { color: var(--muted); font-size: 12px; }
+  .pickrate-tabs { margin-top: 16px; flex-wrap: wrap; }
+  /* 8 档在窄窗里折成两行，比横向滚动好找 */
+  .pickrate-tabs.seg { flex-wrap: wrap; }
+  .pickrate-role { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px;
+                   font-size: 11px; font-weight: 500; color: var(--card);
+                   background: var(--pick-role-color, var(--muted)); }
+  .pickrate-up { color: var(--good); }
+  .pickrate-down { color: var(--bad); }
+  .pickrate-flat { color: var(--muted); }
+  .pickrate-trend { font-variant-numeric: tabular-nums; }
+  @media (forced-colors: active) {
+    .pickrate-role { border: 1px solid CanvasText; background: none; color: CanvasText; }
+  }
+</style>
+
+<div class="pickrate-head">
+  <h1>传奇选取率</h1>
+  <span class="pickrate-when">{% if pick_updated %}{{ pick_updated }} 更新{% else %}全部段位 · 派喵服务器{% endif %}</span>
+</div>
+
+<nav class="seg stats-tabs pickrate-tabs" aria-label="段位">
+  {% for t in pick_tabs %}
+  <a href="{{ url_for('pickrate.page', tier=t.key) }}"
+     class="{{ 'on' if t.on }}"{% if t.on %} aria-current="page"{% endif %}>{{ t.label }}</a>
+  {% endfor %}
+</nav>
+
+{% if pick_error %}
+<p class="stats-empty">{{ pick_error }}</p>
+{% endif %}
+
+{% if not pick_rows and not pick_error %}
+<p class="stats-empty">这一档还没有数据。</p>
+{% endif %}
+
+{% if pick_rows %}
+<div class="table-wrap">
+  <table class="stats-table pickrate-table">
+    <thead>
+      <tr>
+        <th scope="col" class="right">#</th>
+        <th scope="col">传奇</th>
+        <th scope="col" class="pick-col">选取率</th>
+        <th scope="col" class="right">较上周</th>
+        {% if pick_has_avg %}<th scope="col" class="right">平均段位</th>{% endif %}
+        {% if pick_has_win %}<th scope="col" class="right">战绩胜率</th>{% endif %}
+        {% if pick_has_kpm %}<th scope="col" class="right">平均场杀</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in pick_rows %}
+      <tr>
+        <td class="right num">{{ r.rank }}</td>
+        <th scope="row">
+          <span class="legend-label">{{ legend_icon(r.icon) }}{{ r.name }}</span>
+          {% if r.role_label %}<span class="pickrate-role" style="--pick-role-color: {{ r.role_color }}">{{ r.role_label }}</span>{% endif %}
+        </th>
+        <td class="pick-col">
+          <span class="share"><span class="bar" aria-hidden="true"><span class="share-fill" style="width: {{ r.bar }}%"></span></span><span class="num">{{ r.pick }}</span></span>
+        </td>
+        <td class="right pickrate-trend pickrate-{{ r.trend_dir }}">{{ r.trend }}</td>
+        {% if pick_has_avg %}<td class="right num">{{ r.avg_rank }}</td>{% endif %}
+        {% if pick_has_win %}<td class="right num">{{ r.win }}</td>{% endif %}
+        {% if pick_has_kpm %}<td class="right num">{{ r.kpm }}</td>{% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="stats-note">
+  选取率 = 这一档所有对局里选出该传奇的比例，按选取率从高到低排；「较上周」是最近 7 天的变化。<br>
+  数据来自派喵Apex工具。<br>
+  「战绩胜率」不是全服平均胜率：它是各平台前 100 名玩家（天榜猎）的战绩胜率口径，
+  各传奇相加会超过 100%。「平均场杀」是全球被追踪玩家近 7 天的平均击杀数。<br>
+</p>
+{% endif %}
+{% endblock %}

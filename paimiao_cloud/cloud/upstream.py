@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import os
 
 from cloud import state as cloud_state
@@ -39,6 +40,17 @@ OLD_ABOUT_ONLINE = "只有更新和你同意的匿名统计会联网"
 NEW_ABOUT_ONLINE = "只有检查更新和派喵云同步会联网"
 
 FOLLOW_ENABLED = os.environ.get("EVO_PAIMIAO_FOLLOW", "0") == "1"
+# 派喵版隐藏了上游的「关注我」卡（开发者的 B 站/小黑盒），那块现在放我们自己的
+# 地图轮换卡（cloud/map_rotation_ui.py）。
+#
+# 插卡是在**渲染之后**做的（map_rotation_ui 包了 app.jinja_env.get_template，
+# 见那边的说明）：preprocess 在渲染前处理模板源码，而上游的 `_hide_follow_block`
+# 也在同一层，谁在外面谁先跑 —— 插在 preprocess 里会被这次删除连带吃掉
+# （2026-10-26 踩过）。渲染之后再插就和这层删除无关了，所以顺序随便。
+#
+# 插的位置是总览页最后那张卡（`settings-card` 收尾的 `</section>`）后面；
+# 「关注我」被删掉之后那里正好是空出来的位置。跑一遍
+# paimiao_cloud/cloud/tests/map_rotation_preview.py 就知道还插不插得上。
 
 _FOLLOW_START = "{# 关注我"
 _FOLLOW_OPEN = 'aria-labelledby="h-follow"'
@@ -110,15 +122,51 @@ def _patch_telemetry():
         import telemetry
     except Exception:
         return []
-    if getattr(telemetry.consent, "_paimiao_patched", False):
-        return []
+    done = []
+    if not getattr(telemetry.consent, "_paimiao_patched", False):
 
-    def consent():
-        return False
+        def consent():
+            return False
 
-    consent._paimiao_patched = True
-    telemetry.consent = consent
-    return ["telemetry_off"]
+        consent._paimiao_patched = True
+        telemetry.consent = consent
+        done.append("telemetry_off")
+
+    # 用户 2026-10-25 的决定：光让 `consent()` 恒为假，`send()` 仍是「先判断、再发」的流程，
+    # 哪天上游调换顺序、或者别的代码直接调 `_post()`，请求就发出去了。这里把**发送端**
+    # 整个包住：不联网、不写设置，并补上 consent()=False 时原来的 return None 分支
+    # （上游 send() 在 :230 就是「没同意 → 返回 None」，这里不改那个行为）。
+    #
+    # ⚠ 不要再把整个 `send()` 换成「直接返回一个 dict」的空函数：上游 send() 的第一句
+    # 就是 `if consent() is not True: return None`，调用方（面板、云同步、测试）都按
+    # 「None = 没发」来判断。替换成 dict 会让 tests/test_global_stats.py 在
+    # `install not in json.dumps(...)` 上炸 TypeError（install 为 None），事实是那条断言
+    # 之前从未被走到 —— 它默认「开了匿名统计就会联网」，正是我们要断的。
+    if not getattr(telemetry.send, "_paimiao_noop", False):
+        original_send = telemetry.send
+
+        @functools.wraps(original_send)
+        def send(*args, **kwargs):
+            if consent() is not True:
+                return None
+            return {"ok": True, "matches": 0, "ping": False, "error": None, "at": None}
+
+        send._paimiao_noop = True
+        telemetry.send = send
+        done.append("telemetry_send_noop")
+
+    # 最后一道闸：连底层 POST 也封掉。上游 `_post()` 是唯一出网的入口
+    # （send() 只经它发；别的模块要发也得走它）。
+    if not getattr(telemetry._post, "_paimiao_noop", False):
+        original_post = telemetry._post
+
+        def _post(path, body, timeout=None, *args, **kwargs):
+            raise telemetry.SendError("派喵版不发送匿名统计")
+
+        _post._paimiao_noop = True
+        telemetry._post = _post
+        done.append("telemetry_post_blocked")
+    return done
 
 def _install_template_hook(env):
 

@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% from "_legend.html" import legend_icon %}
+{% block title %}地图轮换 · Evo{% endblock %}
+
+{% block content %}
+<style>
+  /* 只补上游没有的零件：模式卡、缩略图、时间轴。其余都用 style.css 已有的类
+     （card / settings-card / stats-tabs / stats-empty / share / bar / share-fill）。 */
+  .maprot-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  .maprot-head h1 { margin: 0; }
+  .maprot-when { color: var(--muted); font-size: 12px; }
+  .maprot-list { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+  .maprot-mode { padding: 16px 20px; }
+  .maprot-mode h2 { margin: 0 0 12px; font-size: 15px; }
+  .maprot-item { display: flex; gap: 16px; align-items: flex-start; }
+  .maprot-thumb { width: 132px; height: 74px; flex: none; border-radius: 4px; object-fit: cover;
+                  background: var(--inset); border: 1px solid var(--input-border); }
+  .maprot-thumb.blank { display: flex; align-items: center; justify-content: center;
+                        font-size: 12px; color: var(--muted); padding: 0 8px; text-align: center; }
+  .maprot-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .maprot-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .maprot-title b { font-size: 16px; }
+  .maprot-title span { font-size: 13px; color: var(--muted); }
+  .maprot-left { font-variant-numeric: tabular-nums; }
+  .maprot-times { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .maprot-next { display: flex; flex-direction: column; gap: 4px; margin-top: 12px;
+                 font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .maprot-next b { color: inherit; font-weight: 600; }
+  .maprot-note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  .maprot-season { display: flex; flex-direction: column; gap: 8px; }
+  /* 赛段 + 天梯战并排的头部：都放得下就两列，放不下自动折成一列 */
+  .maprot-hud { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+                gap: 16px; margin-top: 16px; }
+  .maprot-hud > section { margin-top: 0; }
+  .maprot-rumble .maprot-title b { font-size: 15px; }
+  .maprot-sub { font-size: 12px; color: var(--muted); }
+</style>
+
+<div class="maprot-head">
+  <h1>地图轮换</h1>
+  <span class="maprot-when">
+    {% if mr.available %}更新于 {{ mr.fetched_text }} · 数据来自 tools.skycraft.cn{% else %}数据来自 tools.skycraft.cn{% endif %}
+  </span>
+</div>
+
+{% if mr.season or mr.rumble %}
+<div class="maprot-hud">
+  {% if mr.season %}
+  <section class="card settings-card maprot-mode">
+    <h2>{% if mr.season.split_name or mr.season.name %}赛段{% else %}排位赛季{% endif %}</h2>
+    <div class="maprot-season">
+      <div class="maprot-title">
+        <b>{{ mr.season.title }}</b>
+        {% if mr.season.finished %}
+        <span class="maprot-left">已结束{% if mr.season.finish_text %}（{{ mr.season.finish_text }}）{% endif %}</span>
+        {% elif mr.season.left_days is not none %}
+        <span class="maprot-left">距结束还有 {{ mr.season.left_days }} 天{% if mr.season.finish_text %}（{{ mr.season.finish_text }}）{% endif %}</span>
+        {% endif %}
+      </div>
+      {% if mr.season.progress is not none %}
+      <span class="share"><span class="bar" aria-hidden="true"><span class="share-fill" style="width: {{ mr.season.progress }}%"></span></span><span class="num">{{ mr.season.progress }}%</span></span>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if mr.rumble %}
+  {% set rb = mr.rumble %}
+  <section class="card settings-card maprot-mode maprot-rumble">
+    <h2>天梯战</h2>
+    <div class="maprot-season">
+      <div class="maprot-title">
+        <b>{{ rb.title }}</b>
+        <span class="maprot-left">{{ rb.status_text }} · {{ rb.target_label }} {{ rb.countdown }}</span>
+      </div>
+      <span class="share"><span class="bar" aria-hidden="true"><span class="share-fill" style="width: {{ rb.progress }}%"></span></span><span class="num">{{ rb.progress }}%</span></span>
+      <div class="maprot-times">
+        {{ rb.start_text }} 开始 · {{ rb.end_text }} 结束
+      </div>
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if mr.error_text %}
+<p class="stats-empty">{{ mr.error_text }}</p>
+{% endif %}
+
+<div class="maprot-list" id="map-rotation-body">
+  {% for mode in mr.modes %}
+  <section class="card settings-card maprot-mode">
+    <h2>{{ mode.label }}</h2>
+    {% set cur = mode.current %}
+    {% if cur %}
+    <div class="maprot-item">
+      {% if cur.image %}
+      <img class="maprot-thumb" src="{{ cur.image }}" alt="{{ cur.map }}" loading="lazy"
+           referrerpolicy="no-referrer" onerror="this.classList.add('blank'); this.removeAttribute('src');">
+      {% else %}
+      <div class="maprot-thumb blank">{{ cur.map }}</div>
+      {% endif %}
+      <div class="maprot-main">
+        <div class="maprot-title">
+          <b>{{ cur.map }}</b>
+          {% if cur.left_mins is not none %}<span class="maprot-left">还剩 {{ cur.left_mins }} 分钟</span>{% endif %}
+        </div>
+        <span class="share"><span class="bar" aria-hidden="true"><span class="share-fill" style="width: {{ cur.progress }}%"></span></span></span>
+        <div class="maprot-times">
+          {{ cur.start }} 开始 · {{ cur.end }} 结束{% if cur.mins %} · 每轮 {{ cur.mins }} 分钟{% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <p class="maprot-note">这一模式现在没有排定的地图。</p>
+    {% endif %}
+
+    {% if mode.upcoming %}
+    <div class="maprot-next">
+      {% for n in mode.upcoming %}
+      <div><b>{{ n.start }}</b>　{{ n.map }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+
+<section class="card settings-card maprot-mode" style="margin-top: 16px">
+  <p class="maprot-note">
+    数据来自
+    <a href="{{ mr.page_url }}" target="_blank" rel="noopener noreferrer">tools.skycraft.cn/apex/zh-CN/maprotation ↗</a>，
+    地图图片也由它提供，{% if mr.available %}联网时最多 5 分钟自动更新一次；断网时显示上一次拿到的表。{% endif %}
+  </p>
+</section>
+{% endblock %}

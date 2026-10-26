@@ -216,6 +216,22 @@ def attach(module):
         except Exception as exc:
             _log(f"子弹时间页面注入失败（不影响记录）：{exc!r}")
 
+    if not getattr(app, "_paimiao_pickrate_installed", False):
+        app._paimiao_pickrate_installed = True
+        try:
+            from cloud.pickrate import inject as pickrate_inject
+            pickrate_inject.register(app, module)
+        except Exception as exc:
+            _log(f"榜单页注入失败（不影响记录）：{exc!r}")
+
+    if not getattr(app, "_paimiao_map_rotation_installed", False):
+        app._paimiao_map_rotation_installed = True
+        try:
+            from cloud import map_rotation_inject
+            map_rotation_inject.register(app, module)
+        except Exception as exc:
+            _log(f"地图轮换注入失败（不影响记录）：{exc!r}")
+
     if not app.blueprints.get("cloud"):
         cloud_panel.MODULE = module
         app.register_blueprint(cloud_panel.build())
