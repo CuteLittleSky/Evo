@@ -174,10 +174,12 @@ def recommend_html() -> str:
     </div>
   </div>
 </dialog>
-{# 「以后再说」走这个表单提交，服务端记下已看过；没有 form 包住弹窗，
-   所以按钮用 form 属性关联，样式和布局都不变。 #}
+<!-- 「以后再说」走这个表单提交，服务端记下已看过；没有 form 包住弹窗，
+     所以按钮用 form 属性关联，样式和布局都不变。
+     注意：这里必须用 HTML 注释，不能用 Jinja 的 {# #}：recommend_html() 是作为
+     变量用 `| safe` 输出的，Jinja 不会再解析它的内容，写 {# #} 只会原样显示在页面上。 -->
 <form method="post" action="__LATER_URL__" id="cloud-recommend-later">
-  {# 上游 security_checks（code/panel_app.py:156）要求所有 POST 带口令，不带就 403 #}
+  <!-- 上游 security_checks（code/panel_app.py:156）要求所有 POST 带口令，不带就 403 -->
   <input type="hidden" name="token" value="__TOKEN__">
   <input type="hidden" name="next" value="__NEXT_PATH__">
 </form>
