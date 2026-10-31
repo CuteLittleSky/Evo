@@ -94,12 +94,14 @@ class _Finder(importlib.abc.MetaPathFinder):
             return spec
         if isinstance(spec.loader, _AfterImportLoader):
             return spec                    # 已经包好了
-        # 子进程里第一次导入：包一层「导完就换上我们的读数」，然后交给正常流程执行
+        # 子进程里第一次导入：**保留原 spec**，只把 loader 包一层「导完就换上我们的读数」。
+        # 关键：不能再像以前那样用 spec_from_loader 重建 spec —— 那会丢掉 origin/has_location，
+        # module.__file__ 就不会被设置；而 PyInstaller 6.10+ 的 PyiFrozenLoader.exec_module 里有
+        # `assert hasattr(module, '__file__')`，打包版会直接 AssertionError（0.5.0 真机踩到）。
         try:
-            wrapped = importlib.util.spec_from_loader(fullname, _AfterImportLoader(spec.loader))
-            wrapped.submodule_search_locations = spec.submodule_search_locations
+            spec.loader = _AfterImportLoader(spec.loader)
             _mark_installed()
-            return wrapped
+            return spec
         except Exception:                  # 包不上就原样导，用上游自己的读数
             return spec
 
@@ -469,9 +471,9 @@ def _wrap_loader_if_needed():
     loader = spec.loader
     if isinstance(loader, _AfterImportLoader):
         return
-    shim = importlib.util.spec_from_loader(TARGET, _AfterImportLoader(loader))
-    sys.modules[TARGET] = importlib.util.module_from_spec(shim)   # 先占住名字
-    importlib._bootstrap._load(shim)                              # 再走真正的导入（会调它的 exec_module）
+    spec.loader = _AfterImportLoader(loader)                      # 只换 loader，保留原 spec 的 origin/__file__（PyInstaller 6.10+ 断言需要）
+    sys.modules[TARGET] = importlib.util.module_from_spec(spec)   # 先占住名字
+    importlib._bootstrap._load(spec)                              # 再走真正的导入（会调它的 exec_module）
 
 
 
