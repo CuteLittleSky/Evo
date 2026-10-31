@@ -153,10 +153,8 @@ def recommend_html() -> str:
     return """
 <style>
   /* 上游 .dialog 是 padding:0，内边距由 .dialog form 提供（:176）。
-     我们不用 form（这里没有要提交的东西），所以自己补一份同样的留白。 */
+     我们不用 form 包住弹窗，所以自己补一份同样的留白。 */
   .recommend-dialog .dialog-body { display: flex; flex-direction: column; gap: 16px; padding: 24px; }
-  /* 「去绑定」是 <a>，要长得跟旁边的 .btn-primary 按钮一样（继承行内排版） */
-  .recommend-dialog .btn { text-decoration: none; }
 </style>
 <dialog class="dialog recommend-dialog" id="cloud-recommend" aria-labelledby="h-cloud-recommend">
   <div class="dialog-body">
@@ -170,18 +168,24 @@ def recommend_html() -> str:
     </p>
     <div class="dialog-actions">
       <button type="submit" form="cloud-recommend-later" class="btn-text" data-recommend="later">以后再说</button>
-      <a href="__CLOUD_URL__" class="btn btn-primary" data-recommend="go">去绑定</a>
+      <button type="submit" form="cloud-recommend-go" class="btn btn-primary" data-recommend="go">去绑定</button>
     </div>
   </div>
 </dialog>
-<!-- 「以后再说」走这个表单提交，服务端记下已看过；没有 form 包住弹窗，
-     所以按钮用 form 属性关联，样式和布局都不变。
+<!-- 两个按钮都用表单提交，服务端顺手记下已看过（.btn / .btn-text 的类选择器对 button 同样生效）：
+     ① 没有 form 包住弹窗，所以按钮用 form 属性关联，样式和布局都不变；
+     ② 「去绑定」也记已看过（next 指向云同步页），点过一次以后不再弹。
      注意：这里必须用 HTML 注释，不能用 Jinja 的 {# #}：recommend_html() 是作为
      变量用 `| safe` 输出的，Jinja 不会再解析它的内容，写 {# #} 只会原样显示在页面上。 -->
 <form method="post" action="__LATER_URL__" id="cloud-recommend-later">
   <!-- 上游 security_checks（code/panel_app.py:156）要求所有 POST 带口令，不带就 403 -->
   <input type="hidden" name="token" value="__TOKEN__">
   <input type="hidden" name="next" value="__NEXT_PATH__">
+</form>
+<form method="post" action="__LATER_URL__" id="cloud-recommend-go">
+  <!-- 同上：POST 要带口令；next 指向云同步页，点「去绑定」= 记已看过 + 跳过去 -->
+  <input type="hidden" name="token" value="__TOKEN__">
+  <input type="hidden" name="next" value="__CLOUD_URL__">
 </form>
 <script>
   (function () {
@@ -191,7 +195,7 @@ def recommend_html() -> str:
     dialog.showModal();
     dialog.querySelector('[data-recommend="go"]').focus();
 
-    // 只是推荐，不是条款：点「去绑定」直接跳转（<a> 自己会走），
+    // 只是推荐，不是条款：点「去绑定」提交表单（记下已看过，再跳到云同步页），
     // 点「以后再说」或按 Esc 关掉，并告诉本机「看过了」，以后不再打扰。
     // 按 Esc 和点「以后再说」一样：也算看过了，下次开窗不再拦一下。
     dialog.addEventListener("cancel", function (event) {
@@ -385,6 +389,15 @@ def _recommend_for_render() -> str:
 def recommend_pending() -> bool:
 
     if os.environ.get("EVO_NO_NOTICE") == "1":
+        return False
+    # 已经在「派喵云同步」页本身：别再拿推荐弹窗把它自己挡住。否则点「去绑定」跳到这页后
+    # 弹窗又盖上来，看起来像点了没反应（推荐只在别的页面出现）。
+    try:
+        from flask import request
+        here = (request.path or "").rstrip("/")
+    except Exception:
+        here = ""
+    if here == "/cloud":
         return False
     snapshot = cloud_state.load()
     # 已经同意并配对成功的用户不用再推荐一次；跟卡片一致，以本机快照为准。
