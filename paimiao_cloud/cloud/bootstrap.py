@@ -232,6 +232,16 @@ def attach(module):
         except Exception as exc:
             _log(f"地图轮换注入失败（不影响记录）：{exc!r}")
 
+    # 设置页 1.4 秒的元凶：上游 folder_usage() 每渲染一次就 rglob + stat 一遍
+    # captures/live（见 cloud/folder_usage_inject.py）。挂不上只是慢，不影响功能。
+    if not getattr(app, "_paimiao_folder_usage_installed", False):
+        app._paimiao_folder_usage_installed = True
+        try:
+            from cloud import folder_usage_inject
+            folder_usage_inject.install(module)
+        except Exception as exc:
+            _log(f"设置页提速注入失败（设置页照常能开）：{exc!r}")
+
     if not app.blueprints.get("cloud"):
         cloud_panel.MODULE = module
         app.register_blueprint(cloud_panel.build())
