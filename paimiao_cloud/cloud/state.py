@@ -71,6 +71,7 @@ DEFAULTS = {
     "stats": {"uploaded": 0, "failed": 0, "last_ok_at": "", "last_error": ""},
 
     "notice_seen": "",
+    "recommend_seen": "",
 }
 
 def load() -> dict:
@@ -85,6 +86,7 @@ def load() -> dict:
     merged["hashes"] = raw.get("hashes") or {}
     merged["consent"] = raw.get("consent") or {}
     merged["notice_seen"] = str(raw.get("notice_seen") or "")
+    merged["recommend_seen"] = str(raw.get("recommend_seen") or "")
 
     merged["server"] = default_server()
     return merged

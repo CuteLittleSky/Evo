@@ -137,6 +137,21 @@ def notice_ack():
     cloud_state.log(f"分支说明已读（{version}，{action}）")
     return redirect(_after_notice(url_for("settings")))
 
+@bp.post("/recommend/dismiss")
+def recommend_dismiss():
+
+    notice.mark_recommend_seen()
+    back_to = request.form.get("next") or request.referrer or url_for("settings")
+    return redirect(_safe_next(back_to, url_for("settings")))
+
+def _safe_next(target: str, default: str) -> str:
+
+    # 只允许站内相对路径，免得变成一个开放跳转。
+    target = (target or "").strip()
+    if target.startswith("/") and not target.startswith("//") and "\\" not in target:
+        return target
+    return default
+
 def wants_json():
     return request.form.get("ajax") == "1" or "application/json" in request.headers.get("Accept", "")
 

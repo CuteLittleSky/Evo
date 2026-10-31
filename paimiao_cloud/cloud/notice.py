@@ -10,6 +10,9 @@ from cloud import state as cloud_state
 
 NOTICE_VERSION = "2026-10-22"
 
+# 「推荐绑定派喵云同步」弹窗的版本。改了推荐文案或想再问一次老用户时改这里。
+RECOMMEND_VERSION = "2026-10-27"
+
 SOURCE_URL = "https://github.com/CuteLittleSky/Evo"
 ISSUES_URL = "https://github.com/CuteLittleSky/Evo/issues"
 UPSTREAM_URL = "https://github.com/AugustHuangMX/Evo"
@@ -145,6 +148,58 @@ def dialog_html(version: str = "", token: str = "") -> str:
 </script>
 """
 
+def recommend_html() -> str:
+
+    return """
+<style>
+  /* 上游 .dialog 是 padding:0，内边距由 .dialog form 提供（:176）。
+     我们不用 form（这里没有要提交的东西），所以自己补一份同样的留白。 */
+  .recommend-dialog .dialog-body { display: flex; flex-direction: column; gap: 16px; padding: 24px; }
+  /* 「去绑定」是 <a>，要长得跟旁边的 .btn-primary 按钮一样（继承行内排版） */
+  .recommend-dialog .btn { text-decoration: none; }
+</style>
+<dialog class="dialog recommend-dialog" id="cloud-recommend" aria-labelledby="h-cloud-recommend">
+  <div class="dialog-body">
+    <h2 id="h-cloud-recommend" tabindex="-1" autofocus>把战绩同步到手机</h2>
+    <p class="dialog-desc">
+      Evo 现在只把战绩记在这台电脑上。绑定派喵云同步以后，每一局结束都会自动传到云端，
+      用微信小程序「派喵」随时在手机上看名次、击杀、伤害和排位分。
+    </p>
+    <p class="dialog-desc">
+      功能是可选的，不绑定也照常记录。绑定以后随时可以在同一页解绑，解绑后不再上传任何数据。
+    </p>
+    <div class="dialog-actions">
+      <button type="submit" form="cloud-recommend-later" class="btn-text" data-recommend="later">以后再说</button>
+      <a href="__CLOUD_URL__" class="btn btn-primary" data-recommend="go">去绑定</a>
+    </div>
+  </div>
+</dialog>
+{# 「以后再说」走这个表单提交，服务端记下已看过；没有 form 包住弹窗，
+   所以按钮用 form 属性关联，样式和布局都不变。 #}
+<form method="post" action="__LATER_URL__" id="cloud-recommend-later">
+  {# 上游 security_checks（code/panel_app.py:156）要求所有 POST 带口令，不带就 403 #}
+  <input type="hidden" name="token" value="__TOKEN__">
+  <input type="hidden" name="next" value="__NEXT_PATH__">
+</form>
+<script>
+  (function () {
+    var dialog = document.getElementById("cloud-recommend");
+    if (!dialog) return;
+    if (typeof dialog.showModal !== "function") return;   // 老引擎：不弹，别留个关不掉的黑块
+    dialog.showModal();
+    dialog.querySelector('[data-recommend="go"]').focus();
+
+    // 只是推荐，不是条款：点「去绑定」直接跳转（<a> 自己会走），
+    // 点「以后再说」或按 Esc 关掉，并告诉本机「看过了」，以后不再打扰。
+    // 按 Esc 和点「以后再说」一样：也算看过了，下次开窗不再拦一下。
+    dialog.addEventListener("cancel", function (event) {
+      event.preventDefault();
+      document.querySelector('[data-recommend="later"]').click();
+    });
+  })();
+</script>
+"""
+
 _CARD_TEMPLATE = Path(__file__).resolve().parent / "templates" / "branch_card.html"
 
 _CARD_CSS = """
@@ -201,6 +256,10 @@ def card_html(branch: dict) -> str:
 _DIALOG_MARK = "{% block scripts %}"
 
 _DIALOG_SENTINEL = 'id="branch-dialog"'
+_RECOMMEND_SENTINEL = 'id="cloud-recommend"'
+
+# 源码里可见的幂等标记（见 inject_recommend 注释）
+_RECOMMEND_MARK = "cloud_recommend_dialog()"
 _CARD_SENTINEL = f'id="{BRANCH_ANCHOR}"'
 
 _CARD_INJECT_AT = '<div class="settings-main">'
@@ -219,6 +278,18 @@ def inject_dialog(source: str, version: str = "") -> str:
         "{{ branch_notice_dialog(token|default('')) | safe }}"
         "{% endif %}"
     )
+    return source[:at] + block + source[at:]
+
+def inject_recommend(source: str) -> str:
+
+    # 幂等标记只能用**模板源码里看得见**的东西：弹窗的 HTML 是渲染期才展开的，
+    # 源码里根本没有 id="cloud-recommend"，拿它当哨兵会重复插（踩过）。
+    if not source or _RECOMMEND_MARK in source:
+        return source
+    at = source.find(_DIALOG_MARK)
+    if at < 0:
+        return source
+    block = "{% if cloud_recommend_pending() %}" "{{ cloud_recommend_dialog() | safe }}" "{% endif %}"
     return source[:at] + block + source[at:]
 
 def inject_card(source: str, branch: dict) -> str:
@@ -252,6 +323,8 @@ def patch_source(source: str, template: str, branch: dict, version: str = "") ->
     # （已看过记录），想恢复弹窗时把下面这行 if 打开即可。
     if False:
         source = inject_dialog(source, version)
+    # 2026-10-27 用户决定：启动说明改成「推荐绑定派喵云同步」，点按钮直接去 /cloud/。
+    source = inject_recommend(source)
     if template == "settings.html":
         source = inject_card(source, branch)
     return source
@@ -270,6 +343,60 @@ def _dialog_for_template(token="", version="") -> str:
     global _SHOWN
     _SHOWN = True
     return dialog_html(version=version or NOTICE_VERSION, token=str(token or ""))
+
+def _recommend_for_render() -> str:
+
+    # 地址和当前路径都在渲染时现算（拿不到就用固定值，免得把整页带崩）。
+    try:
+        from flask import url_for
+        target = url_for("cloud.page")
+    except Exception:
+        target = "/cloud/"
+    try:
+        from flask import url_for
+        later = url_for("cloud.recommend_dismiss")
+    except Exception:
+        later = "/cloud/recommend/dismiss"
+    try:
+        from flask import request
+        here = (request.full_path or "/").rstrip("?")
+        if not (here.startswith("/") and not here.startswith("//")):
+            here = ""
+    except Exception:
+        here = ""
+    page = html.escape(here, quote=True)
+    try:
+        from flask import current_app
+        token = str(current_app.config.get("TOKEN") or "")
+    except Exception:
+        token = ""
+    token = html.escape(token, quote=True)
+
+    return (
+        recommend_html()
+        .replace("__CLOUD_URL__", target)
+        .replace("__LATER_URL__", later)
+        .replace("__NEXT_PATH__", page)
+        .replace("__TOKEN__", token)
+    )
+
+def recommend_pending() -> bool:
+
+    if os.environ.get("EVO_NO_NOTICE") == "1":
+        return False
+    snapshot = cloud_state.load()
+    # 已经同意并配对成功的用户不用再推荐一次；跟卡片一致，以本机快照为准。
+    if cloud_state.agreed(snapshot) and cloud_state.paired(snapshot):
+        return False
+    # 点过「以后再说」就按版本记住：文案/功能变了（升 RECOMMEND_VERSION）才会再问一次。
+    return snapshot.get("recommend_seen") != RECOMMEND_VERSION
+
+def mark_recommend_seen() -> None:
+
+    snapshot = cloud_state.load()
+    snapshot["recommend_seen"] = RECOMMEND_VERSION
+    cloud_state.save(snapshot)
+    cloud_state.log(f"推荐绑定弹窗已关闭（{RECOMMEND_VERSION}）")
 
 def _install_preprocess(env, module):
     if getattr(env, "_paimiao_notice_preprocess", False):
@@ -290,6 +417,8 @@ def _install_preprocess(env, module):
 
     env.globals["branch_notice_pending"] = should_show
     env.globals["branch_notice_dialog"] = _dialog_for_template
+    env.globals["cloud_recommend_pending"] = recommend_pending
+    env.globals["cloud_recommend_dialog"] = _recommend_for_render
     return ["notice_preprocess"]
 
 def branch_view(module=None) -> dict:
