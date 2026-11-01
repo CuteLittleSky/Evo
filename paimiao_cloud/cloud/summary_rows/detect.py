@@ -400,11 +400,11 @@ def _patch_read_summary(module):
     status_text = getattr(module, "STATUS_TEXT", {})
 
     @wraps(original)
-    def read_summary(engine, img, cfg, save_crops=False):
+    def read_summary(engine, img, cfg, save_crops=False, memo=None):
         try:
             read = _read_rows(engine, img, cfg, save_crops)
             if read is None:
-                return original(engine, img, cfg, save_crops=save_crops)   # 认不出的配置照旧
+                return original(engine, img, cfg, save_crops=save_crops, memo=memo)   # 认不出的配置照旧
             return _summarize(*read, key_fields=key_fields, status_text=status_text)
         except Exception as exc:       # noqa: BLE001
             # 我们自己读错了（字段没定义、上游改了结构……）：退回上游的读法，不让记录线程抛错。
@@ -412,7 +412,7 @@ def _patch_read_summary(module):
             # 保底读数放到出错之后才做：上游读一次要 6 秒，总结页只停十几秒。
             _log(f"[总结页读数] 读总结页出错，退回上游的读法：{exc!r}")
         try:
-            return original(engine, img, cfg, save_crops=save_crops)
+            return original(engine, img, cfg, save_crops=save_crops, memo=memo)
         except Exception as exc:       # noqa: BLE001
             _log(f"[总结页读数] 上游读法也出错：{exc!r}")
             return {}, ["总结页读数出错，这一局请手动核对"]

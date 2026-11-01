@@ -275,12 +275,16 @@ jobs:
           # 用 repository_dispatch 让 ApexPacks 仓库去改 server/data/evo-latest.json。
           # 需要一个 PAT（repo 权限，classic）或 fine-grained token（对 ApexPacks 有 contents:write），
           # 存在本仓库的 secret APEXPACKS_DISPATCH_TOKEN 里。
-          # zip 下载地址用 R2 自定义域（cfr2-apex.skycraft.cn，国内体验比 GitHub 好、出站免费）。
-          # 注意：Evo 的 cloud/upstream.py 白名单必须含 cfr2-apex.skycraft.cn，否则一键更新会静默降级。
+          # download.url 保持原来的 R2 自定义域（cfr2-apex.skycraft.cn）：老版本 Evo 的白名单只认这个，
+          # 换成别的主机会让已经装上的用户一键更新失效。另外带一个 esa 字段（派喵 ESA 加速域名），
+          # 新版本 / 官网按钮可以走 paimiaoesa.skycraft.cn 这条镜像。
+          # 注意：Evo 的 cloud/upstream.py 白名单必须含 paimiaoesa.skycraft.cn 和 cfr2-apex.skycraft.cn，
+          #       新版本读 esa 时才不会静默降级。
           $ver = "$env:EVO_VER"
           $sha = (Get-Content "$env:EVO_SHA" -Raw).Split(' ')[0]
           $size = (Get-Item "$env:EVO_ZIP").Length
           $url = "https://cfr2-apex.skycraft.cn/evo/Evo-${ver}-win64.zip"
+          $esa = "https://paimiaoesa.skycraft.cn/evo/Evo-${ver}-win64.zip"
           $notes = @()
           if (Test-Path "release/更新内容.txt") {
             $notes = Get-Content "release/更新内容.txt" -Encoding utf8 | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }
@@ -292,7 +296,7 @@ jobs:
               date = (Get-Date -Format 'yyyy-MM-dd')
               page = "https://apex.skycraft.cn/#evo"
               notes = $notes
-              download = @{ url = $url; sha256 = $sha; size = [int64]$size }
+              download = @{ url = $url; sha256 = $sha; size = [int64]$size; esa = $esa }
             }
           } | ConvertTo-Json -Depth 6 -Compress
           $headers = @{

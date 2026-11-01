@@ -45,6 +45,7 @@ except ImportError:
     panel_cloud = None
 from paths import CAPTURES_DIR, CONFIG_DIR, PANEL_DIR, data_absolute
 from post_match import COUNTED_KILLS_NOTES, NO_SUMMARY_NOTES
+import panel_seasons  # "赛季"页面：录入历史赛季数据（panel_seasons.py）
 
 # 面板文件的类型写死：Flask 按 Windows 注册表判断文件类型，有的软件会把 .css 改成 text/plain，
 # WebView2 和浏览器就不用这个样式表，面板只剩一堆没排好的文字
@@ -54,7 +55,7 @@ for _type, _ext in (("text/css", ".css"), ("text/javascript", ".js"), ("font/wof
 
 PER_PAGE = 20
 # 顶部导航：(页面, 显示名)。顺序也决定切换页面时，选中标签的底色从哪边滑过来
-NAV = (("overview", "总览"), ("matches", "战绩"), ("stats", "数据"), ("settings", "设置"))
+NAV = (("overview", "总览"), ("matches", "战绩"), ("stats", "数据"), ("seasons.page", "赛季"), ("settings", "设置"))
 MODES ={"ranked": "排位", "pubs": "匹配", "other": "其他"}
 # 修正表单里可以改的字段：(显示名, 最小值, 最大值)
 EDITABLE = {
@@ -128,6 +129,7 @@ app.config["TOKEN"] = secrets.token_urlsafe(16)  # 修改、删除时要带上�
 app.config["DB"] = storage.DB_PATH
 if panel_cloud is not None:
     app.register_blueprint(panel_cloud.bp)  # 设置页"微信小程序"：绑定、解绑、立即同步（panel_cloud.py）
+app.register_blueprint(panel_seasons.bp)  # "赛季"页面：录入历史赛季数据（panel_seasons.py）
 
 
 # ---------- 数据库连接：每次网页请求打开一次，请求结束时关闭 ----------
@@ -576,22 +578,111 @@ def teammate_table(rows, mates):
         person["player_id"] = m["player_id"] or person["player_id"]
 
     listed = []
-    for person in people.values():
+    for key, person in people.items():
         if len(person["games"]) < MIN_MATE_GAMES:
             continue
         together = sorted(person["games"].values(), key=lambda r: (r["ended_at"] or "", r["match_id"]))
         names = {}  # 名字 → (次数, 最后一次的先后)
         for order, name in enumerate(person["names"][-MATE_NAME_GAMES:]):
             names[name] = (names.get(name, (0, 0))[0] + 1, order)
+        steps, total = [], 0  # RP 走势：一局局加起来。只算读到了 RP 的排位局，读不到的跳过（不当 0）
+        for r in together:
+            if r["rp_delta"] is not None:
+                total += r["rp_delta"]
+                steps.append({"total": total, "delta": r["rp_delta"], "when": time_text(r["ended_at"])})
         listed.append({
+            "key": key,
             "name": max(names, key=names.get) if names else "（没读到名字）",
             "player_id": person["player_id"],
             "last": time_text(together[-1]["ended_at"]),
             "order": together[-1]["ended_at"] or "",
+            "rp_steps": steps,
+            "rp_total": signed(total) if steps else "—",
+            "rp_total_class": "none" if not steps else ("good" if total >= 0 else "bad"),
             **group_numbers(together),
         })
     listed.sort(key=lambda p: (p["games"], p["order"]), reverse=True)
+    add_sparks(listed)
     return listed
+
+
+MIN_CURVE_GAMES = 5  # 和队友的 RP 走势：一起打满这么多局排位（读到了 RP 的）才画线（2026-11-01 用户定的）
+SPARK_W, SPARK_H = 88, 28  # 每行后面的小曲线（像素，不拉伸）
+
+
+def add_sparks(listed):
+    """常一起玩的队友每行后面的小曲线（"和每个队友的上分趋势"）：累计 RP，从 0 开始，一起打满
+    MIN_CURVE_GAMES 局排位才画（不够的只写累计，没有线）。每条线上下左右都各自占满，只看起伏。"""
+    pad = 4  # 上下、左右留出线和终点圆点的位置
+    for m in listed:
+        m["spark"], m["slot"] = None, None
+        if len(m["rp_steps"]) < MIN_CURVE_GAMES:
+            continue
+        totals = [0] + [s["total"] for s in m["rp_steps"]]
+        high, span = max(totals), (max(totals) - min(totals)) or 1
+
+        def y(v):
+            return round(pad + (high - v) / span * (SPARK_H - 2 * pad), 1)
+
+        xs = [round(pad + i / (len(totals) - 1) * (SPARK_W - 2 * pad), 1) for i in range(len(totals))]
+        m["spark"] = {"w": SPARK_W, "h": SPARK_H, "zero": y(0), "end": (xs[-1], y(totals[-1])),
+                      "line": " ".join(f"{x},{y(v)}" for x, v in zip(xs, totals))}
+
+
+def nice_step(span, most):
+    """坐标轴刻度的间隔：1、2、5、10、20、50、100……里刻度不超过 most 个的最小的那个。"""
+    step = 1
+    while span / step > most:
+        step = step * 5 // 2 if str(step)[0] == "2" else step * 2  # 1 → 2 → 5 → 10 → 20 → 50…
+    return step
+
+
+CURVE_W, CURVE_H = 600, 240  # 大图的坐标范围（网页上按卡片宽度拉伸）
+
+
+def curve_chart(listed, rows, stable):
+    """和队友一起的 RP 走势大图：横轴是一起打的第几局，纵轴是累计 RP（都从 0 开始）。
+    灰色虚线是参照：这个范围里所有排位局的场均 RP 一直打下去的样子。没有可画的队友返回 None。"""
+    shown = [m for m in listed if m["spark"]][:5]
+    if not shown:
+        return None
+    n = max(len(m["rp_steps"]) for m in shown)
+    values = [0] + [s["total"] for m in shown for s in m["rp_steps"]]
+    low, high = min(values), max(values)
+    pad = max(20, (high - low) * 0.08)
+    low, high = low - pad, high + pad
+
+    def x(i):
+        return i / n * CURVE_W
+
+    def y(v):
+        return CURVE_H - (v - low) / (high - low) * CURVE_H
+
+    def top(v):
+        return round(y(v) / CURVE_H * 100, 2)
+
+    step = nice_step(high - low, 4)
+    ticks = range(math.ceil(low / step) * step, math.floor(high / step) * step + 1, step)
+    x_step = nice_step(n, 6)
+    rps = [r["rp_delta"] for r in rows if r["rp_delta"] is not None]
+    avg = sum(rps) / len(rps) if rps else None
+    series = []
+    for slot, m in enumerate(shown):
+        m["slot"] = slot
+        totals = [0] + [s["total"] for s in m["rp_steps"]]
+        series.append({
+            "name": m["name"], "slot": slot, "games": len(m["rp_steps"]), "total": m["rp_total"],
+            "total_class": m["rp_total_class"],
+            "line": " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(totals)),
+            "end": {"left": round(x(len(totals) - 1) / CURVE_W * 100, 2), "top": top(totals[-1])},
+            "points": [[top(s["total"]), signed(s["total"]), signed(s["delta"]), s["when"]] for s in m["rp_steps"]],
+        })
+    return {
+        "w": CURVE_W, "h": CURVE_H, "n": n, "series": series,
+        "y_ticks": [{"y": round(y(v), 1), "top": top(v), "label": "0" if v == 0 else signed(v), "zero": v == 0} for v in ticks],
+        "x_ticks": [{"left": round(i / n * 100, 2), "label": i} for i in range(x_step, n + 1, x_step)],
+        "ref": None if avg is None else {"y1": round(y(0), 1), "y2": round(y(avg * n), 1), "avg": signed(round(avg))},
+    }
 
 
 MIN_COMBO_GAMES = 2  # 传奇组合：出现过这么多局才列出
@@ -911,6 +1002,8 @@ def stats():
     in_range = rows[-30:] if range_key == "30" else rows
     all_mates = storage.all_teammates(db(), names)
     mates = teammate_table(in_range, all_mates)
+    stable_mates = mates if in_range is rows else teammate_table(rows, all_mates)  # 大图颜色按所有对局排，换范围不变色
+    curves = curve_chart(mates, in_range, [m["key"] for m in stable_mates if m["spark"]])
     legends, no_legend = legend_table(in_range)
     combos, combo_known = combo_table(in_range, all_mates)
     weapons, weapon_all = weapon_table(in_range, storage.all_weapon_holds(db(), names))
@@ -922,6 +1015,8 @@ def stats():
         everyone=group_numbers(in_range),  # 参照：这个范围里的所有对局
         mates=mates,
         min_mate_games=MIN_MATE_GAMES,
+        curves=curves,
+        min_curve_games=MIN_CURVE_GAMES,
         legends=legends,
         no_legend=no_legend,
         combos=combos,
@@ -1614,6 +1709,9 @@ def export():
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+panel_seasons.account_names = lambda: account_view()["names"]  # "赛季"页面也只看选中的账号
 
 
 def main():

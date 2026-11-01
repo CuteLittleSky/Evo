@@ -12,6 +12,7 @@ UPDATE_URL = UPDATE_BASE.rstrip("/") + "/latest.json"
 UPDATE_PAGE = "https://apex.skycraft.cn/#evo"
 
 UPDATE_HOSTS = {"tools.skycraft.cn", "apex.skycraft.cn", "cfr2-apex.skycraft.cn",
+                "paimiaoesa.skycraft.cn",
                 "github.com", "www.github.com", "objects.githubusercontent.com"}
 
 SOURCE_URL = "https://github.com/CuteLittleSky/Evo"
@@ -93,6 +94,26 @@ def _patch_update_check():
     DOWNLOAD_HOSTS |= UPDATE_HOSTS
     if len(DOWNLOAD_HOSTS) != before:
         done.append("download_hosts")
+
+    # 新版本优先从 esa 镜像下载。evo-latest.json 里的 download 现在同时带 url（cfr2，老版本读它）
+    # 和 esa（paimiaoesa 派喵 ESA 加速域名，和 cfr2 是同一个文件）。新版本走这段注入：优先用 esa，
+    # 下不动 / 格式不对再退回 url。老版本没有这段注入，仍然读 url=cfr2，照常能一键更新。
+    if not getattr(update_check.safe_download, "_paimiao_esa", False):
+        original_safe_download = update_check.safe_download
+
+        @functools.wraps(original_safe_download)
+        def safe_download(info):
+            if isinstance(info, dict) and info.get("esa"):
+                merged = dict(info)
+                merged["url"] = info["esa"]
+                picked = original_safe_download(merged)
+                if picked:
+                    return picked
+            return original_safe_download(info)
+
+        safe_download._paimiao_esa = True
+        update_check.safe_download = safe_download
+        done.append("prefer_esa")
     return done
 
 def _patch_panel_module(module):

@@ -174,7 +174,7 @@ def main():
     panel_app.app.config["DB"] = path
 
     checks = {
-        "导航：总览、战绩、数据、设置": re.findall(r">\s*([^<>\s]+)\s*</a>", nav) == ["总览", "战绩", "数据", "设置"],
+        "导航：总览、战绩、数据、赛季、设置": re.findall(r">\s*([^<>\s]+)\s*</a>", nav) == ["总览", "战绩", "数据", "赛季", "设置"],
         "数据页打开时导航里\"数据\"是选中的": 'class="active"' in re.findall(r'<a href="/stats"[^>]*>', nav)[0],
         "没有对局：显示\"还没有任何对局记录\"": "还没有任何对局记录" in empty,
         "没有一起打过 2 局的队友：写明，不出空表": "还没有一起打过 2 局以上的队友" in lonely and "mates-table" not in lonely,
@@ -191,7 +191,7 @@ def main():
         "队友的场均名次不算没读到名次的局（小白：1、3、8 → 4.0）": bai is not None and bai[3] == "4.0",
         "近 30 局：前 12 局的队友不在里面": cells(recent, "阿亮亮") is None and cells(recent, "小白") is not None,
         "参照行（全部）和总览页的统计数字一样": cells(everything, "所有对局") == [
-            "所有对局 参照", f"{ref['games']} 局", f"{ref['wins']} 次 {ref['win_rate']}", ref["avg_place"], ref["avg_rp"]]
+            "所有对局 参照", f"{ref['games']} 局", f"{ref['wins']} 次 {ref['win_rate']}", ref["avg_place"], ref["avg_rp"], ""]
                                          and stat_values["场均名次"] == ref["avg_place"]
                                          and f">{stat_values['场均伤害']}<" in overview_all,
         "传奇表现：每个传奇都列出（不合并成\"其他\"），按局数从多到少": [r[0] for r in legends] == ["罗芭", "恶灵"],

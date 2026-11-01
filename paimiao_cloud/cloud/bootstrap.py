@@ -107,6 +107,12 @@ def install():
     except Exception as exc:
         _log(f"总结页读数注入失败（Evo 本身不受影响）：{exc!r}")
 
+    try:
+        from cloud import season_align
+        season_align.install()
+    except Exception as exc:
+        _log(f"赛季页识别自适应注入失败（按上游原样）：{exc!r}")
+
     module = sys.modules.get("panel_app")
     if module is not None:
         _installed = True
