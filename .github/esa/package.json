@@ -1,0 +1,10 @@
+{
+  "name": "evo-esa-purge",
+  "private": true,
+  "type": "module",
+  "description": "Evo 发版后用 ESA OpenAPI 刷新缓存（照搬 ApexPacks scripts/esa/purge-cache.mjs 的做法）",
+  "dependencies": {
+    "@alicloud/esa20240910": "2.25.0",
+    "@alicloud/openapi-client": "^0.4.7"
+  }
+}
