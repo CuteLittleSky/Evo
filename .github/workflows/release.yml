@@ -308,16 +308,19 @@ jobs:
           $localSize = (Get-Item $env:EVO_ZIP).Length
           $localHash = (Get-FileHash $env:EVO_ZIP -Algorithm SHA256).Hash.ToLower()
 
-          # 同 R2：无条件覆盖上传（S3 PUT 幂等），先删同名键，避免个别情况保留旧对象
+          # 同版本号重发必须先删旧对象再传。rclone copy 默认按「大小 + 修改时间」判断是否要传：
+          # 同版本的包大小一样，不删就会被当成「已存在、无需传输」直接跳过，远端一直留旧包
+          # （2026-11-02 的 0.5.1 就是这个原因：latest.zip 还是上一次的旧构建）。
+          # 所以先 deletefile 清掉，再用 copyto --ignore-times 强制覆盖（即使大小/时间相同也重传）。
           & rclone deletefile "$bucket/evo/$name" 2>$null
           & rclone deletefile "$bucket/evo/latest.zip" 2>$null
           & rclone deletefile "$bucket/evo/$name.sha256" 2>$null
 
-          & rclone copyto $env:EVO_ZIP "$bucket/evo/$name" --s3-no-check-bucket
+          & rclone copyto $env:EVO_ZIP "$bucket/evo/$name" --s3-no-check-bucket --ignore-times
           if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS $name 失败"; exit 1 }
-          & rclone copyto $env:EVO_ZIP "$bucket/evo/latest.zip" --s3-no-check-bucket
+          & rclone copyto $env:EVO_ZIP "$bucket/evo/latest.zip" --s3-no-check-bucket --ignore-times
           if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS latest.zip 失败"; exit 1 }
-          & rclone copyto $env:EVO_SHA "$bucket/evo/$name.sha256" --s3-no-check-bucket
+          & rclone copyto $env:EVO_SHA "$bucket/evo/$name.sha256" --s3-no-check-bucket --ignore-times
           if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS $name.sha256 失败"; exit 1 }
 
           # 回读校验大小（走 OSS 的 S3 API，不经 ESA/CDN 缓存）
@@ -326,6 +329,13 @@ jobs:
             Write-Error "OSS 校验失败：$name 远端 $($info.Size) 字节 ≠ 本地 ${localSize} 字节"; exit 1
           }
           Write-Host "OSS 校验通过：$name = $localSize 字节"
+
+          # latest.zip 也要校验：同版本重发最容易被跳过、留着旧包的就是它（大小会和本地对不上）
+          $latestInfo = & rclone lsjson "$bucket/evo/latest.zip" --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $latestInfo -or $latestInfo.Size -ne $localSize) {
+            Write-Error "OSS 校验失败：latest.zip 远端 $($latestInfo.Size) 字节 ≠ 本地 ${localSize} 字节"; exit 1
+          }
+          Write-Host "OSS 校验通过：latest.zip = $localSize 字节"
 
           # 再核 .sha256（同样走 S3 侧读取，不经 ESA/CDN）
           $remoteSha = & rclone cat "$bucket/evo/$name.sha256" --s3-no-check-bucket 2>$null
