@@ -268,6 +268,73 @@ jobs:
           }
           Write-Host "已清除 CDN 缓存：$($files -join ', ')"
 
+      # 上传安装包到阿里云 OSS —— paimiaoesa.skycraft.cn（派喵 ESA）回源到这里，
+      # 新版 Evo 的 download.esa 就指向它，和 R2 那份内容完全一样（同一个包、同一个 sha256）。
+      # 凭据：secrets OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET（RAM 子账号，只给这个 bucket 读写权限）。
+      # 位置：vars OSS_ENDPOINT（如 oss-cn-hangzhou.aliyuncs.com，不带协议）、vars OSS_BUCKET，走 evo/ 前缀。
+      # 复用上面 R2 那步装好的 rclone（Alibaba OSS 用它的 s3 后端 provider=Alibaba，bundle 里自带）。
+      # 必须在这一步成功之后才通知 ApexPacks，否则 evo-latest.json 会指向一个还没传上去的 esa 地址。
+      - name: 上传安装包到阿里云 OSS
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          EVO_VER: ${{ env.EVO_VER }}
+          EVO_ZIP: ${{ env.EVO_ZIP }}
+          EVO_SHA: ${{ env.EVO_SHA }}
+        run: |
+          if (-not $env:OSS_ACCESS_KEY_ID -or -not $env:OSS_ACCESS_KEY_SECRET) {
+            Write-Error "缺少 OSS 凭据（secrets OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET）"; exit 1
+          }
+          if (-not $env:OSS_ENDPOINT -or -not $env:OSS_BUCKET) {
+            Write-Error "缺少 vars.OSS_ENDPOINT / vars.OSS_BUCKET"; exit 1
+          }
+          if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
+            choco install rclone -y --no-progress | Out-Null
+          }
+          # 用环境变量注入 OSS 配置，不落盘配置文件（避免凭据写进 runner 磁盘）。
+          # endpoint 填地域域名（如 oss-cn-hangzhou.aliyuncs.com），rclone 会自己补协议。
+          $env:RCLONE_CONFIG_OSS_TYPE = "s3"
+          $env:RCLONE_CONFIG_OSS_PROVIDER = "Alibaba"
+          $env:RCLONE_CONFIG_OSS_ACCESS_KEY_ID = $env:OSS_ACCESS_KEY_ID
+          $env:RCLONE_CONFIG_OSS_SECRET_ACCESS_KEY = $env:OSS_ACCESS_KEY_SECRET
+          $env:RCLONE_CONFIG_OSS_ENDPOINT = $env:OSS_ENDPOINT
+
+          $name = "Evo-$($env:EVO_VER)-win64.zip"
+          $bucket = "OSS:$($env:OSS_BUCKET)"
+          $localSize = (Get-Item $env:EVO_ZIP).Length
+          $localHash = (Get-FileHash $env:EVO_ZIP -Algorithm SHA256).Hash.ToLower()
+
+          # 同 R2：无条件覆盖上传（S3 PUT 幂等），先删同名键，避免个别情况保留旧对象
+          & rclone deletefile "$bucket/evo/$name" 2>$null
+          & rclone deletefile "$bucket/evo/latest.zip" 2>$null
+          & rclone deletefile "$bucket/evo/$name.sha256" 2>$null
+
+          & rclone copyto $env:EVO_ZIP "$bucket/evo/$name" --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS $name 失败"; exit 1 }
+          & rclone copyto $env:EVO_ZIP "$bucket/evo/latest.zip" --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS latest.zip 失败"; exit 1 }
+          & rclone copyto $env:EVO_SHA "$bucket/evo/$name.sha256" --s3-no-check-bucket
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS $name.sha256 失败"; exit 1 }
+
+          # 回读校验大小（走 OSS 的 S3 API，不经 ESA/CDN 缓存）
+          $info = & rclone lsjson "$bucket/evo/$name" --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $info -or $info.Size -ne $localSize) {
+            Write-Error "OSS 校验失败：$name 远端 $($info.Size) 字节 ≠ 本地 ${localSize} 字节"; exit 1
+          }
+          Write-Host "OSS 校验通过：$name = $localSize 字节"
+
+          # 再核 .sha256（同样走 S3 侧读取，不经 ESA/CDN）
+          $remoteSha = & rclone cat "$bucket/evo/$name.sha256" --s3-no-check-bucket 2>$null
+          if ($LASTEXITCODE -ne 0 -or ($remoteSha -notmatch [regex]::Escape($localHash))) {
+            Write-Error "OSS 上 $name.sha256 与本地不一致：远端 $remoteSha / 本地 $localHash"; exit 1
+          }
+          Write-Host "OSS 校验通过：$name.sha256 匹配 $localHash"
+          # 同版本号重发时 ESA 边缘也可能挂着旧 latest.zip；要立刻生效就去阿里云控制台刷一次 ESA 缓存。
+
       - name: 通知 ApexPacks 更新 evo-latest.json
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         shell: pwsh
