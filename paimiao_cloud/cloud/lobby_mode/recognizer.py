@@ -258,6 +258,12 @@ def card_like(img):
     青底或红底），它的特征是「行内亮度很均匀、连续十几行、亮度不太暗」。
     找得到这条带就算像，返回 1.0，找不到返回 0.0。
 
+    取样框有两个（`rules.CARD_PROBE` 的 roi / roi_alt，**任一成立就算像**）：
+    旧赛季的卡片在 804 那一带，2026-11-04 新赛季整体上移了约 55 像素到 742 那一带。
+    两个都是 56~62 行的窄框，判据完全一样 —— 为什么不合成一个高框：
+    拉高以后色条下面的卡片背景会并进同一个连续段，连续行数超过 max_rows，旧样本反而全掉。
+    详细的数据和实测见 rules.CARD_PROBE 的注释。
+
     为什么不比参照图（2026-10-24 实测教训）：原来的办法是拿 6 张排队截图平均出一张
     参照图比相关度，但「排位赛」三个字在排队时靠右、没点准备时靠左，字位置一变相似度
     就从 0.66 掉到 0.18，未点准备的排位卡整张被当成"不是大厅"跳过 —— 那正是用户反馈
@@ -271,33 +277,46 @@ def card_like(img):
         import screens as up
 
         spec = rules.CARD_PROBE
-        gray = up.gray_crop(img, spec["roi"], rules.BASE_RESOLUTION, spec["anchor"]).astype(np.float32)
-        smax = spec["row_std_max"]
-        lo = spec["row_mean_min"]
-        left, right = spec["inset"], gray.shape[1] - spec["inset"] * 3
-        run = best = 0
-        uniform = 0        # 真正"一整个横条都一个色"的行
-        for i in range(gray.shape[0]):
-            row = gray[i, left:right]
-            if row.std() < smax and row.mean() >= lo:
-                run += 1
-                best = max(best, run)
-                # ② 这一行是不是**整行一色**（色条的特征）。
-                # 只看 std 不够：跳伞画面的左下角是游戏地形，行标准差能压到 26 以下，
-                # 但色条是「一整条颜色」，行内几乎每个像素都一样。这里取排序后
-                # 90 分位和 50 分位的差，等于 0 就是整行一色。
-                # 2026-10-24 实测：真大厅 11~29 行，跳伞 / 冠军横幅 / 黑屏全是 0 行。
-                values = np.sort(row)
-                n = values.size
-                if values[int(n * spec["uniform_high"])] - values[int(n * spec["uniform_low"])] <= spec["uniform_max_range"]:
-                    uniform += 1
-            else:
-                run = 0
-        if best < spec["min_rows"] or best > spec["max_rows"]:
-            return 0.0
-        return 1.0 if uniform >= spec["min_uniform_rows"] else 0.0
+        for roi in (spec["roi"], spec.get("roi_alt")):
+            if not roi:
+                continue
+            gray = up.gray_crop(img, roi, rules.BASE_RESOLUTION, spec["anchor"]).astype(np.float32)
+            if _bar_like(gray, spec):
+                return 1.0
+        return 0.0
     except Exception:
         return 1.0     # 出错时当作"像"，宁可多识别一次，也不要因为省事漏掉
+
+
+def _bar_like(gray, spec):
+    """这一小块里有没有一条"整行一色"的横带（色条的特征）。判据全在 rules.CARD_PROBE。
+
+    两个取样框共用这一段：换成别的窗口不用改这里的任何阈值。
+    """
+    smax = spec["row_std_max"]
+    lo = spec["row_mean_min"]
+    left, right = spec["inset"], gray.shape[1] - spec["inset"] * 3
+    run = best = 0
+    uniform = 0        # 真正"一整个横条都一个色"的行
+    for i in range(gray.shape[0]):
+        row = gray[i, left:right]
+        if row.std() < smax and row.mean() >= lo:
+            run += 1
+            best = max(best, run)
+            # ② 这一行是不是**整行一色**（色条的特征）。
+            # 只看 std 不够：跳伞画面的左下角是游戏地形，行标准差能压到 26 以下，
+            # 但色条是「一整条颜色」，行内几乎每个像素都一样。这里取排序后
+            # 90 分位和 50 分位的差，等于 0 就是整行一色。
+            # 2026-10-24 实测：真大厅 11~29 行，跳伞 / 冠军横幅 / 黑屏全是 0 行。
+            values = np.sort(row)
+            n = values.size
+            if values[int(n * spec["uniform_high"])] - values[int(n * spec["uniform_low"])] <= spec["uniform_max_range"]:
+                uniform += 1
+        else:
+            run = 0
+    if best < spec["min_rows"] or best > spec["max_rows"]:
+        return False
+    return uniform >= spec["min_uniform_rows"]
 
 
 

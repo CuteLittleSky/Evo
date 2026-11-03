@@ -291,3 +291,11 @@
 - **验证**：tests/run_all.py 22 组过 8 组跳（缺旧截图样本）；注入专项 captures/mode_probe/test_inject.py 全部通过；面板冒烟 / /stats /settings 正常。许可证改为 AGPL-3.0（跟随上游 0.3.8+）。
 
 - **防止合并上游时把已删功能带回来**（2026-10-25 用户要求）：CLAUDE.md「协作约定」新增一节。查清了 GitHub 上 "3 commits ahead of and 45 commits behind" 的来源——merge base 是 `e61a85a`（上游 0.3.8），当初 squash 把上游 0.3.8→0.4.0 的 45 个提交压成一个 `32acef6`，那 45 条提交对象不在我们祖先链里，所以按提交数算显示 behind 45，**内容一条没丢**（`git diff HEAD upstream/main` 差的 91 文件 +939/-12820 全是主动删掉的 COS/补丁包/膨胀文档）。这一节写了：①哪些东西已经删掉或改过、合并后必须还是删的（`code/update_patch.py`、`tools/cos.py`、mirror/patch 分支、小程序云同步文件、匿名统计、全体玩家页、开屏弹窗、截图存 WEBP 而不是 JPG）；②合并完的必查命令（`git diff --stat HEAD~1` 不该新增那两个文件、`rg "COS_BASE|MIRROR_HOSTS|update_patch"` 应为空、`UPDATE_BASE` 仍是 tools.skycraft.cn、跑 tests/run_all.py 和 mode_probe/test_inject.py）；③模板锚点是上游升级最容易悄悄失效的地方（已踩过一次：0.4.0 改掉 settings.html 匿名统计区块结尾结构，旧的 `{% endif %}` + `</section>` 锚点找不到、不报错、区块照常显示，修复提交 `4ba96d8`），以及验证方法（调 `_patch_template()` 后检查目标文字消失）
+
+## 2026-11-04
+
+- **新赛季大厅卡片上移，修「大厅模式」的卡片粗筛**（用户给的 2560×1440 实机图，对照 10-24 的 8 张旧样本）：新赛季左下角那张卡片整体上移约 55 基准像素 —— 红条 y 805~846 → 751~798，形状由细横条变成斜切的大块，段位面板由三行（定级 / 白金 II / 958-1000 排位点数）压成一行（白银 III / 496-500 RP / ▶4 RP），卡片底部多了「模式选择」栏。旧的 `CARD_PROBE.roi=[38,804,220,56]` 正好落在「小队人数图标 + 传奇头像」上，`card_like` 从 1.0 掉到 0.0，`check_lobby` 每帧直接判「不是大厅」→ 大厅模式整项失效。读数那块 `CARD_MODE` 反而还罩得住红条（真引擎读出「排位赛」0.9995），坏的只有这道门
+  - 修法（只动注入层，上游一个字节没改）：`paimiao_cloud/cloud/lobby_mode/rules.py` 加第二个取样框 `roi_alt=[38,742,220,62]`；`recognizer.card_like` 改成两个框任一成立就算像，逐行判据抽成 `_bar_like()` 共用，阈值一个没动。为什么不合成一个高框：拉高后色条下面的卡片背景会并进同一个连续段，连续行数超过 `max_rows`，旧样本 s2~s7 反而全掉 0
+  - 验证：836 张历史帧上 `lobby_` 帧判得出 418 → 492 张；174 张别的画面多误判 6 张（对局中 / 冠军横幅），顶栏外观实测 0.000~0.140 远低于 0.35、顶栏 OCR 读到 0 个词，0.7 毫秒就排掉；旧赛季 8 张样本全过；新赛季这张 `card_like=1.0`，端到端 `feature.check_lobby` → `("lobby", mode=ranked, 排位赛 0.9995)`；`card_like` 两个窗口合计 3.2~3.5 毫秒/张。`tests/run_all.py` 30 组：能跑的组全过（其余是缺截图的组）；`captures/mode_probe/test_continue_match.py` 全部通过；注入路径 `screens.ScreenDetector` 已换成 `ScreenWithLobby`，6 张大厅样本 detect/mode 全对（抽样版 `captures/season28/verify_inject_sample.py`）
+  - 还没做（用户 2026-11-04 决定「先不动、等上游」）：上游自己的大厅判定也和新赛季对不上 —— `config/screens.json` 的 lobby 认「排位点数」，新版面板写「RP」，外观相似度只有 0.10（门槛 0.35），`python code/screens.py` 对新图结论是「都不是」；`code/lobby.py` 只能读出段位「白银 III」，段内分数和总分是 None。新赛季回大厅读不到段内分数、RP 校准会断。还需要新赛季样本：排队中（正在匹配）、未上榜 / 三人赛、外卡、经验值页、总结页
+
