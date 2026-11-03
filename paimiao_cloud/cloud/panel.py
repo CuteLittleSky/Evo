@@ -193,14 +193,16 @@ def pair():
         return back()
     pairing.revoke_qr(snapshot)
     try:
-        pairing.start(snapshot)
+        code = pairing.start(snapshot)
     except pairing.CloudError as exc:
         clear_pair_fields(snapshot)
         cloud_state.save(snapshot)
+        cloud_state.log(f"生成配对码失败：{exc}")
         flash(f"配对码生成失败：{exc}", "error")
         return back()
     snapshot["pair_code_at"] = time.time()
     cloud_state.save(snapshot)
+    cloud_state.log(f"用户点了生成配对码（{code}，{pairing.PAIR_TTL} 秒内有效）")
     return back()
 
 @bp.post("/revoke-qr")

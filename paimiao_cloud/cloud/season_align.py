@@ -77,6 +77,14 @@ def install():
         return
     importhook.on_import("live_collect", _after_live_collect, label="赛季页")
     importhook.on_import("season_stats", _after_season_stats, label="赛季页")
+    importhook.on_import("panel_seasons", _after_panel_seasons, label="赛季页")
+
+
+def _after_panel_seasons(module):
+    try:
+        _patch_panel_seasons(module)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"panel_seasons 补丁失败（按上游原样）：{exc!r}")
 
 
 def _after_live_collect(module):
@@ -98,6 +106,30 @@ def _after_season_stats(module):
 def _strip_tag(name_key):
     """去掉名字开头的 [俱乐部标签]（name_key 是已去空格的写法）。"""
     return _TAG_RE.sub("", name_key or "")
+
+
+def _patch_panel_seasons(module):
+    """赛季页按账号筛选时忽略俱乐部标签。
+
+    记录时数据页上的名字不带标签（阿宝宝宝宝宝），而账号名带标签（[R99]阿宝宝宝宝宝）；
+    上游 `panel_seasons._mine` 用 `name_key`（只去空格）直接比，于是待核对的记录全被筛掉、
+    赛季页显示空白。这里把两边都去掉 [俱乐部标签] 再比。
+    """
+    orig = getattr(module, "_mine", None)
+    if orig is None or getattr(orig, "_paimiao_tag_strip", False):
+        return
+    import storage  # 上游模块
+
+    def _mine(rows):
+        names = module.account_names() if module.account_names else None
+        if names is None:
+            return rows
+        keys = {_strip_tag(storage.name_key(n)) for n in names}
+        return [r for r in rows if _strip_tag(storage.name_key(r["player_name"])) in keys]
+
+    _mine._paimiao_tag_strip = True  # type: ignore[attr-defined]
+    module._mine = _mine
+    _log("已接上：赛季页账号筛选忽略俱乐部标签")
 
 
 def _patch_live_collect(module):
@@ -130,6 +162,27 @@ def _patch_own(cls, module):
         return
     import storage  # 上游模块
 
+    def _canonical(self, page_name):
+        """把数据页上读到的名字换成“标准名”，以后各页一致。
+
+        优先用这一局 HUD 读到的名字（`post.player_name`，带你**当前**的俱乐部标签），
+        这样改过标签以后，新纪录存的是新标签；没读到再回退到账号表里的名字。
+        """
+        norm = _strip_tag(storage.name_key(page_name or ""))
+        if not norm:
+            return page_name
+        current = getattr(self.post, "player_name", None)
+        if current and _strip_tag(storage.name_key(current)) == norm:
+            return current
+        try:
+            for a in storage.accounts(self.conn):
+                raws = [x for x in (list(a.get("raw") or []) + [a.get("name") or ""]) if x]
+                if any(_strip_tag(storage.name_key(x)) == norm for x in raws):
+                    return a.get("name") or page_name
+        except Exception:  # noqa: BLE001
+            pass
+        return page_name
+
     def _own(self, frame, now):
         if self.owner is None or (now - self.owner[2]).total_seconds() > self.OWNER_SECONDS:
             name = self.page.name(frame)
@@ -138,7 +191,8 @@ def _patch_own(cls, module):
                 mine = mine | {storage.name_key(self.post.player_name)}
             mine_norm = {_strip_tag(k) for k in mine}
             own = name is not None and (not mine_norm or _strip_tag(storage.name_key(name)) in mine_norm)
-            self.owner = (name, own, now)
+            stored = _canonical(self, name) if (own and name) else name
+            self.owner = (stored, own, now)
             if not own:
                 self._say(("owner", name), now, f"数据页上是 {name or '（名字没读出来）'}，不是 Evo 认识的你的名字，不读"
                           "（只录自己的；好友资料页也是这一页）")

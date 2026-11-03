@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from cloud import pairing
+from cloud import season_sync
 from cloud import state as cloud_state
 
 SCAN_LIMIT = 200
@@ -347,7 +348,20 @@ def push(snapshot):
 
     lobby_pending = [item for item in drop_repeats(lobby_rows)
                      if lobby_known.get(item[0]) != item[1]] if lobby_rows else []
-    if not pending and not lobby_pending:
+
+    # 赛季聚合：没有新对局时也要能传（玩家可能只录了历史赛季）。只读本地库，失败不影响其它上传。
+    season_rows, season_pending, season_keys = [], [], set()
+    try:
+        season_rows = season_sync.read_seasons(_db_path())
+        season_pending = season_sync.pending(snapshot, season_rows)
+        for row in season_rows:
+            payload = season_sync.payload_of(row)
+            if payload["kind"]:
+                season_keys.add(f"{payload['kind']}:{payload['season']}")
+    except Exception:  # noqa: BLE001
+        season_rows, season_pending, season_keys = [], [], set()
+
+    if not pending and not lobby_pending and not season_pending:
         return 0
 
     sent = 0
@@ -389,6 +403,14 @@ def push(snapshot):
     except pairing.CloudError as exc:
         stats["weapon_error"] = str(exc)[:200]
 
+    # 赛季聚合（与战绩同一条线程、同一令牌）。失败只记一笔，不影响战绩上传。
+    season_sent = 0
+    if season_pending:
+        try:
+            season_sent = season_sync.send(snapshot, season_pending, season_keys)
+        except pairing.CloudError as exc:
+            stats["season_error"] = str(exc)[:200]
+
     if len(known) > SCAN_LIMIT * 2:
         keep = {str(m["match_id"]) for m in rows}
         known = {k: v for k, v in known.items() if k in keep}
@@ -403,6 +425,10 @@ def push(snapshot):
     stats["rank_uploaded"] = int(stats.get("rank_uploaded") or 0) + lobby_sent
     if weapon_sent:
         stats["weapon_uploaded"] = int(stats.get("weapon_uploaded") or 0) + weapon_sent
+    if season_sent:
+        stats["season_uploaded"] = int(stats.get("season_uploaded") or 0) + season_sent
+    if not stats.get("season_error"):
+        stats["season_error"] = ""
     stats["last_ok_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
     stats["last_error"] = ""
 

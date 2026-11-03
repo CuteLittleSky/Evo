@@ -46,6 +46,80 @@ def _cookie_of(response, name, sent_at):
             return value.strip()
     return ""
 
+def _is_cert_error(exc):
+    """判断是不是证书类错误（urllib 会把 ssl.SSLError 包在 URLError.reason 里）。"""
+    seen = [exc]
+    reason = getattr(exc, "reason", None)
+    if reason is not None and reason is not exc:
+        seen.append(reason)
+    text = " ".join(repr(item) for item in seen).upper()
+    return "SSL" in text or "CERTIFICATE" in text
+
+
+def _cert_diag(url):
+    """证书校验失败时，再用不校验证书的方式连一次，把对端证书信息和本机时间记下来。
+    这样能区分三种情况：服务器证书真的过期、本机时间不对、被代理/中间人替换了证书。"""
+    import datetime as _dt
+    import socket
+    import ssl
+    import tempfile
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    port = parts.port or 443
+    now = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    out = [f"本机时间={now}"]
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with socket.create_connection((host, port), timeout=TIMEOUT) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                pem = ssl.DER_cert_to_PEM_cert(tls.getpeercert(binary_form=True))
+        handle, path = tempfile.mkstemp(suffix=".pem")
+        try:
+            with os.fdopen(handle, "w", encoding="ascii") as stream:
+                stream.write(pem)
+            decoded = ssl._ssl._test_decode_cert(path)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        out.append(f"对端证书 subject={decoded.get('subject')}")
+        out.append(f"issuer={decoded.get('issuer')}")
+        out.append(f"notBefore={decoded.get('notBefore')} notAfter={decoded.get('notAfter')}")
+    except Exception as exc:
+        out.append(f"抓取对端证书失败 {type(exc).__name__}: {exc}")
+    return " ｜ ".join(out)
+
+
+def _describe_failure(method, url, exc):
+    """把一次网络请求失败写进 cloud.log（配对失败原来只弹提示、不落日志，这里补上）。
+    证书类错误额外附带对端证书有效期，方便事后判断是谁的问题。"""
+    kind = type(exc).__name__
+    detail = f"{kind}: {exc!r}"
+    reason = getattr(exc, "reason", None)
+    if reason is not None and reason is not exc:
+        detail += f" ｜ reason={type(reason).__name__}: {reason!r}"
+    line = f"云同步请求失败 [{method} {url}] {detail}"
+    if _is_cert_error(exc):
+        line += " ｜ " + _cert_diag(url)
+    try:
+        cloud_state.log(line)
+    except Exception:
+        pass
+
+
+def _connect_message(exc):
+    """给玩家看的连接失败提示。证书类错误直接教他去校准时间 / 关代理。"""
+    if _is_cert_error(exc):
+        return (f"无法连接派喵服务器（证书校验失败：{exc}）。"
+                "请先把 Windows 时间设为自动同步、并关闭代理/VPN 后重试")
+    return f"无法连接派喵服务器（{exc}）"
+
+
 def request(snapshot, path, payload=None, token=None, method="POST", want_cookie=None,
             base=None):
 
@@ -59,20 +133,25 @@ def request(snapshot, path, payload=None, token=None, method="POST", want_cookie
     data = None
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    url = base + path
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
             raw = response.read(MAX_BYTES + 1)
             cookie = _cookie_of(response, want_cookie, None) if want_cookie else ""
     except urllib.error.HTTPError as exc:
+        _describe_failure(method, url, exc)
         raise CloudError(_http_message(exc)) from exc
     except (urllib.error.URLError, OSError) as exc:
-        raise CloudError(f"无法连接派喵服务器（{exc}）") from exc
+        _describe_failure(method, url, exc)
+        raise CloudError(_connect_message(exc)) from exc
     if len(raw) > MAX_BYTES:
+        cloud_state.log(f"云同步请求失败 [{method} {url}] 服务器返回 {len(raw)} 字节，超过上限")
         raise CloudError("服务器返回的数据过大")
     try:
         return json.loads(raw.decode("utf-8")), cookie
     except ValueError as exc:
+        cloud_state.log(f"云同步请求失败 [{method} {url}] 返回内容不是 JSON：{raw[:200]!r}")
         raise CloudError("服务器返回的不是 JSON") from exc
 
 def _http_message(exc):
@@ -119,6 +198,7 @@ def start(snapshot):
     expires = result.get("expiresAt")
     if isinstance(expires, (int, float)) and expires > 0:
         snapshot["pair_expires_ms"] = int(expires)
+    cloud_state.log(f"已生成配对码（{code}，服务器={pair_server_of(snapshot)}）")
     return code
 
 def revoke_qr(snapshot):
@@ -199,6 +279,15 @@ def upload_weapons(snapshot, payload):
     if not token:
         raise CloudError("这台电脑还没配对")
     result, _ = request(snapshot, "/weapon-holds", payload, token=token)
+    return result
+
+def upload_seasons(snapshot, payload):
+    """上传赛季聚合（派喵服务器 `POST /apex/api/battlestats/seasons`）。"""
+
+    token = (snapshot.get("device") or {}).get("token")
+    if not token:
+        raise CloudError("这台电脑还没配对")
+    result, _ = request(snapshot, "/seasons", payload, token=token)
     return result
 
 READ_BATCH = 200

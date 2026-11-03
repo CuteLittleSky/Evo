@@ -100,7 +100,7 @@ a { color: inherit; text-decoration: none; }
 /* ---------- Evo 窗口：自定义标题栏和改大小的细条（只在 Evo 窗口里显示，见 app_window.py）---------- */
 .in-app { overflow: hidden; }
 /* 只让标题栏下面的内容滚动（滚动条不会压到标题栏上） */
-.in-app body { position: fixed; top: 34px; left: 0; right: 0; bottom: 0; overflow-y: auto; user-select: none; }
+.in-app body { position: fixed; top: 34px; left: 0; right: 0; bottom: 0; overflow-y: auto; scrollbar-gutter: stable; user-select: none; }
 .in-app input, .in-app select, .in-app .setting-path { user-select: text; }
 .titlebar { position: fixed; top: 0; left: 0; right: 0; height: 34px; display: flex; align-items: stretch;
   background: var(--titlebar-bg); border-bottom: 1px solid var(--border); z-index: 1000; }
@@ -305,13 +305,14 @@ table.matches { width: 100%; min-width: 900px; border-collapse: collapse; }
 .evidence { flex: 1 1 360px; display: flex; flex-direction: column; gap: 8px; }
 .evidence-title { color: var(--muted); font-size: 13px; }
 .detail-review .evidence-title { color: var(--warn-text); }
-.evidence img { display: block; width: 100%; border-radius: 4px; border: 1px solid var(--border); }
+/* height: auto + <img> 上写的宽高（panel_app.matches）：截图还没下载完就按它的比例留好位置，下载完不把修改表单推下去 */
+.evidence img { display: block; width: 100%; height: auto; border-radius: 4px; border: 1px solid var(--border); background: var(--inset); }
 .evidence-empty { height: 150px; border-radius: 4px; border: 1px dashed var(--dashed); background: var(--inset); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
 .note { color: var(--muted); font-size: 12px; }
 .edit { flex: 1 1 320px; display: flex; flex-direction: column; gap: 12px; }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field input { background: var(--inset); padding: 8px 10px; width: 100%; }
+.field input, .field select { background: var(--inset); padding: 8px 10px; width: 100%; }
 .field input.warn { border: 2px solid var(--warn-btn); }
 .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; }
 .actions form { margin: 0; }
@@ -328,7 +329,7 @@ code { font-family: Consolas, monospace; font-size: 13px; padding: 1px 6px; bord
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .card-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
 
-.ov-top { display: grid; grid-template-columns: minmax(300px, 410px) 1fr; gap: 20px; }
+.ov-top { display: grid; grid-template-columns: minmax(300px, 410px) minmax(0, 1fr); gap: 20px; }
 .rank-card, .chart-card, .list-card, .legend-card { padding: 24px; }
 
 /* 段位颜色：徽章边框、光晕 */
@@ -376,7 +377,7 @@ code { font-family: Consolas, monospace; font-size: 13px; padding: 1px 6px; bord
 .stat-value { font-size: 30px; font-weight: 600; margin-top: 4px; }
 .stat-value.accent { color: var(--accent); }
 
-.ov-bottom { display: grid; grid-template-columns: 1fr minmax(280px, 360px); gap: 20px; align-items: start; }
+.ov-bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 20px; align-items: start; }
 .ov-bottom.no-legends { grid-template-columns: 1fr; }
 .recent { list-style: none; margin: 0; padding: 0; }
 .recent li + li { border-top: 1px solid var(--row-border); }
