@@ -317,3 +317,15 @@ def download_rank(snapshot, limit=READ_BATCH):
     if not isinstance(items, list):
         items = []
     return {"items": items}
+
+def download_paimiao_rank(snapshot):
+    """读派喵那边给的当前段位（只读展示用）。
+
+    Evo 只展示、不写进本机战绩；没绑 / 还没数据时对方照常回 200，
+    用 `bound`、`pending` 区分，不抛错。
+    """
+    token = (snapshot.get("device") or {}).get("token")
+    if not token:
+        raise CloudError("这台电脑还没配对")
+    result, _ = request(snapshot, "/paimiao-rank", None, token=token, method="GET")
+    return result if isinstance(result, dict) else {}

@@ -299,3 +299,23 @@
   - 验证：836 张历史帧上 `lobby_` 帧判得出 418 → 492 张；174 张别的画面多误判 6 张（对局中 / 冠军横幅），顶栏外观实测 0.000~0.140 远低于 0.35、顶栏 OCR 读到 0 个词，0.7 毫秒就排掉；旧赛季 8 张样本全过；新赛季这张 `card_like=1.0`，端到端 `feature.check_lobby` → `("lobby", mode=ranked, 排位赛 0.9995)`；`card_like` 两个窗口合计 3.2~3.5 毫秒/张。`tests/run_all.py` 30 组：能跑的组全过（其余是缺截图的组）；`captures/mode_probe/test_continue_match.py` 全部通过；注入路径 `screens.ScreenDetector` 已换成 `ScreenWithLobby`，6 张大厅样本 detect/mode 全对（抽样版 `captures/season28/verify_inject_sample.py`）
   - 还没做（用户 2026-11-04 决定「先不动、等上游」）：上游自己的大厅判定也和新赛季对不上 —— `config/screens.json` 的 lobby 认「排位点数」，新版面板写「RP」，外观相似度只有 0.10（门槛 0.35），`python code/screens.py` 对新图结论是「都不是」；`code/lobby.py` 只能读出段位「白银 III」，段内分数和总分是 None。新赛季回大厅读不到段内分数、RP 校准会断。还需要新赛季样本：排队中（正在匹配）、未上榜 / 三人赛、外卡、经验值页、总结页
 
+- **同步上游 0.5.3**（v0.5.2 ce5c651 → v0.5.3 57c3ed7）。并入 4 个提交：b3aa1d5（第 31 赛季界面）、b0ac186（双显卡笔记本截不了屏）、8166067（按赛季看）、19bb0d8（赛季数据页修正）；跳过 dfb1e5e（只改文档）、08f106d（PRIVACY.md、使用说明）、57c3ed7（发版记录，版本号另跟到 0.5.3）、c953344/934d756（0.5.2 发布记录、todo）、server/stats/worker.js、evo_tester/tester_*、tools/build.py、claude/、release/、docs/（文档这轮没并）
+  - 第 31 赛季：大厅改认左下角「模式选择」（`[150,966,170,56]`，旧版留成 `lobby_s30`）、经验值页「战斗 RP 总计」、右上角 RP、段位栏 / 名字 / 徽章新位置、段位表白银 I 4750。**上面那条「等上游」到这里解决**：回大厅能读到段内分数、RP 校准接上；`code/screens.py` 的关键字支持 `a|b` 两种写法
+  - 截屏收进 `code/capture.py`：dxcam 建不起来（DXGI_ERROR_UNSUPPORTED）时在 Windows 图形设置里把 Evo 设成「节能」，还不行换 mss；`lobby_mode` 的截屏钩子跟着包一层 `capture.open_camera`（mss 那条路也读得到大厅模式，`verify_capture_hook_053.py`）
+  - 按赛季看：新增 `code/seasons.py`、`config/seasons.json`、`panel/templates/_range.html`；总览 / 数据 / 战绩默认本赛季、能切上赛季；战绩页按结束时间筛（`storage.query_matches` 的 `between`）；全体玩家加本赛季（老的汇总写明"服务器还没按赛季汇总"）
+  - 手工对的：`panel_app.py`、`overview.html` / `stats.html` / `stats_all.html`、`global_stats.py` —— 我们的面板比上游 0.5.2 少一部分当初没并的功能（派圈助手、公告、雷达图、数据页两列布局），按我们的版本接上赛季范围；tests 里 `test_stats_page` / `test_weapons` 改成测 `range=30`、`test_global_stats` 按本赛季改默认、`test_season_ranges` 的数据页检查按我们的卡片写法、`test_capture` 去掉测试工具那几项；mss 升到 10.2（`capture.py` 用的是新写法 `mss.MSS`）
+  - 验证：`tests/run_all.py` 全绿（跳过的为缺截图组，含新增的第 31 赛季、截屏、按赛季看三组）；`captures/mode_probe/test_regressions.py`、`test_continue_match.py` 全过；`captures/season28/verify_anchors_053.py` 注入锚点（stats/stats_all/matches/settings）全在；`verify_capture_hook_053.py` 两条截屏路径都挂上且幂等；面板 `/`、`/matches`、`/stats`、`/settings`、`/seasons` 都 200
+
+- **第 31 赛季实机样本实测**（用户 2026-11-04 给的 5 张 2560×1440：匹配「未上榜」大厅、排位排队中、外卡排队中 ×2、外卡总结页）
+  - 上游 0.5.3 的大厅判定在 4 张大厅上都成立（外观 0.81 → `lobby`，认的是左下角「模式选择」）；排位那张读出「[R99]阿宝宝宝宝宝，白银 III 496（总分 3996）」；外卡总结页上游读出第 6 名、小队总击杀 24、6/6/6、2,048、7:55，我们的外卡识别 `detect → True`（字段按设计复用：revives=最后幸存、respawns=自我急救，页面写「自我急救 / 最后幸存」）
+  - 发现两处要调（都只在注入层）：
+    - ① 状态行「正在匹配…」第 31 赛季挪到「三人赛 / 地图」下面（基准 y 898~932），旧的框 `[45,960,210,25]` 现在罩住的是「模式选择」→ 排队中也被记成"没在排队"。`rules.CARD_STATUS` 加 `alt` 框，`recognizer._status_pick` 两个框都读（旧位置先读）
+    - ② 模式名框 `[20,760,500,120]` 上沿刚好卡在第 31 赛季标题字边上（标题 y 760~790），抬到 `[20,735,500,145]`；旧赛季 805~846 照样罩得住，多罩进来的「关于 / 496-500 RP / 888（小队人数）/ 跨平台游戏」都不在 `MODE_TITLES` 里
+  - 验证：4 张新图 + 8 张旧样本（`captures/season31/verify_s31_lobby.py`）模式、是否在匹配、卡片粗筛全对；`test_regressions.py`、`test_continue_match.py` 全过
+
+- **修复：托盘进程的「检查更新」没换成派喵源，用户一更新就装成官方版**（2026-11-04 用户报「好像有用户一更新更新到 EVO 官方了」）
+  - 根因：`upstream.apply()` 只在 `attach(panel_app)` 时调用，而托盘进程（`evo_app.start_update_checker`：启动 15 秒后第一次查、之后每 8 小时）从不 import panel_app → 它一直用上游默认的 `dl.evotracker.cn`。官方 11-04 发了 0.5.3、派喵 latest.json 还是 0.5.2，于是托盘提示「发现 0.5.3」，用户一点更新就下载官方安装包、覆盖派喵版
+  - 修法：`bootstrap.install()`（源码运行的 sitecustomize / 打包版的 runtime_hook 都走这里）在进程启动时先调 `upstream.patch_update_source()`；源码运行时 `code/` 还没进 sys.path，顺手补上（否则 import update_check 失败、补丁悄悄不生效）。另外把官方源从 `TRUSTED_HOSTS` / `DOWNLOAD_HOSTS` 去掉，并给 `update_check.known_newer()` 加校验：设置里缓存的「新版本」如果下载地址不是派喵的，就清掉（老版本可能已经把官方 0.5.3 写进去了）
+  - 验证：`captures/season31/verify_update_source.py`（临时数据目录）全过：UPDATE_URL 是 tools.skycraft.cn、官方源不在下载白名单、官方缓存记录被清、派喵记录保留；用 `PYTHONPATH=paimiao_cloud/inject python -c "import update_check"` 模拟托盘启动也确认已换源；`tests/run_all.py` 全绿
+  - 用户侧：已经更新成官方 0.5.3 的只能重装派喵版；没更新的，装上含这个修复的构建以后不会再提示官方版（派喵发 0.5.3 后才会提示自己的）
+

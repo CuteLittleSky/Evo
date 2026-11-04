@@ -187,7 +187,7 @@ def panel_checks():
     conn.close()
     panel_app.app.config.update(DB=path, TESTING=True)
     client = panel_app.app.test_client()
-    recent = client.get("/stats").get_data(as_text=True)
+    recent = client.get("/stats?range=30").get_data(as_text=True)
     everything = client.get("/stats?range=all").get_data(as_text=True)
     empty_path = FOLDER / "no_weapons.db"
     empty_path.unlink(missing_ok=True)

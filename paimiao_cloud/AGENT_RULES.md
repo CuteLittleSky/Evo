@@ -26,6 +26,12 @@
 - 不要用脚本、格式化工具、`sed`、Git 操作等任何方式间接改动上游文件。
 - 上游文件里有 bug 或写得不顺手，**不是**修改它的理由 —— 见第 3 节。
 
+**唯一的例外（2026-11-04 用户决定）**：`code/update_check.py` 的更新地址/白名单、
+`code/updater.py` 里提示用户去下载的那句话，已经**直接改源码**了（`UPDATE_URL`、`DEFAULT_PAGE`、
+`TRUSTED_HOSTS`、`DOWNLOAD_HOSTS` 换成派喵的域名）。原因是托盘进程不会 import `panel_app`，
+注入层碰不到它的更新检查（见 `cloud/upstream.py` 的 `patch_update_source`）。
+这两处**不要改回**官方地址；合并上游后要确认还是 `tools.skycraft.cn` / `apex.skycraft.cn`。
+
 ### 1.2 禁止把上游代码复制进 `paimiao_cloud/` 整份拷贝
 
 比如"把 `code/panel_app.py` 复制过来改一改，然后靠 `sys.path` 优先级盖掉上游版本"。
@@ -204,6 +210,11 @@ module.some_func = patched
 - [ ] 日志文件（Evo 数据目录下的云同步日志）里没有 `注入失败` 以外的异常刷屏，
       且没有出现"重复插入/重复注册"的迹象。
 - [ ] 行为验证：配对 → 同步 → 解除配对 全流程过一遍；关闭开关后确认不再发起上传。
+- [ ] **验证 / 预览脚本绝不能碰真实数据文件夹**：先把 `EVO_DATA_DIR` 指到临时目录（把
+      `data/evo.db` 复制一份进去），再关掉 `state.save`、`state.log` 和 `sync.arm_once`，
+      最后才 `bootstrap.attach(panel_app)`。2026-11-04 踩过：验证脚本起了真的 panel_app
+      （假状态 + 假服务器），同步线程把假令牌写进真实 `data/cloud-sync/state.json`，
+      用户真正的配对令牌被覆盖，之后一直 401、重启也恢复不了（只能重新配对）。
 
 ---
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
+from urllib.parse import urlparse
 
 from cloud import state as cloud_state
 
@@ -95,6 +96,38 @@ def _patch_update_check():
     if len(DOWNLOAD_HOSTS) != before:
         done.append("download_hosts")
 
+    # 官方源的地址从信任列表里去掉（2026-11-04 用户报「一更新就装成官方版」）：
+    # 只要地址还是 dl.evotracker.cn，用户点一下更新就会下载官方安装包、覆盖掉派喵版。
+    # 去掉以后，就算设置里还留着一条官方源的「新版本」记录，也打不开、下不了。
+    for host in ("dl.evotracker.cn", "evotracker.cn", "www.evotracker.cn"):
+        TRUSTED_HOSTS.discard(host)
+        DOWNLOAD_HOSTS.discard(host)
+
+    # 设置里缓存的那条「新版本」也要校验：老版本可能已经把官方源查到的 0.5.3 写进去了。
+    # 不是派喵的下载地址就清掉，免得面板一直显示一个点了会装成官方版的按钮。
+    if not getattr(update_check.known_newer, "_paimiao_hosts", False):
+        original_known_newer = update_check.known_newer
+
+        @functools.wraps(original_known_newer)
+        def known_newer():
+            latest = original_known_newer()
+            if latest is None or _is_fork_update(latest):
+                return latest
+            try:
+                import app_settings          # noqa: PLC0415  上游模块
+                app_settings.set_value("update_latest", None)
+                # 托盘可能已经为这个官方版本弹过通知；清掉，免得派喵自己发同号版本时不再提醒
+                if app_settings.get("update_notified") == latest.get("version"):
+                    app_settings.set_value("update_notified", None)
+            except Exception:
+                pass
+            _log("设置里那条「新版本」不是派喵的下载地址，已清掉（免得更新成官方版）")
+            return None
+
+        known_newer._paimiao_hosts = True      # type: ignore[attr-defined]
+        update_check.known_newer = known_newer
+        done.append("update_hosts_guard")
+
     # 新版本优先从 esa 镜像下载。evo-latest.json 里的 download 现在同时带 url（cfr2，老版本读它）
     # 和 esa（paimiaoesa 派喵 ESA 加速域名，和 cfr2 是同一个文件）。新版本走这段注入：优先用 esa，
     # 下不动 / 格式不对再退回 url。老版本没有这段注入，仍然读 url=cfr2，照常能一键更新。
@@ -114,6 +147,39 @@ def _patch_update_check():
         safe_download._paimiao_esa = True
         update_check.safe_download = safe_download
         done.append("prefer_esa")
+    return done
+
+
+def _is_fork_update(latest):
+    """这条「新版本」记录的下载地址是不是派喵的（老版本可能缓存了官方源的结果）。"""
+    info = latest.get("download") if isinstance(latest, dict) else None
+    if not isinstance(info, dict):
+        return False
+    for key in ("esa", "url"):
+        url = info.get(key)
+        if not url:
+            continue
+        try:
+            host = urlparse(str(url)).hostname or ""
+        except ValueError:
+            continue
+        if host in UPDATE_HOSTS:
+            return True
+    return False
+
+
+def patch_update_source():
+    """把「检查更新」的地址换成派喵的，托盘进程也要用。
+
+    为什么单独拿出来：托盘进程（`evo_app.start_update_checker`）**不会 import panel_app**，
+    而 `apply()` 只在 `attach(panel_app)` 里调用 —— 不在这里补一次的话，托盘会去官方源
+    查更新：官方发新版那天，用户一点更新就装成官方 Evo，派喵版被覆盖（2026-11-04 用户报）。
+    由 `bootstrap.install()` 在进程启动时调用（源码运行的 sitecustomize / 打包版的 runtime_hook
+    都会走这里），比托盘 15 秒后的第一次检查早。
+    """
+    done = _patch_update_check()
+    if done:
+        _log("更新地址：" + "、".join(done))
     return done
 
 def _patch_panel_module(module):

@@ -133,8 +133,8 @@ RP：游戏里没有单一的"总 RP"，只有"段位 + 段内进度"。**总分
 
   | 上游有、派喵版**已经删掉或改过**的 | 应该怎么做 |
   |---|---|
-  | `code/update_patch.py`（增量补丁包）、`tools/cos.py`（腾讯云 COS 备用线路） | 不要再存在。一键更新只下完整安装包、单线路（源码里的默认是 `code/update_check.py` 的 `dl.evotracker.cn`，注入层实际把它换成 `tools.skycraft.cn`） |
-  | `updater.py` / `update_check.py` / `_update.html` / `base.html` 里的补丁包、`mirrors`、`LATEST_URLS`、`COS_BASE` 分支 | 不要恢复。注入层 `paimiao_cloud/cloud/upstream.py` 的 `UPDATE_BASE` 指向 `tools.skycraft.cn`，别被上游的 `dl.evotracker.cn` 覆盖 |
+  | `code/update_patch.py`（增量补丁包）、`tools/cos.py`（腾讯云 COS 备用线路） | 不要再存在。一键更新只下完整安装包、单线路（`code/update_check.py` 的默认地址已经是 `tools.skycraft.cn`，见下一行） |
+  | `updater.py` / `update_check.py` / `_update.html` / `base.html` 里的补丁包、`mirrors`、`LATEST_URLS`、`COS_BASE` 分支 | 不要恢复。`code/update_check.py` 的 `UPDATE_URL` / `DEFAULT_PAGE` / `TRUSTED_HOSTS` / `DOWNLOAD_HOSTS` 已经被用户直接改成派喵的地址（2026-11-04 用户决定，不再只靠注入），合并上游后要确认还是 `tools.skycraft.cn` / `apex.skycraft.cn`，别被上游的 `dl.evotracker.cn` 带回来 |
   | `code/cloud_sync.py` 等小程序云同步文件 | 只在 `.gitignore`，不进 git |
   | 匿名统计（`telemetry.py`）、"全体玩家"数据页（`global_stats.py`）、开屏非官方分支弹窗 | 由注入层关掉（`cloud/upstream.py`、`cloud/global_stats/`、`cloud/notice.py`）；上游升级后要重新验证模板锚点，见下一条 |
   | 总结页截图存 JPG | 派喵版存 WEBP（`code/screenshots.py` 的 `to_webp()` / `WEBP_RATIO`） |

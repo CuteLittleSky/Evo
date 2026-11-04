@@ -13,6 +13,7 @@ import fake_game  # noqa: F401  要在项目代码之前导入（设置临时数
 import test_accounts
 import test_autostart
 import test_aspect
+import test_capture
 import test_data_move
 import test_diag
 import test_eliminated
@@ -28,7 +29,9 @@ import test_player_name
 import test_ranks
 import test_replay
 import test_screenshots
+import test_season31
 import test_season_import
+import test_season_ranges
 import test_season_stats
 import test_seasons_page
 import test_share
@@ -52,6 +55,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "一键更新（下载、核对、安装、恢复、面板）": test_updater,
          "WebView2 检查（没有时问要不要装、不装用浏览器、不用 IE 内核、去掉 DLL 的下载标记）": test_webview2,
          "游戏画面比例（16:10、4:3：换算、自动检测、设置页、整局重放）": test_aspect,
+         "第 31 赛季的新界面（简体、16:10：大厅、经验值页改写成'RP'，一局排位整段重放）": test_season31,
          "游戏语言（规则按语言分开、认出游戏语言、设置页选游戏语言、匹配局不补段位）": test_game_lang,
          "英文游戏画面（排位、匹配两局整段重放）": test_english,
          "繁体中文游戏画面（匹配两局、排位一局整段重放）": test_traditional,
@@ -69,7 +73,9 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "游戏里的数据页（认出、读两栏、核对，录入历史赛季数据用）": test_season_stats,
          "录入历史赛季数据（新表、录入模式、记录程序读数据页）": test_season_import,
          "\"赛季\"页面（录入按钮、待核对、保存、历史赛季表、设置页那一行）": test_seasons_page,
-         "诊断工具（截屏、找 Evo、诊断信息、打包、看压缩包）": test_diag}
+         "诊断工具（截屏、找 Evo、诊断信息、打包、看压缩包）": test_diag,
+         "截屏（dxcam 建不起来时：双显卡的笔记本设成节能、改用 mss）": test_capture,
+         "按赛季看（本赛季 / 上赛季：总览页、数据页、战绩页）": test_season_ranges}
 
 try:  # 云同步（微信小程序）的测试只在开发者电脑上，不上传 GitHub（2026-10-24 用户决定）：有就一起跑
     import test_cloud_sync

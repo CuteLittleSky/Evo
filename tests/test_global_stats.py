@@ -156,7 +156,7 @@ def checks():
     out = {}
     client, token = panel_app.app.test_client(), panel_app.app.config["TOKEN"]
 
-    def page(url="/stats?view=all"):
+    def page(url="/stats?view=all&range=all"):  # 默认看本赛季（2026-11-03），这里测的是"全部"
         return client.get(url).get_data(as_text=True)
 
     # ---- 没开匿名统计 ----
@@ -226,15 +226,18 @@ def checks():
     out["近 7 天：用近 7 天的汇总，你的局只算 7 天以内（罗芭那局 10 天前，不算）"] = (
         rows_of(week.split('id="h-combos"')[0]) == ["罗芭", "恶灵"] and you_cell(week, "罗芭") == ("—", None)
         and "5</span> 名玩家" in week)
-    diamond = page("/stats?view=all&tier=diamond")
+    diamond = page("/stats?view=all&range=all&tier=diamond")
     out["钻石：用钻石的汇总，筛选按钮选中钻石"] = (
         rows_of(diamond.split('id="h-combos"')[0]) == ["探路者"] and 'aria-current="true">钻石</a>' in diamond)
-    pubs = page("/stats?view=all&mode=pubs&tier=diamond")
+    pubs = page("/stats?view=all&range=all&mode=pubs&tier=diamond")
     out["匹配：没有段位按钮；没认出模式的局算匹配（动力小子 1 局，名次 4）"] = (
         "段位</span>" not in pubs and rows_of(pubs.split('id="h-combos"')[0]) == ["动力小子"]
         and you_cell(pubs, "动力小子") == ("4.0（比全体好）1局", "better"))
-    out["网址里不认识的筛选：用默认（全部、排位、全部段位）"] = (
-        global_stats.choose({"range": "x", "mode": "y", "tier": "z"}) == ("all", "ranked", "all"))
+    out["网址里不认识的筛选：用默认（本赛季、排位、全部段位）"] = (
+        global_stats.choose({"range": "x", "mode": "y", "tier": "z"}) == ("season", "ranked", "all"))
+    season_page = page("/stats?view=all")
+    out["本赛季（默认）：存着的是服务器按赛季算以前的汇总，写明一句，不报错"] = (
+        "统计服务器还没有按赛季汇总" in season_page and 'aria-current="true">本赛季</a>' in season_page)
 
     # ---- 什么时候重新下载 ----
     Handler.requests.clear()

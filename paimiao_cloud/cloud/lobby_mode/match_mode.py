@@ -411,6 +411,35 @@ def _install_capture_hook():
 
     create._paimiao_capture_hook = True      # type: ignore[attr-defined]
     module.create = create
+    _hook_open_camera()
+
+
+def _hook_open_camera():
+    """再包一层上游的 `capture.open_camera()`（0.5.3 起截屏统一从这里建）。
+
+    为什么还要这一层：上游 0.5.3 把截屏收进 `code/capture.py`，dxcam 建不起来时
+    （双显卡笔记本报 DXGI_ERROR_UNSUPPORTED）会改用 mss，那台相机**不是** `dxcam.create`
+    造的，只包 dxcam 那条路就漏了 —— 那台机器上大厅模式会退化成「只在认画面时读」。
+    这里给 open_camera 包一层，它返回的相机照样挂 grab（`_hook_camera` 自己会去重）。
+    老版本上游没有 capture.py，import 失败就当没有，dxcam 那条路已经包好了。"""
+    capture = sys.modules.get("capture")
+    if capture is None:
+        try:
+            import capture      # noqa: PLC0415
+        except Exception:
+            return
+    open_camera = getattr(capture, "open_camera", None)
+    if open_camera is None or getattr(open_camera, "_paimiao_capture_hook", False):
+        return
+    real_open = open_camera
+
+    def open_camera(*args, **kwargs):
+        result = real_open(*args, **kwargs)
+        _hook_camera(result[0] if isinstance(result, tuple) else result)
+        return result
+
+    open_camera._paimiao_capture_hook = True      # type: ignore[attr-defined]
+    capture.open_camera = open_camera
 
 
 def _hook_camera(camera):

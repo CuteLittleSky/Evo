@@ -25,6 +25,26 @@ def _clean(text):
     return re.sub(r"[\s.。·、,，;；:：!！?？\-—_~]+", "", text or "")
 
 
+def _status_pick(engine, img, wanted):
+    """读卡片状态行（「正在匹配」「正在加载」这些），返回 _pick 的结果或 None。
+
+    两个框都读（rules.CARD_STATUS 的 roi / alt）：
+      旧赛季（第 30 赛季及以前）状态行在卡片底部，基准 y 960~985；
+      第 31 赛季起卡片变高、底部多了「模式选择」栏，状态行挪到「三人赛 / 地图」下面，
+      基准 y 898~932。先读旧位置，读不到再读新位置 —— 都不像就返回 None（留给调用方判断）。
+    """
+    spec = rules.CARD_STATUS
+    wanted = [(word, word) for word in wanted]
+    for key in ("roi", "alt"):
+        alt = spec.get(key)
+        if not alt:
+            continue
+        hit = _pick(_read(engine, img, dict(spec, **alt) if isinstance(alt, dict) else dict(spec, roi=alt)), wanted)
+        if hit:
+            return hit
+    return None
+
+
 def _read(engine, img, spec, min_score=None):
     """按一段规则裁图并识别，返回 [(文字, 置信度), ...]。
 
@@ -369,7 +389,7 @@ def read_lobby_mode(engine, img, *, with_fill=True):
         elif cyan >= rules.RANKED_FILL["red_margin"]:
             out["accent"] = "cyan"
 
-    # 3) 状态行：卡片底部那一行黄字
+    # 3) 状态行：卡片底部那一行黄字（第 31 赛季起挪到「三人赛 / 地图」下面，两个框都读）
     #
     # 读到「正在匹配」/「正在处理」= 这一帧在排队。两个词都认：实机帧里两种写法都出现过
     # （见 rules.MATCHING_WORDS 的注释）。
@@ -377,8 +397,7 @@ def read_lobby_mode(engine, img, *, with_fill=True):
     # 反过来，状态行**什么都没读到**也是一种信息：点了准备之后这一行会被游戏清掉，
     # 所以「读不出来」往往表示已经不在排队了（正在加载、正在进游戏）。以前这里读不到
     # 就当"这一帧不算"，结果卡在大厅排队那一秒的场景反而记不上模式。
-    status = _pick(_read(engine, img, rules.CARD_STATUS),
-                   [(word, word) for word in rules.MATCHING_WORDS])
+    status = _status_pick(engine, img, rules.MATCHING_WORDS)
     if status:
         word, raw, score = status
         out["found"] += 1
@@ -387,8 +406,7 @@ def read_lobby_mode(engine, img, *, with_fill=True):
         out["matching"] = True
     elif out["mode"]:
         # 只有认得模式名时才敢做这个否定判断：整张卡片都读不出来时，说明这帧根本不是大厅
-        stopped = _pick(_read(engine, img, rules.CARD_STATUS),
-                        [(word, word) for word in rules.MATCHING_STOP])
+        stopped = _status_pick(engine, img, rules.MATCHING_STOP)
         if stopped is None:
             out["matching"] = False
 

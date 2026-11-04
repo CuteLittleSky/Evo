@@ -1,12 +1,12 @@
 """一键更新：在 Evo 里下载新版本、安装、自动重新打开（2026-10-19 用户决定）。
 
 和 update_check.py 一起是 Evo 仅有的联网代码（原则 2）：用户点了"立即更新"才下载安装包，下载完显示
-"安装并重新启动"，再点一次才安装。从不在用户不知道时下载或安装。只有打包好的 Evo.exe 能用；用源码运行时只能去官网下载。
+"安装并重新启动"，再点一次才安装。从不在用户不知道时下载或安装。只有打包好的 Evo.exe 能用；用源码运行时只能去下载页手动下载。
 
 流程：
-1. 下载（托盘程序里的后台线程，面板每半秒问一次进度）：地址来自 latest.json（只接受 dl.evotracker.cn，见
+1. 下载（托盘程序里的后台线程，面板每半秒问一次进度）：地址来自 latest.json（只接受派喵的下载域名，见
    update_check.safe_download），边下边写进程序文件夹里的 _update/，边算 SHA-256，和 latest.json 写的对不上就删掉、报错。
-   派喵版不用上游的备用线路（mirrors）和增量补丁包（patches）：只从 dl.evotracker.cn 下完整的安装包
+   派喵版不用上游的备用线路（mirrors）和增量补丁包（patches）：只下完整的安装包
 2. 解压到 _update/<版本号>/Evo/，确认里面有 Evo.exe 和 _internal，写 ready.json
    （"已下载好"，Evo 重新打开后也认得）
 3. 点"安装并重新启动"（Apex 开着时不能点，免得丢掉正在记录的那一局）：打开新版本自己的 Evo.exe --apply-update，
@@ -451,7 +451,7 @@ def apply_update(target, wait_pid, from_version):
         result["error"] = str(e)
         log(f"没装上，也没能恢复：\n{traceback.format_exc()}")
         _finish(work, result)
-        _message_box(f"{e}\n\n请去官网 evotracker.cn 重新下载 Evo。你的战绩数据不受影响。")
+        _message_box(f"{e}\n\n请去 apex.skycraft.cn 重新下载 Evo。你的战绩数据不受影响。")
         return
     except Exception as e:  # noqa: BLE001 不管什么错都要写结果、把 Evo 重新打开（已经恢复成原来的版本）
         result["error"] = str(e) or type(e).__name__

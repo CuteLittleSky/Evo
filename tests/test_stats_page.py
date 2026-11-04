@@ -142,7 +142,7 @@ def main():
     client = panel_app.app.test_client()
     with client.session_transaction() as s:
         s["account"] = main_id  # 大号（没选时默认看最近玩过的小号）
-    recent = client.get("/stats").get_data(as_text=True)
+    recent = client.get("/stats?range=30").get_data(as_text=True)
     everything = client.get("/stats?range=all").get_data(as_text=True)
     overview_all = client.get("/?range=all").get_data(as_text=True)
     nav = re.findall(r'<nav class="nav".*?</nav>', recent, re.S)[0]

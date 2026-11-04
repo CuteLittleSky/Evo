@@ -33,11 +33,19 @@ os.environ["EVO_VIDEOCONFIG"] = str(_TEMP / "videoconfig.txt")
 sys.path.insert(0, str(CODE))
 
 import cv2  # noqa: E402
+import dxcam  # noqa: E402
 import numpy as np  # noqa: E402
 
 import live_collect  # noqa: E402
+import seasons  # noqa: E402
 import sounds  # noqa: E402
 import storage  # noqa: E402
+
+# 赛季（面板默认看本赛季，见 seasons.py）：测试的假数据是固定的日期（多半是 2026-10），跑测试的那天可能已经是下一个赛季，
+# 页面就都是空的。所以测试里只有一个从 2000 年开始的赛季：所有局都是"本赛季"，没有"上赛季"，测别的东西不受赛季影响。
+# 测赛季本身的（test_season_ranges.py）自己换成要测的赛季
+TEST_SEASONS = [(99, "2000-01-01 00:00:00")]
+seasons.SEASONS[:] = TEST_SEASONS
 
 # 提示音：测试时不真的出声，只记下响了哪一声（按顺序；记录程序的日志里也有"提示音：…"）
 SOUNDS_PLAYED = []
@@ -115,7 +123,7 @@ def run_collect(frames, picture, **options):
     clock = FakeClock(camera)
     log = []
     db = last_db = _TEMP / f"run{next(_runs)}.db"
-    with mock.patch.object(live_collect.dxcam, "create", lambda **kw: camera), \
+    with mock.patch.object(dxcam, "create", lambda **kw: camera), \
             mock.patch.object(live_collect, "time", clock):
         live_collect.collect(db_path=db, stop=stop, log=log.append, **options)
     conn = storage.connect(db)

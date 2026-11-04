@@ -59,6 +59,23 @@ def install():
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
 
+    # 更新检查的地址（2026-11-04 用户报「一更新就装成官方版」）：托盘进程不会 import
+    # panel_app，attach() 里的 apply() 轮不到它，所以必须在这里（进程启动时）先补上，
+    # 比托盘 15 秒后的第一次检查早。
+    #
+    # 源码运行时 install() 比 run_evo.py 把 code/ 加进 sys.path 还早（sitecustomize 在
+    # 解释器启动时就跑了），所以这里先把项目里的 code/ 补上，否则 import update_check
+    # 会失败、补丁悄悄不生效。打包版里 code/ 在 PyInstaller 的归档里，本来就能 import，
+    # 这个目录不存在就跳过。
+    _code_dir = os.path.join(os.path.dirname(_ROOT), "code")
+    if os.path.isdir(_code_dir) and _code_dir not in sys.path:
+        sys.path.insert(0, _code_dir)
+    try:
+        from cloud import upstream as cloud_upstream
+        cloud_upstream.patch_update_source()
+    except Exception as exc:
+        _log(f"更新地址注入失败（可能去官方源查更新，需人工检查）：{exc!r}")
+
     try:
         from cloud.obs import inject as obs_inject
         obs_inject.install()
@@ -253,6 +270,15 @@ def attach(module):
         app.register_blueprint(cloud_panel.build())
 
         cloud_sync.set_db_path(app.config.get("DB"))
+
+    # 总览页段位卡片里的「从派喵获取的段位」那一小块（2026-11-04）。
+    # 注册失败只是这一块不显示，其他页面照常。
+    if "paimiaorank" not in app.blueprints:
+        try:
+            from cloud.paimiao_rank import inject as paimiao_rank_inject
+            paimiao_rank_inject.register(app)
+        except Exception as exc:
+            _log(f"「从派喵获取的段位」那一块注入失败（总览页照常）：{exc!r}")
 
     if not getattr(app, "_cloud_sync_armed", False):
         app._cloud_sync_armed = True
