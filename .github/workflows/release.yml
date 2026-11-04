@@ -26,6 +26,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 120   # 跨境上传偶尔很慢，但也不该挂 6 小时（默认 360）
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -273,9 +274,20 @@ jobs:
       # 凭据：secrets OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET（RAM 子账号，只给这个 bucket 读写权限）。
       # 位置：vars OSS_ENDPOINT（如 oss-cn-hangzhou.aliyuncs.com，不带协议）、vars OSS_BUCKET，走 evo/ 前缀。
       # 复用上面 R2 那步装好的 rclone（Alibaba OSS 用它的 s3 后端 provider=Alibaba，bundle 里自带）。
-      # 必须在这一步成功之后才通知 ApexPacks，否则 evo-latest.json 会指向一个还没传上去的 esa 地址。
+      #
+      # 2026-11-04 改：以前这里把同一个 112 MB 传两遍（Evo-<版本>.zip 和 latest.zip），
+      # 从 GitHub 的美国 runner 往阿里云杭州传，跨境只有 ~0.1–0.2 MB/s，一次要 30 分钟，
+      # 看着就像卡死（run #40 第 2 次尝试跑了 38 分钟还没完）。现在：
+      #   · 大文件只传一遍，latest.zip 用 OSS 服务端拷贝（CopyObject，几秒）
+      #   · 加并发/分片/超时，每 15 秒打一行进度，日志里能看出还在动
+      #   · 这一步允许失败（continue-on-error）：OSS 慢或挂了不该挡住发版。
+      #     只有这一步校验通过时才往 evo-latest.json 写 esa 字段；没写成就不写，
+      #     客户端会退回 url（cfr2）下载，照样能更新。
       - name: 上传安装包到阿里云 OSS
+        id: oss
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        timeout-minutes: 40
         shell: pwsh
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
@@ -308,6 +320,21 @@ jobs:
           $localSize = (Get-Item $env:EVO_ZIP).Length
           $localHash = (Get-FileHash $env:EVO_ZIP -Algorithm SHA256).Hash.ToLower()
 
+          # 上传参数：跨境链路慢，用大分片 + 多并发；--stats 每 15 秒打一行，日志里能看出在动。
+          $opts = @(
+            '--s3-no-check-bucket',
+            '--s3-chunk-size', '64M',
+            '--s3-upload-concurrency', '8',
+            '--transfers', '4',
+            '--checkers', '8',
+            '--timeout', '10m',
+            '--contimeout', '30s',
+            '--low-level-retries', '20',
+            '--retries', '5',
+            '--stats', '15s',
+            '--stats-log-level', 'NOTICE'
+          )
+
           # 同版本号重发必须先删旧对象再传。rclone copy 默认按「大小 + 修改时间」判断是否要传：
           # 同版本的包大小一样，不删就会被当成「已存在、无需传输」直接跳过，远端一直留旧包
           # （2026-11-02 的 0.5.1 就是这个原因：latest.zip 还是上一次的旧构建）。
@@ -316,33 +343,41 @@ jobs:
           & rclone deletefile "$bucket/evo/latest.zip" 2>$null
           & rclone deletefile "$bucket/evo/$name.sha256" 2>$null
 
-          & rclone copyto $env:EVO_ZIP "$bucket/evo/$name" --s3-no-check-bucket --ignore-times
-          if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS $name 失败"; exit 1 }
-          & rclone copyto $env:EVO_ZIP "$bucket/evo/latest.zip" --s3-no-check-bucket --ignore-times
-          if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS latest.zip 失败"; exit 1 }
-          & rclone copyto $env:EVO_SHA "$bucket/evo/$name.sha256" --s3-no-check-bucket --ignore-times
+          # 小的先传：万一后面大文件传不完被取消，至少 sha256 已经在
+          & rclone copyto $env:EVO_SHA "$bucket/evo/$name.sha256" --ignore-times $opts
           if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS $name.sha256 失败"; exit 1 }
 
+          Write-Host "开始上传 $name（$([math]::Round($localSize / 1MB)) MB），跨境链路慢的话要十几分钟，下面每 15 秒一行进度"
+          & rclone copyto $env:EVO_ZIP "$bucket/evo/$name" --ignore-times $opts
+          if ($LASTEXITCODE -ne 0) { Write-Error "上传 OSS $name 失败"; exit 1 }
+
+          # latest.zip 走 OSS 服务端拷贝（CopyObject），不再把 112 MB 传第二遍
+          & rclone copyto "$bucket/evo/$name" "$bucket/evo/latest.zip" --s3-no-check-bucket --ignore-times --timeout 10m
+          if ($LASTEXITCODE -ne 0) { Write-Error "OSS 服务端拷贝 latest.zip 失败"; exit 1 }
+
           # 回读校验大小（走 OSS 的 S3 API，不经 ESA/CDN 缓存）
-          $info = & rclone lsjson "$bucket/evo/$name" --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          $info = & rclone lsjson "$bucket/evo/$name" --s3-no-check-bucket --timeout 5m 2>$null | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or -not $info -or $info.Size -ne $localSize) {
             Write-Error "OSS 校验失败：$name 远端 $($info.Size) 字节 ≠ 本地 ${localSize} 字节"; exit 1
           }
           Write-Host "OSS 校验通过：$name = $localSize 字节"
 
           # latest.zip 也要校验：同版本重发最容易被跳过、留着旧包的就是它（大小会和本地对不上）
-          $latestInfo = & rclone lsjson "$bucket/evo/latest.zip" --s3-no-check-bucket 2>$null | ConvertFrom-Json
+          $latestInfo = & rclone lsjson "$bucket/evo/latest.zip" --s3-no-check-bucket --timeout 5m 2>$null | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or -not $latestInfo -or $latestInfo.Size -ne $localSize) {
             Write-Error "OSS 校验失败：latest.zip 远端 $($latestInfo.Size) 字节 ≠ 本地 ${localSize} 字节"; exit 1
           }
           Write-Host "OSS 校验通过：latest.zip = $localSize 字节"
 
           # 再核 .sha256（同样走 S3 侧读取，不经 ESA/CDN）
-          $remoteSha = & rclone cat "$bucket/evo/$name.sha256" --s3-no-check-bucket 2>$null
+          $remoteSha = & rclone cat "$bucket/evo/$name.sha256" --s3-no-check-bucket --timeout 5m 2>$null
           if ($LASTEXITCODE -ne 0 -or ($remoteSha -notmatch [regex]::Escape($localHash))) {
             Write-Error "OSS 上 $name.sha256 与本地不一致：远端 $remoteSha / 本地 $localHash"; exit 1
           }
           Write-Host "OSS 校验通过：$name.sha256 匹配 $localHash"
+
+          # 给「通知 ApexPacks」用：只有走到这里（三个文件都校验过）才允许写 esa 字段
+          "ok=1" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       # 刷新 ESA 缓存：OSS 传了新包，但 ESA 边缘还缓存着旧对象（max-age 24h），
       # 同版本号重发或 latest.zip 会被继续喂旧文件。用阿里云 ESA 的 PurgeCaches 按 URL 刷掉。
@@ -350,6 +385,8 @@ jobs:
       # 刷新失败不阻断发布（包已传好）：只告警，必要时去 ESA 控制台手动刷新。
       - name: 刷新 ESA 缓存
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        timeout-minutes: 10
         shell: pwsh
         env:
           ESA_SITE_ID: ${{ vars.ESA_SITE_ID }}
@@ -408,13 +445,23 @@ jobs:
               date = (Get-Date -Format 'yyyy-MM-dd')
               page = "https://apex.skycraft.cn/#evo"
               notes = $notes
-              download = @{ url = $url; sha256 = $sha; size = [int64]$size; esa = $esa }
+              download = @{ url = $url; sha256 = $sha; size = [int64]$size }
             }
-          } | ConvertTo-Json -Depth 6 -Compress
+          }
+          # 只有 OSS 那一步校验通过（steps.oss.outputs.ok == 1）才写 esa；
+          # OSS 慢/失败时只写 url（cfr2），客户端会退回 R2 下载，照样能更新。
+          if ("${{ steps.oss.outputs.ok }}" -eq "1") {
+            $payload.client_payload.download.esa = $esa
+            Write-Host "OSS 校验通过：evo-latest.json 会带 esa（$esa）"
+          } else {
+            Write-Host "OSS 这次没校验通过：evo-latest.json 只带 url（$url），客户端走 R2"
+          }
+          $payload = $payload | ConvertTo-Json -Depth 6 -Compress
           $headers = @{
             Authorization = "Bearer ${{ secrets.APEXPACKS_DISPATCH_TOKEN }}"
             Accept = "application/vnd.github+json"
             "X-GitHub-Api-Version" = "2022-11-28"
           }
-          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/${{ vars.APEXPACKS_REPO }}/dispatches" -Headers $headers -Body $payload -ContentType "application/json"
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/${{ vars.APEXPACKS_REPO }}/dispatches" -Headers $headers -Body $payload -ContentType "application/json" -TimeoutSec 30
           Write-Host "已通知 ApexPacks 更新 evo-latest.json"
+

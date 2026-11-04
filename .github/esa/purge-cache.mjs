@@ -66,7 +66,11 @@ const SK = process.env.ESA_ACCESS_KEY_SECRET || process.env.OSS_ACCESS_KEY_SECRE
     const res = await client.purgeCaches(req);
     console.log(`[purge] batch ${Math.floor(i / CHUNK) + 1} (${batch.length} URLs) →`, JSON.stringify(res.body || res));
   }
-})().catch((e) => {
+})().then(() => {
+  // 阿里云 SDK 可能留着 keep-alive 连接，不显式退出的话 node 会一直挂着、这一步永远不结束
+  console.log('[purge] done');
+  process.exit(0);
+}).catch((e) => {
   console.error('[purge] FAIL', e && (e.message || e));
   process.exit(1);
 });
