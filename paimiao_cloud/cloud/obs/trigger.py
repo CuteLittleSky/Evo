@@ -69,6 +69,10 @@ _INSTALLED = False
 _FINDER = None
 _TICKS = 0          # 排查用：记录循环第几次判断
 
+# 最近一次投影探测的结果（给托盘提示用，见 tray.py）。None = 没有投影 / 还没探过。
+_LAST_PROJECTOR = None
+_LAST_PROBE = 0.0
+
 
 def install():
     """接管启动条件。**可以反复调**（幂等，但会补装）。
@@ -159,6 +163,14 @@ def _after_import(module):
         tail = "，记录循环改用投影判断" if looped else "（记录循环没换成，仅 game_running 生效）"
         _log(f"[主机模式] 启动条件已接管（{'、'.join(patched)}）{tail}："
              f"选「OBS 投影」时有投影就记录")
+    # 托盘提示的措辞（「等待 Apex 启动」→「等待投影窗口」、投影没置顶时带提醒）。
+    # 放在这里而不是 install()：evo_app 导入完了，托盘进程才是真正用到 pystray 的地方。
+    try:
+        from cloud.obs import tray as obs_tray  # noqa: PLC0415
+        if obs_tray.install():
+            _log("[主机模式] 已接管托盘提示（等待投影窗口 / 投影未置顶）")
+    except Exception as exc:  # noqa: BLE001 提示语改不了不影响记录
+        _log(f"[主机模式] 托盘提示注入失败（不影响记录）：{exc!r}")
 
 
 def _patch(module) -> bool:
@@ -279,13 +291,30 @@ def projector_running() -> bool:
     判据和截屏那边完全一致（都调 `projector.find_projector`），所以
     「记录在跑」和「截得到画面」不会出现一个真一个假的情况。
     探测失败按「没有」处理 —— 宁可这次不记录，也不要截一块错的屏。
+
+    顺带把结果记进 `_LAST_PROJECTOR`：托盘提示（`tray.py`）要拿「置没置顶」
+    去拼那句提醒，不能为它每 5 秒再枚举一遍窗口。
     """
+    global _LAST_PROJECTOR, _LAST_PROBE
     try:
         from cloud.obs import projector  # noqa: PLC0415
-        return projector.find_projector() is not None
+        found = projector.find_projector()
     except Exception as exc:  # noqa: BLE001
         _log(f"[主机模式] 查投影窗口失败，这次当作没有投影：{exc!r}")
-        return False
+        found = None
+    _LAST_PROJECTOR = found
+    _LAST_PROBE = time.monotonic()
+    return found is not None
+
+
+def last_projector(max_age: float = 12.0):
+    """最近一次投影探测结果（`find_projector()` 的 dict 或 None），给托盘提示用。
+
+    超过 `max_age` 秒没探过就现探一次（比如暂停状态下记录循环没在跑）。
+    """
+    if time.monotonic() - _LAST_PROBE > max_age:
+        projector_running()
+    return _LAST_PROJECTOR
 
 
 def _log(message):

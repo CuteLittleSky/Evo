@@ -334,3 +334,6 @@
 - **OBS 投影不置顶改成「只警告不拒绝」**（用户 2026-11-06 要求）：原来 `projector.find_projector()` 把 `WS_EX_TOPMOST` 当硬条件，投影一取消「始终置顶」Evo 就当它不存在 —— 主机模式记录子进程不启动，已经在记录时也按「投影消失」暂停截屏。现在拆出 `find_projector_window()`，只按「OBS 进程 + 铺满整屏 + 没最小化」认，置不置顶都返回，`topmost` 变成提示字段（多个候选时优先置顶）。`describe()` 新增 `warning`：设置页「当前状态」和切换来源后的提示都写「没置顶，别的窗口盖住会截到错的画面，建议勾选始终置顶」；记录子进程日志只警告一次（`capture.py`）。能截是因为 dxcam 走 DXGI 桌面复制、截的是屏幕像素，与窗口是否置顶无关。改动全在 `paimiao_cloud/cloud/obs/`（`projector.py` / `capture.py` / `page.py` / `trigger.py` / `__init__.py`），上游 0 字节
   - 验证：`tests/run_all.py` 全绿（含设置页渲染那几组）；新增 `captures/mode_probe/verify_obs_topmost.py` 用假窗口单测全过 —— 非置顶 `available=True` 带 warning、置顶无 warning、两个都在优先置顶、OBS 小窗不算投影、没开 OBS 提示打开、设置页文案、记录子进程只警告一次
 
+- **主机模式的托盘提示**（用户 2026-11-06 要求）：上游 `evo_app.py:612` 写死 `tips = {"waiting": "等待 Apex 启动", ...}`，主机没有 Apex 进程、等的是 OBS 投影，字面会让人以为是等 PC 游戏。新增 `paimiao_cloud/cloud/obs/tray.py`（纯注入）：沿 MRO 找到 `pystray.Icon` 的 `title` property 包一层 setter，主机模式下把「等待 Apex 启动」改成「等待投影窗口」，并在投影**没置顶**时给标题追加「 · 投影未置顶」。`Recorder._loop` 每 5 秒 `_set_state` → `on_change` → `refresh()` 重赋 title，所以最多 5 秒内跟手；`trigger.projector_running()` 顺带缓存最近一次探测结果（`last_projector()`），托盘不再额外枚举窗口。整屏模式下一字不改。`_after_import` 里装、失败只写日志
+  - 验证：`captures/mode_probe/verify_obs_topmost.py` 加 9 项：标题改写、非置顶提醒、已暂停不提醒、整屏模式原样、`tray.install` 幂等；另用真 `pystray.Icon` 实例确认 setter 生效（`等待 Apex 启动` → `等待投影窗口`、`正在记录` → 末尾带 `投影未置顶`）
+
