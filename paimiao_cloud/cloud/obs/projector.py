@@ -12,11 +12,13 @@
 实测的坑（2026-10-23，OBS 32.2.2 / Windows 11）：
     - **投影窗口和 OBS 主窗口是同一个窗口类**（`Qt6111QWindowIcon`），
       类名里还带 Qt 版本号，换个 OBS 版本就变。所以不能按类名认。
-    - 真正的判据是：进程名 `obs64.exe` + **是置顶窗口**（WS_EX_TOPMOST）
-      + 尺寸接近铺满整块屏。OBS 主窗口不是置顶的、尺寸也小，一筛就掉。
+    - 真正的判据是：进程名 `obs64.exe` + 尺寸接近铺满整块屏
+      + 没最小化。OBS 主窗口尺寸小，一筛就掉（**不**按窗口类名认）。
     - 投影窗口默认就带置顶；用户如果在窗口上右键取消了「始终置顶」，
-      它就会被别的窗口盖住 —— 这时**不能**截，否则截到的是压在上面的那个窗口。
-      所以我们坚持要求 TOPMOST，检测不到就明确告诉用户去打开置顶。
+      它会被别的窗口盖住。2026-10-23 一开始因此把置顶当成硬条件，
+      2026-11-06 用户决定改成「**只警告不拒绝**」：不置顶也能截
+      （dxcam 截的是屏幕像素，跟窗口死活无关），只是提醒可能截到压在上面的窗口。
+      判断窗口置不置顶仍然有用 —— 用来给设置页和日志出那句提醒。
 
 另外：dxcam 的 output_idx 就是 Windows 的显示器序号（\\.\DISPLAY1 → 0）。
     探测时按窗口所在的显示器算出 output_idx，记录子进程直接用它建 camera。
@@ -291,28 +293,26 @@ def _match_output(monitor: dict, outputs: list[dict]) -> dict:
     return {"index": monitor["index"], "exact": False}
 
 
-def find_projector() -> dict | None:
-    """找那块「铺满一整块屏的 OBS 置顶窗口」= 源投影。
+def find_projector_window() -> dict | None:
+    """找那块「铺满一整块屏的 OBS 窗口」，置不置顶都算，认到的窗口原样带着 topmost 回来。
 
-    判据（全部满足才算，宁可找不到也不要认错）：
-      1. 属于 OBS 的进程；
-      2. 是置顶窗口（否则会被别的窗口盖住，截到的是别人）；
-      3. 尺寸接近铺满它所在的那块显示器（差 SIZE_TOLERANCE 像素以内）。
+    2026-11-06 用户决定：**不置顶只警告，不拒绝**。以前这里过滤掉非置顶，
+    投影一取消「始终置顶」Evo 就当它不存在（记录子进程起不来、截屏暂停），
+    用户一次误操作（切屏时顺手取消勾选）就整天没记。现在改成：
 
-    返回：{"hwnd", "title", "monitor_index", "region": (left, top, right, bottom),
-           "width", "height", "monitor": {...}, "output_index", "output_exact"}
-     找不到返回 None。
+        · 探测到就截，`topmost` 只作为提示字段往外传，设置页显示「没置顶，
+          可能截到压在上面的窗口」；
+        · 为什么不置顶也能截：dxcam 截的是那块屏的 DXGI 桌面复制，拿的是
+          **屏幕像素**，窗口置顶与否不影响能不能截到它 —— 影响的只是别的窗口
+          会不会盖在它上面。盖住了就截到别人，这是用户要自己承担的（见 `__init__`）。
 
-    monitor_index 是「第几块屏」（从左到右数的顺序号），output_index 才是**给 dxcam 用的**
-    序号 —— 两者不一定相同，别混用。output_exact 为 False 表示没能按分辨率对上，
-    output_index 只是按顺序猜的。
+    判据：属于 OBS 的进程 + 可见 + 没最小化 + 尺寸接近铺满它所在的那块屏。
+    返回的 dict 和 find_projector() 一样，只是不含 dxcam 的 output_index。
+    找不到返回 None。
     """
     rows = obs_windows()
-    # 先把「置顶 + 铺满某块屏」的候选挑出来
     candidates = []
     for row in rows:
-        if not row["topmost"]:
-            continue
         mon = row["monitor"]
         if mon is None:
             continue
@@ -322,14 +322,40 @@ def find_projector() -> dict | None:
         candidates.append(row)
     if not candidates:
         return None
-    # 万一有多个（两块屏各投一个）：取面积最大的那块，行为可预期
-    best = max(candidates, key=lambda r: r["width"] * r["height"])
+    # 万一有多个（两块屏各投一个）：先挑置顶的，再取面积最大的那块，行为可预期
+    return max(candidates, key=lambda r: (r["topmost"], r["width"] * r["height"]))
+
+
+def find_projector() -> dict | None:
+    """找那块「铺满一整块屏的 OBS 窗口」= 源投影。
+
+    判据（全部满足才算，宁可找不到也不要认错）：
+      1. 属于 OBS 的进程；
+      2. 尺寸接近铺满它所在的那块显示器（差 SIZE_TOLERANCE 像素以内）。
+
+    **置顶不是必需条件**（2026-11-06 用户决定）：原来还要求 WS_EX_TOPMOST，
+    结果是用户取消勾选「始终置顶」之后 Evo 整个不认了。现在认得到，只是返回的
+    `topmost` 为 False，由设置页和日志提醒「可能截到压在上面的窗口」。
+    见 find_projector_window() 的注释，以及 `__init__` 里保留这条规则的原因。
+
+    返回：{"hwnd", "title", "monitor_index", "topmost", "region": (left, top, right, bottom),
+           "width", "height", "monitor": {...}, "output_index", "output_exact"}
+     找不到返回 None。
+
+    monitor_index 是「第几块屏」（从左到右数的顺序号），output_index 才是**给 dxcam 用的**
+    序号 —— 两者不一定相同，别混用。output_exact 为 False 表示没能按分辨率对上，
+    output_index 只是按顺序猜的。
+    """
+    best = find_projector_window()
+    if best is None:
+        return None
     mon = best["monitor"]
     matched = _match_output(mon, dxcam_outputs())
     return {
         "hwnd": best["hwnd"],
         "title": best["title"],
         "monitor_index": mon["index"],
+        "topmost": best["topmost"],
         # 截显示器整块，而不是窗口矩形：窗口边缘可能比屏幕多/少几个像素，
         # 截整块屏得到的就是那块屏上真实显示的像素，比例一定对。
         "region": (mon["left"], mon["top"], mon["right"], mon["bottom"]),
@@ -342,44 +368,49 @@ def find_projector() -> dict | None:
 
 
 def describe() -> dict:
-    """给设置页用：当前能不能截、为什么不能、截哪块。永不抛异常。"""
+    """给设置页用：当前能不能截、为什么不能、截哪块。永不抛异常。
+
+    `available` 才是「能不能截」；`warning` 是**能截但要提醒**的话
+    （目前只有一种：投影没置顶，可能被别的窗口盖住）。
+    """
     try:
         all_monitors = monitors()
     except Exception as exc:  # noqa: BLE001
-        return {"available": False, "reason": f"读不到显示器信息：{exc}", "monitors": [], "projector": None,
-                "topmost": False, "candidates": []}
+        return {"available": False, "reason": f"读不到显示器信息：{exc}", "warning": "",
+                "monitors": [], "projector": None, "topmost": False, "candidates": []}
     try:
         rows = obs_windows()
     except Exception as exc:  # noqa: BLE001
-        return {"available": False, "reason": f"枚举窗口失败：{exc}", "monitors": all_monitors,
-                "projector": None, "topmost": False, "candidates": []}
+        return {"available": False, "reason": f"枚举窗口失败：{exc}", "warning": "",
+                "monitors": all_monitors, "projector": None, "topmost": False, "candidates": []}
 
     projector = find_projector()
 
-    # 为什么不可用：分三种说清楚，用户照着做就行
-    topmost_ones = [r for r in rows if r["topmost"] and r["monitor"] is not None
-                    and abs(r["width"] - r["monitor"]["width"]) <= SIZE_TOLERANCE
-                    and abs(r["height"] - r["monitor"]["height"]) <= SIZE_TOLERANCE]
+    # 为什么不可用：分几种说清楚，用户照着做就行
     full_size = [r for r in rows if r["monitor"] is not None
                  and abs(r["width"] - r["monitor"]["width"]) <= SIZE_TOLERANCE
                  and abs(r["height"] - r["monitor"]["height"]) <= SIZE_TOLERANCE]
+    topmost_ones = [r for r in full_size if r["topmost"]]
 
     reason = ""
+    warning = ""
     if projector is None:
         if not rows:
             reason = "没有找到正在运行的 OBS。请先打开 OBS。"
         elif not full_size:
             reason = ("没找到铺满整块屏幕的 OBS 窗口。请用 OBS 的「投影（全屏）」把画面投到一块屏幕上"
                       "（源上右键 → 全屏投影；或预览上右键 → 全屏投影）。")
-        elif not topmost_ones:
-            reason = ("找到铺满屏幕的 OBS 窗口，但它没有置顶，会被别的窗口盖住。"
-                      "请在投影窗口上右键，勾选「始终置顶」。")
         else:
             reason = "没找到可用的投影窗口。"
+    elif not projector.get("topmost"):
+        # 能截，但提醒一句：不置顶时别的窗口可以盖住它，盖住就截到别人了
+        warning = ("投影窗口没有置顶，现在能截到，但别的窗口盖住它会截到错的画面。"
+                   "建议在投影窗口上右键，勾选「始终置顶」。")
 
     return {
         "available": projector is not None,
         "reason": reason,
+        "warning": warning,
         "monitors": all_monitors,
         "projector": projector,
         "topmost": bool(topmost_ones),

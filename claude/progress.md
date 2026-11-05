@@ -329,3 +329,8 @@
 
 - **分享卡片底部的站名从 evotracker.cn 换成 apex.skycraft.cn**（2026-11-05 用户要的）：上游 `panel/templates/share/_base.svg` 的品牌行写的是官方站名，派喵用户分享出去的图上会显示官方站；注入层 `cloud/upstream.py` 的 `_patch_template` 里加 `CARD_BRAND_OLD/NEW` 替换（上游文件不动）。验证：渲染 `/share/overview.svg` 里没有 `evotracker.cn`、有 `apex.skycraft.cn`；`tests/test_share.py` 全过
 
+## 2026-11-06
+
+- **OBS 投影不置顶改成「只警告不拒绝」**（用户 2026-11-06 要求）：原来 `projector.find_projector()` 把 `WS_EX_TOPMOST` 当硬条件，投影一取消「始终置顶」Evo 就当它不存在 —— 主机模式记录子进程不启动，已经在记录时也按「投影消失」暂停截屏。现在拆出 `find_projector_window()`，只按「OBS 进程 + 铺满整屏 + 没最小化」认，置不置顶都返回，`topmost` 变成提示字段（多个候选时优先置顶）。`describe()` 新增 `warning`：设置页「当前状态」和切换来源后的提示都写「没置顶，别的窗口盖住会截到错的画面，建议勾选始终置顶」；记录子进程日志只警告一次（`capture.py`）。能截是因为 dxcam 走 DXGI 桌面复制、截的是屏幕像素，与窗口是否置顶无关。改动全在 `paimiao_cloud/cloud/obs/`（`projector.py` / `capture.py` / `page.py` / `trigger.py` / `__init__.py`），上游 0 字节
+  - 验证：`tests/run_all.py` 全绿（含设置页渲染那几组）；新增 `captures/mode_probe/verify_obs_topmost.py` 用假窗口单测全过 —— 非置顶 `available=True` 带 warning、置顶无 warning、两个都在优先置顶、OBS 小窗不算投影、没开 OBS 提示打开、设置页文案、记录子进程只警告一次
+

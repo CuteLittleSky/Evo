@@ -79,8 +79,8 @@ def inject():
 
 def view():
     """设置页那一栏要显示的全部内容。永不抛异常（渲染期炸了整个设置页就白屏了）。"""
-    status = {"available": False, "reason": "读不到状态", "monitors": [], "projector": None,
-              "topmost": False, "candidates": []}
+    status = {"available": False, "reason": "读不到状态", "warning": "", "monitors": [],
+              "projector": None, "topmost": False, "candidates": []}
     try:
         status = projector.describe()
     except Exception as exc:  # noqa: BLE001
@@ -95,6 +95,7 @@ def view():
              if found else "")
     available = bool(status.get("available"))
     reason = status.get("reason", "")
+    warning = status.get("warning", "")
     return {
         "enabled": source == obs_settings.SOURCE_PROJECTOR,
         "source": source,
@@ -102,6 +103,7 @@ def view():
         "source_projector": obs_settings.SOURCE_PROJECTOR,
         "available": available,
         "reason": reason,
+        "warning": warning,
         "topmost": bool(status.get("topmost")),
         "where": where,
         "monitor_count": len(status.get("monitors") or []),
@@ -117,7 +119,8 @@ def view():
         "_status": {
             "enabled": source == obs_settings.SOURCE_PROJECTOR,
             "ok": available,
-            "text": (f"{where}，已置顶，现在就能截到画面。" if available else reason),
+            "text": (f"{where}，{warning}" if warning
+                     else f"{where}，已置顶，现在就能截到画面。") if available else reason,
             "where": where,
             "reason": reason,
         },
@@ -184,7 +187,7 @@ def _status_view() -> dict:
     if not data["enabled"]:
         return {"enabled": False, "ok": False, "text": ""}
     return {"enabled": True, "ok": data["available"], "text": status_text(data),
-            "where": data["where"], "reason": data["reason"]}
+            "where": data["where"], "reason": data["reason"], "warning": data.get("warning", "")}
 
 
 def status_text(data: dict) -> str:
@@ -211,8 +214,8 @@ def set_source():
             status = {"available": False, "reason": str(exc)}
         if status.get("available"):
             found = status.get("projector") or {}
-            flash(f"已改用 OBS 投影：正在截{_describe_place(found)}。"
-                  "正在记录的话，几秒内生效。", "ok")
+            note = status.get("warning") or "正在记录的话，几秒内生效。"
+            flash(f"已改用 OBS 投影：正在截{_describe_place(found)}。{note}", "ok")
         else:
             flash(f"已改用 OBS 投影，但现在还截不到画面：{status.get('reason', '')}", "error")
     else:
@@ -261,8 +264,9 @@ SECTION = """
              所以模板这里只放首屏的那一份，措辞来自 view()['_status']['text']，只有一处。 #}
           <div class="setting-desc" id="obs-state-text"
                data-ok="{{ '1' if obs.available else '0' }}">{{ obs._status.text }}</div>
-          <div class="setting-desc">投影窗口必须<strong>置顶</strong>（在窗口上右键 → 勾选「始终置顶」），
-            否则会被别的窗口盖住。OBS 关掉、或投影被切走时，
+          <div class="setting-desc">投影窗口<strong>建议置顶</strong>（在窗口上右键 → 勾选「始终置顶」）：
+            不置顶也能截，但别的窗口盖住它会截到错的画面。
+            OBS 关掉、或投影被切走时，
             {% if obs.pause_when_closed %}Evo 会暂停截屏等它回来{% else %}Evo 会退回整屏截取{% endif %}。</div>
         </div>
       </div>

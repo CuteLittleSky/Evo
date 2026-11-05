@@ -120,6 +120,12 @@ class ProjectorCamera:
                     self._log("[OBS 投影] 提示：没能按分辨率确认是哪块屏，如果记错了画面，"
                               "请在设置页看看是不是选错了屏")
             self._state = "projector"
+            # 不置顶只警告不拒绝（2026-11-06 用户决定）：照常截，但提醒一句，
+            # 因为别的窗口一旦盖上来，截到的就是压在上面的那个窗口。
+            if not found.get("topmost"):
+                self._once("not_topmost",
+                           "[OBS 投影] 投影窗口没有置顶：现在能截到，但别的窗口盖住它会截到错的画面；"
+                           "建议在投影窗口上右键，勾选「始终置顶」")
             # 注意用 output_index（dxcam 的序号），不是 monitor_index（第几块屏）——
             # 这两个数不一定相等，2026-10-23 实测就差了 1
             self._rebuild_if_needed(output_idx=found["output_index"], region=found["region"])
@@ -127,7 +133,7 @@ class ProjectorCamera:
 
         # 没找到投影
         if self._state != "fallback":
-            why = "投影窗口不见了（OBS 关了、投影关了，或者取消了「始终置顶」）"
+            why = "投影窗口不见了（OBS 关了、投影关了，或者投影窗口被最小化/切走了）"
             if obs_settings.pause_when_closed():
                 self._log(f"[OBS 投影] {why}，暂停截屏直到它回来（设置页可以改成退回整屏）")
             else:
