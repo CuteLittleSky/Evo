@@ -14,6 +14,7 @@ import test_accounts
 import test_autostart
 import test_aspect
 import test_capture
+import test_code_map
 import test_data_move
 import test_diag
 import test_eliminated
@@ -75,6 +76,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "\"赛季\"页面（录入按钮、待核对、保存、历史赛季表、设置页那一行）": test_seasons_page,
          "诊断工具（截屏、找 Evo、诊断信息、打包、看压缩包）": test_diag,
          "截屏（dxcam 建不起来时：双显卡的笔记本设成节能、改用 mss）": test_capture,
+         "代码地图（docs/代码地图.md 是最新的、每个文件都分了组）": test_code_map,
          "按赛季看（本赛季 / 上赛季：总览页、数据页、战绩页）": test_season_ranges}
 
 try:  # 云同步（微信小程序）的测试只在开发者电脑上，不上传 GitHub（2026-10-24 用户决定）：有就一起跑

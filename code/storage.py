@@ -17,7 +17,7 @@ from pathlib import Path
 
 from paths import DB_PATH
 
-APP_VERSION = "0.5.3"
+APP_VERSION = "0.5.4"
 SCHEMA_VERSION = 9  # 表结构变了就加 1，并在 MIGRATIONS 里写上怎么从旧版本升级
 
 # 列名和类型，顺序也是导出 CSV 时的列顺序
@@ -487,6 +487,17 @@ def name_similarity(a, b):
     return SequenceMatcher(None, name_key(a), name_key(b)).ratio()
 
 
+def truncated_of(a, b):
+    """一个名字是另一个的开头（不管空格，短的至少 2 个字）：其中一个被截短了，是同一个人。返回长的那个，不是返回 None。
+    截短的来历（2026-11-04 测试员的截图）：对局中队友名字刚出现时是逐字出来的动画，只读到前半截；
+    总结页卡片、名字太长时游戏自己截短（"Asuna[dkaldad"）。"""
+    ka, kb = name_key(a), name_key(b)
+    if ka == kb:
+        return None
+    short, full = (a, b) if len(ka) < len(kb) else (b, a)
+    return full if len(name_key(short)) >= 2 and name_key(full).startswith(name_key(short)) else None
+
+
 def sync_names(conn):
     """把对局里出现过、对照表里还没有的名字登记进去，每个新名字先单独算一个账号。
     还没有任何已确认的账号时，最早出现的那个名字直接确认（第一个账号不用问）；
@@ -565,6 +576,29 @@ def answer_name(conn, name, account_id=None):
             account_id = conn.execute("SELECT MAX(account_id) + 1 FROM player_names").fetchone()[0]
     conn.execute("UPDATE player_names SET account_id = ?, confirmed = 1 WHERE name_key = ?", (account_id, key))
     conn.commit()
+
+
+def delete_account(conn, account_id):
+    """删除一个账号的所有记录（设置页"账号"一栏的"删除"，比如不想要的小号，2026-11-05 用户要的）：这个账号所有名字的局
+    （连同队友、各来源读数、武器）、回大厅读到的段位、历史赛季的数据，再把这些名字从对照表里去掉：以后在这个号上再打，
+    当成新名字，弹窗问是不是同一个人。名字不管空格（见 name_key）；还没认出玩家名的局不动。截图由调用的地方删。
+    返回 (删掉的局（行，删截图用）, {"matches": 局数, "lobby": 大厅读数, "seasons": 历史赛季的行})。"""
+    sync_names(conn)  # 名字刚出现、还没登记进对照表时，先登记，不然它的局删不到
+    keys = {r[0] for r in conn.execute("SELECT name_key FROM player_names WHERE account_id = ?", (account_id,))}
+
+    def mine(table, id_column):
+        return [r for r in conn.execute(f"SELECT * FROM {table} WHERE player_name IS NOT NULL ORDER BY {id_column}")
+                if name_key(r["player_name"]) in keys]
+
+    matches, lobby, seasons = mine("matches", "match_id"), mine("lobby_readings", "reading_id"), mine("season_stats", "stat_id")
+    match_ids = [(r["match_id"],) for r in matches]
+    for table in ("matches", "teammates", "readings", "weapon_holds"):
+        conn.executemany(f"DELETE FROM {table} WHERE match_id = ?", match_ids)
+    conn.executemany("DELETE FROM lobby_readings WHERE reading_id = ?", [(r["reading_id"],) for r in lobby])
+    conn.executemany("DELETE FROM season_stats WHERE stat_id = ?", [(r["stat_id"],) for r in seasons])
+    conn.execute("DELETE FROM player_names WHERE account_id = ?", (account_id,))
+    conn.commit()
+    return matches, {"matches": len(matches), "lobby": len(lobby), "seasons": len(seasons)}
 
 
 def write_csv(conn, f):

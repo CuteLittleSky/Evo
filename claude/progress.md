@@ -319,3 +319,13 @@
   - 验证：`captures/season31/verify_update_source.py`（临时数据目录）全过：UPDATE_URL 是 tools.skycraft.cn、官方源不在下载白名单、官方缓存记录被清、派喵记录保留；用 `PYTHONPATH=paimiao_cloud/inject python -c "import update_check"` 模拟托盘启动也确认已换源；`tests/run_all.py` 全绿
   - 用户侧：已经更新成官方 0.5.3 的只能重装派喵版；没更新的，装上含这个修复的构建以后不会再提示官方版（派喵发 0.5.3 后才会提示自己的）
 
+- **合并上游 0.5.4**（v0.5.3 57c3ed7 → v0.5.4 bfee524，24 个提交，2026-11-05 按用户决定挑着合）
+  - 用户拍板：要账号删除、要识别/体验修复、要代码地图和测试SOP、版本号 0.5.4、删掉没人用的 `code/update_patch.py`
+  - **跳过整块 Mirror酱（国内渠道）**：`code/mirrorchyan.py`、`update_check.py` / `updater.py` / `update_patch.py` 里的渠道和增量包、`panel/templates/_update.html` / `base.html` 的渠道 UI、`panel_app.py` 的 `/update/channel`、`/update/mirror-notice-off`、`settings.html` 的「更新渠道」、`.github/workflows/mirrorchyan_release*.yml`、`tools/publish.py` / `release.py` 的 Mirror酱发布、`tests/test_mirrorchyan.py`。我们更新走自己的 tools.skycraft.cn（源码默认地址 + `patch_update_source`）
+  - **直接取上游**：`code/in_match.py`、`post_match.py`、`live_collect.py`、`lobby.py`、`xp_page.py`、`ranks.py`、`sounds.py`、`config/match_start.json`（加「电力区域」、删「破碎月亮」）、`config/xp.json`（静帧参数）、`config/lang/en|zh-TW.json`、`panel/templates/matches.html`、`tests/fake_game.py`、`test_in_match.py`、`test_season31.py`、`test_sounds.py`、`test_accounts.py`
+  - **手工移植**：`storage.py` 加 `truncated_of`（队友名字被截短时算同一人）和 `delete_account`（删一个账号的局/大厅/赛季/对照表，截图由面板删），版本号 0.5.4；`panel_app.py` 加 `POST /accounts/delete` + 两处提示音文案；`settings.html` 加「删除一个账号」表单（只有 ≥2 个账号时出现）；`style.css` 的 `.sr-only` 加 `!important`（修总览页横向滚动条）和 `#delete-account-select`
+  - **代码地图**：`tools/code_map.py` 的 SECTIONS 按我们的树改了（去掉 radar/map_rotation/notice_check/tester/cos 等，加「派喵注入层 paimiao_cloud/」一节、`.github/esa/`、诊断、我们多出来的 tools），重新生成 `docs/代码地图.md`；`tests/run_all.py` 加了 `test_code_map` 组
+  - 验证：`tests/run_all.py` 65 秒全绿（新增「删除一个账号」22 项、代码地图 1 项）；注入专项 `test_regressions.py`、`test_continue_match.py`、`verify_s31_lobby.py`、`verify_anchors_053.py`、`verify_capture_hook_053.py`、`verify_paimiao_rank.py`、`verify_update_source.py` 全过
+
+- **分享卡片底部的站名从 evotracker.cn 换成 apex.skycraft.cn**（2026-11-05 用户要的）：上游 `panel/templates/share/_base.svg` 的品牌行写的是官方站名，派喵用户分享出去的图上会显示官方站；注入层 `cloud/upstream.py` 的 `_patch_template` 里加 `CARD_BRAND_OLD/NEW` 替换（上游文件不动）。验证：渲染 `/share/overview.svg` 里没有 `evotracker.cn`、有 `apex.skycraft.cn`；`tests/test_share.py` 全过
+

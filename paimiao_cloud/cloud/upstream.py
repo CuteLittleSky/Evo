@@ -30,6 +30,11 @@ _NEW_SETTING = "只下载公开的版本号文件"
 _FEEDBACK_START = "{# 意见反馈"
 _FEEDBACK_OPEN = '<div class="feedback">'
 
+# 分享卡片（panel/templates/share/_base.svg）底部原来写的是上游官网 evotracker.cn，
+# 派喵用户分享出去的图上会显示官方站名 —— 换成派喵自己的下载页（2026-11-05 用户要的）。
+CARD_BRAND_OLD = "<span>evotracker.cn</span>"
+CARD_BRAND_NEW = "<span>apex.skycraft.cn</span>"
+
 TELEMETRY_ENABLED = os.environ.get("EVO_PAIMIAO_TELEMETRY", "1") != "0"
 
 _TELEMETRY_START = "{# 匿名统计（telemetry.py）"
@@ -275,6 +280,8 @@ def _install_template_hook(env):
 
 def _patch_template(source):
 
+    if CARD_BRAND_OLD in source:
+        source = source.replace(CARD_BRAND_OLD, CARD_BRAND_NEW)
     if OLD_NO_UPLOAD in source:
         source = source.replace(OLD_NO_UPLOAD, NEW_NO_UPLOAD)
     if OLD_ASK in source:

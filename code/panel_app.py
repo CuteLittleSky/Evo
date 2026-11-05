@@ -1466,7 +1466,7 @@ def autostart_setting():
 SOUND_WHEN = {  # 设置页"提示音"一栏：每一声什么时候响（规则见 live_collect.SoundCues）
     "match_end": "小队打完了（淘汰画面、冠军、右下角出现\"返回大厅\"），提醒你去总结页",
     "summary": "Evo 读到了名次、击杀和伤害，可以离开了",
-    "xp": "进入经验值页时。等最上面的数字不再跳动再离开",
+    "xp": "经验值页的数字停下来、Evo 读到了 RP，可以离开了",
 }
 
 
@@ -1496,7 +1496,7 @@ def sounds_setting():
     """"提示音"开关（默认开）。记录程序每次要响时看一眼，所以马上生效。"""
     on = request.form.get("on") == "1"
     app_settings.set_value(sounds.SETTING_KEY, on)
-    flash("已开启提示音：对局结束、总结页读完了、进入经验值页时各响一声。" if on
+    flash("已开启提示音：对局结束、总结页读完了、经验值页读完了各响一声。" if on
           else "已关闭提示音。", "ok")
     return redirect(url_for("settings"))
 
@@ -1800,6 +1800,28 @@ def move_name():
     else:
         storage.answer_name(db(), name, target["id"])
         flash(f"已把 {name} 并到 {target['name']} 的账号下", "ok")
+    return redirect(url_for("settings"))
+
+
+@app.post("/accounts/delete")
+def delete_account():
+    """设置页"账号"一栏的"删除一个账号"（2026-11-05 用户要的，比如不想要的小号）：account = 账号编号。
+    删这个账号的所有记录（见 storage.delete_account），删前先把数据库备份一份（同"清空所有战绩"），
+    这些局的截图也删（同战绩页删一局，用户决定）。只有 2 个以上账号时才有这一行（只有一个时用"清空所有战绩"）。"""
+    everyone = storage.accounts(db())
+    target = next((a for a in everyone if str(a["id"]) == request.form.get("account", "")), None)
+    if target is None or len(everyone) < 2:
+        flash("没有删除：请选一个账号", "error")
+        return redirect(url_for("settings"))
+    backup = db_path().with_name(f"{db_path().name}.bak-account-{datetime.now():%Y%m%d-%H%M%S}")
+    storage.backup_db(db(), backup)
+    rows, counts = storage.delete_account(db(), target["id"])
+    shots = sum(screenshots.discard(db(), row, removing=True) for row in rows)  # 局已经删了：别的局还在用的截图照样不删
+    if session.get("account") == target["id"]:  # 正在看的就是它：换回默认（最近玩过的账号）
+        session.pop("account")
+    also = "".join(f"、{n} {what}" for n, what in ((counts["lobby"], "次大厅段位"), (counts["seasons"], "条历史赛季数据")) if n)
+    flash(f"已删除账号 {target['name']} 的 {counts['matches']} 局战绩{also}" + ("和这些局的截图" if shots else "")
+          + f"。删除前的数据备份在 {backup}", "ok")
     return redirect(url_for("settings"))
 
 

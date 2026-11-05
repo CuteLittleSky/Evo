@@ -220,6 +220,26 @@
       </form>
       {% endfor %}
       {% endfor %}
+      {% if accounts|length >= 2 %}
+      {# 删除一个账号的所有记录（2026-11-05 用户要的，比如不想要的小号；panel_app.delete_account）：先选账号，"删除"才能点，
+         确认框里写清楚删谁、几局。只有一个账号时没有这一行（用"数据与隐私"里的"清空所有战绩"） #}
+      <form method="post" action="{{ url_for('delete_account') }}" class="setting danger-zone name-row" id="delete-account-form">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div class="setting-text">
+          <div class="setting-name" id="delete-account-name">删除一个账号</div>
+          <div class="setting-desc">比如不想要的小号：它的对局、大厅段位、历史赛季数据{% if not (keep_shots or shots_locked) %}和截图{% endif %}都删掉，删前自动备份数据库。以后在这个号上再打，会当成新名字问你</div>
+        </div>
+        <div class="setting-actions inline">
+          <select name="account" id="delete-account-select" aria-labelledby="delete-account-name">
+            <option value="" selected>选一个账号</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}" data-name="{{ a.name }}" data-games="{{ a.games }}">{{ a.name }}（{{ a.games }} 局）</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="btn btn-danger" id="delete-account-btn">删除</button>
+        </div>
+      </form>
+      {% endif %}
     </section>
     {% endif %}
 
