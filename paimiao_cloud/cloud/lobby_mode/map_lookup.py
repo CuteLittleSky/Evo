@@ -87,25 +87,25 @@ _ENGLISH = {
     "world's edge": "世界尽头",
     "worlds edge": "世界尽头",
     "storm point": "风暴点",
-    "e-district": "残月",          # 国服旧译名；config 的已知地图里它是「残月」
+    "e-district": "电力区域",          # 国服旧译名；config 的已知地图里它是「残月」
     "kings canyon": "诸王峡谷",
     "olympus": "奥林匹斯",
-    "broken moon": "破碎月亮",
+    "broken moon": "残月",
 }
 # 接口里的 code（最稳的字段，大逃杀/排位/活动/混战都带）→ 中文名。
 # 2026-10-24 实测拿到的 code：olympus / broken_moon / kings_canyon / mix_s_gungame_estates，
 # 另外几个按 ApexPacks 的 ALL_MAP_ASSETS 补上；以后出新图就在这里加一行。
 _CODES = {
     "olympus": "奥林匹斯",
-    "broken_moon": "破碎月亮",
+    "broken_moon": "残月",
     "kings_canyon": "诸王峡谷",
     "uhkc": "诸王峡谷",
     "worlds_edge": "世界尽头",
     "des_hu": "世界尽头",
     "storm_point": "风暴点",
     "tropic": "风暴点",
-    "district": "残月",
-    "e_district": "残月",
+    "district": "电力区域",
+    "e_district": "电力区域",
 }
 # 接口给的 nameI18n['zh-CN'] 形如「血之契约（诸王峡谷）」，取括号里那部分再查一次
 _CJK = {
