@@ -536,6 +536,7 @@
     <p class="setting-desc coming">每局结束后的通知、性能模式等功能还在开发中，做好后会出现在这里。</p>
   </div>
 
+  <div class="settings-side">
   <aside class="card about-card" aria-labelledby="h-about">
     <h2 id="h-about">关于 Evo</h2>
     <div class="setting-desc">版本 <span class="num">{{ version }}</span> · AGPL-3.0 开源许可</div>
@@ -559,6 +560,38 @@
       </button>
     </div>
   </aside>
+
+  {# 鸣谢（2026-11-07 用户要求）：特别鸣谢（打赏的人）、开发者、官方合作。名单在 panel_app.THANKS、DEVELOPERS，不联网；
+     开发者的名字点了交给系统浏览器打开 GitHub 主页；派圈助手点了弹出和右上角一样的小程序码（没有小程序码图片时这一项不显示） #}
+  <section class="card credits-card" aria-label="鸣谢">
+    <div class="credit">
+      <h3 class="setting-name">开发者</h3>
+      <ul class="dev-list">
+        {% for dev in developers %}
+        <li><a class="source-link" href="{{ dev.url }}" target="_blank" rel="noopener noreferrer">{{ dev.name }} ↗</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% if partner %}
+    <div class="credit">
+      <h3 class="setting-name">官方合作</h3>
+      <button type="button" class="partner-btn credit-partner" data-partner-open aria-haspopup="dialog">
+        <img class="partner-icon" src="{{ url_for('static', filename=partner_icon) }}" alt="" width="20" height="20">
+        <span class="partner-name">派圈助手</span>
+      </button>
+    </div>
+    {% endif %}
+    {# 特别鸣谢放最下面（用户要求）：浅灰斜体、大小不一；名单空了这一项不显示 #}
+    {% if thanks %}
+    <div class="credit">
+      <h3 class="setting-name">特别鸣谢</h3>
+      <ul class="thanks-cloud">
+        {% for t in thanks %}<li class="t{{ t.size }}">{{ t.name }}</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </section>
+  </div>
 </div>
 
 {# 点"国内渠道"时的说明（2026-11-04 用户写的原文，"Mirror酱""CDK"前后照面板的习惯加了空格） #}

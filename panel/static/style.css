@@ -12,6 +12,7 @@
   --inset: #0D0F13;
   --text: #ECEEF2;
   --muted: #9AA3B2;
+  --thanks: #7D8594;  /* 设置页"特别鸣谢"的浅灰字：比 --muted 淡，和卡片底色的对比度还有 4.8:1 */
   --border: #262C38;
   --row-border: #222733;
   --input-border: #262C38;
@@ -50,6 +51,7 @@
   --inset: #F6F6F3;
   --text: #17191E;
   --muted: #5F6670;
+  --thanks: #6F7680;  /* 设置页"特别鸣谢"的浅灰字：比 --muted 淡，和白色卡片的对比度还有 4.6:1 */
   --border: #E4E4DF;
   --row-border: #EDEDEA;
   --input-border: #D8D8D3;
@@ -591,7 +593,26 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 /* ---------- 设置页 ---------- */
 .settings-layout { display: grid; grid-template-columns: 1fr minmax(280px, 350px); gap: 20px; align-items: start; }
 .settings-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.settings-side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }  /* 右边一列：关于 Evo + 鸣谢 */
 .settings-card, .about-card { padding: 24px; }
+/* 鸣谢卡片（2026-11-07）：三项上下排，中间细线隔开；名字之间至少 8px（ui-ux-pro-max：可点的东西别挤在一起） */
+.credits-card { padding: 8px 24px; }
+.credit { padding: 16px 0; }
+.credit + .credit { border-top: 1px solid var(--row-border); }
+.credit h3 { margin: 0 0 10px; font-size: 14px; }
+.credit .setting-desc { margin: 0; }
+.dev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+/* 特别鸣谢：浅灰字、大小不一（像词云，用户 2026-11-07 要的），每个名字几号字由名字算出来（panel_app.thanks_cloud），每次打开都一样 */
+/* 字体（用户选的）：英文 Georgia 斜体、中文楷体，全部斜过来（中文字体没有斜体，由浏览器斜过来）。都是 Windows 自带的，
+   不加字体文件；没装楷体的英文版 Windows 换成普通字体 */
+.thanks-cloud { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px;
+  color: var(--thanks); line-height: 1.3; font-family: Georgia, "KaiTi", "楷体", "STKaiti", serif; font-style: italic; }
+.thanks-cloud li { overflow-wrap: anywhere; }
+.thanks-cloud .t1 { font-size: 12px; } .thanks-cloud .t2 { font-size: 13px; } .thanks-cloud .t3 { font-size: 15px; }
+.thanks-cloud .t4 { font-size: 17px; } .thanks-cloud .t5 { font-size: 20px; font-weight: 500; }
+.dev-list a { display: inline-block; padding: 2px 0; }
+.dev-list a:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; border-radius: 2px; }
+.credit-partner { margin-left: 0; }
 .settings-card h2, .about-card h2 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .setting + .setting { border-top: 1px solid var(--row-border); }
