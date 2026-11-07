@@ -538,8 +538,8 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .podium-legend .legend-icon { width: 36px; height: 36px; }
 .podium-legend .podium-1 .legend-icon { width: 44px; height: 44px; }
 .podium-combo .combo-icons { gap: 6px; }
-.podium-combo .legend-icon { width: 24px; height: 24px; }
-.podium-combo .podium-1 .legend-icon { width: 28px; height: 28px; }
+.podium-combo .legend-icon { width: 26px; height: 26px; }
+.podium-combo .podium-1 .legend-icon { width: 32px; height: 32px; }
 .podium-name { font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .podium-rate { display: flex; align-items: baseline; gap: 4px; margin-top: 2px; }
 .podium-rate .num { font-size: 20px; font-weight: 600; }
@@ -549,9 +549,14 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .podium-step { --step: var(--p2-bg); align-self: stretch; margin-top: 6px; display: flex; align-items: center; justify-content: center;
   border-top: 3px solid var(--step); border-radius: 6px 6px 0 0; background: color-mix(in srgb, var(--step) 14%, transparent); }
 .podium-step .num { color: var(--step); font-size: 18px; font-weight: 700; }
-/* 第二、第三的台子一样高，只有中间第一名高一截，左右对称（用户 2026-11-08 要的） */
 .podium-1 .podium-step { --step: var(--p1-bg); height: 56px; }
-.podium-2 .podium-step, .podium-3 .podium-step { height: 34px; }
+.podium-2 .podium-step { height: 38px; }
+.podium-3 .podium-step { height: 26px; }
+/* 左右两张卡片（传奇热度、热门组合）的颁奖台一样高（用户 2026-11-08 要的，不然组合那张下面空一块）：
+   头像 + 名字那一块按名次留同样的高度，组合没有名字、头像贴着下面放；"你"那一行也总是留着（见 stats_all.html） */
+.podium-who { justify-content: flex-end; height: 64px; }
+.podium-1 .podium-who { height: 72px; }
+.podium-name { line-height: 20px; }
 .podium + .table-wrap { margin-top: 16px; }
 .podium-rest .rest-rank { width: 28px; padding-right: 0; color: var(--muted); font-size: 15px; font-weight: 700; }
 .combo-icons { display: inline-flex; align-items: center; gap: 10px; vertical-align: middle; }

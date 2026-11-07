@@ -285,9 +285,10 @@ def checks():
     out["第四、第五前面写着名次 4、5（接着台上的 1、2、3）"] = (
         re.findall(r'<td class="rest-rank num">(\d)</td>', hot_card) == ["4", "5"]
         and re.findall(r'<td class="rest-rank num">(\d)</td>', combo_card) == ["4", "5"])
-    you_slots = sum(1 for p in podium(hot_card) if p[1])
-    out["台上有人有\"你\"那一行时，别人留出同样高的空行（左右对称）"] = (
-        you_slots > 0 and hot_card.count('class="podium-meta podium-you-blank" aria-hidden="true"') == 3 - you_slots)
+    blank = 'class="podium-meta podium-you-blank" aria-hidden="true"'
+    out["\"你\"那一行总是留着（没用过的是空行），两张卡片的颁奖台一样高"] = all(
+        len(podium(card)) == 3 and card.count(blank) == 3 - sum(1 for p in podium(card) if p[1])
+        for card in (hot_card, combo_card)) and any(p[1] for p in podium(hot_card))
     out["热门组合：卡片上列前 5 个（前三个在颁奖台上，只放头像，名字在悬停和读屏里），完整的表格 7 个"] = (
         len(card_rows(combo_card)) == 5 and len(podium(combo_card)) == 3 and len(rows_of(combo_card)) == 2
         and podium(combo_card)[0][0] == "、".join(COMBOS[0])
