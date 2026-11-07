@@ -174,11 +174,6 @@ DEVELOPERS = (
     {"name": "黄指导", "url": "https://github.com/AugustHuangMX"},  # 用户
     {"name": "wzx", "url": "https://github.com/wzxlll33"},  # 学弟 wzxlll33
 )
-
-
-def thanks_cloud(names):
-    """特别鸣谢的名字配上字号档位 1–5（像词云那样大小不一，用户要的）。档位由名字本身算出来，每次打开都一样，不随机。"""
-    return [{"name": n, "size": 1 + sum((i + 1) * ord(c) for i, c in enumerate(n)) % 5} for n in names]
 # 总览页"关注我"（2026-10-22 用户要求）：开发者的 B 站、小黑盒主页（不带分享追踪参数的正式地址）。
 # 和"意见反馈"一样交给系统浏览器打开，Evo 自己不联网；图标在 panel/static/brands/（单色，颜色跟随文字）
 FOLLOW_LINKS = (
@@ -1449,7 +1444,7 @@ def settings():
         source_url=SOURCE_URL,
         feedback_url=FEEDBACK_URL,
         feedback_group=FEEDBACK_GROUP,
-        thanks=thanks_cloud(THANKS),
+        thanks=THANKS,
         developers=DEVELOPERS,
         update_auto=app_settings.get("update_auto") is True,
         stats_on=telemetry.consent() is True,

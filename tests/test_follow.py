@@ -7,7 +7,7 @@
 - 设置页"关于 Evo"最下面的"支持我"（2026-10-28）：连着三个弹窗（文字是用户写的原文），最后一个是开发者的微信收款码
 - 右上角"Evo 官方合作小程序：派圈助手"（2026-10-28，每一页都有）：前面是派圈助手的图标，点了弹出小程序码（弹窗、码、扫码说明、关闭）；
   每一页都有；没有小程序码图片时不显示；有图片时两张都是真的 PNG、面板能取到，文件夹里有许可说明
-- 设置页"关于 Evo"下面的鸣谢卡片（2026-11-07）：开发者（链到 GitHub）→ 官方合作（派圈助手，弹同一个小程序码）→ 特别鸣谢（大小不一）
+- 设置页"关于 Evo"下面的鸣谢卡片（2026-11-07）：开发者（链到 GitHub）→ 官方合作（派圈助手，弹同一个小程序码）→ 特别鸣谢
 
 运行：python tests/test_follow.py
 """
@@ -100,7 +100,8 @@ def credits_checks(client):
     _, no_partner = card(partner_qr=lambda: None)
     _, no_thanks = card(partner_qr=lambda: panel_app.PARTNER_QR, THANKS=())
     devs = re.findall(r'<a class="source-link" href="([^"]+)" target="_blank" rel="noopener noreferrer">([^<]+) ↗</a>', credits)
-    sizes = [int(s) for s in re.findall(r'<li class="t(\d)">', credits)]
+    thanks = re.search(r'<ul class="thanks-list">(.*?)</ul>', credits, re.S)
+    thanks = re.findall(r"<li>([^<]+)</li>", thanks.group(1)) if thanks else []
     return {
         "设置页右边一列：\"关于 Evo\"下面是鸣谢卡片": -1 < page.find('class="settings-side"') < page.find("about-card")
             < page.find("credits-card"),
@@ -110,10 +111,7 @@ def credits_checks(client):
             == [(d["name"], d["url"]) for d in panel_app.DEVELOPERS] and all("github.com/" in u for u, _ in devs),
         "官方合作：派圈助手按钮，点了弹出右上角那个小程序码": "data-partner-open" in credits and ">派圈助手<" in credits,
         "没有小程序码图片时不显示\"官方合作\"": ">官方合作<" not in no_partner and ">开发者<" in no_partner,
-        "特别鸣谢：名单里的名字都在，字号 1–5 档": all(f">{n}<" in credits for n in panel_app.THANKS)
-            and len(sizes) == len(panel_app.THANKS) and all(1 <= s <= 5 for s in sizes),
-        "字号由名字算出来，每次打开都一样（不用 Python 每次运行都变的 hash）":
-            [t["size"] for t in panel_app.thanks_cloud(["伯乐相马", "司渊"])] == [4, 2],
+        "特别鸣谢：名单里的名字都在、按顺序，一样大（不带字号档位）": thanks == list(panel_app.THANKS) and bool(thanks),
         "名单空了不显示\"特别鸣谢\"": ">特别鸣谢<" not in no_thanks and ">开发者<" in no_thanks,
     }
 

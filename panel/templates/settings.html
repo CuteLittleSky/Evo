@@ -581,12 +581,12 @@
       </button>
     </div>
     {% endif %}
-    {# 特别鸣谢放最下面（用户要求）：浅灰斜体、大小不一；名单空了这一项不显示 #}
+    {# 特别鸣谢放最下面（用户要求）：浅灰斜体，名字一样大；名单空了这一项不显示 #}
     {% if thanks %}
     <div class="credit">
       <h3 class="setting-name">特别鸣谢</h3>
-      <ul class="thanks-cloud">
-        {% for t in thanks %}<li class="t{{ t.size }}">{{ t.name }}</li>{% endfor %}
+      <ul class="thanks-list">
+        {% for name in thanks %}<li>{{ name }}</li>{% endfor %}
       </ul>
     </div>
     {% endif %}
