@@ -282,6 +282,12 @@ def checks():
         [p[0] for p in podium(hot_card)] == LEGENDS[:3] and [p[3] for p in podium(hot_card)] == [1, 2, 3]
         and rows_of(hot_card) == LEGENDS[3:5] and '<ol class="podium podium-legend" aria-label="前三名">' in hot_card
         and '<span class="sr-only">第 1 名：</span>' in hot_card)
+    out["第四、第五前面写着名次 4、5（接着台上的 1、2、3）"] = (
+        re.findall(r'<td class="rest-rank num">(\d)</td>', hot_card) == ["4", "5"]
+        and re.findall(r'<td class="rest-rank num">(\d)</td>', combo_card) == ["4", "5"])
+    you_slots = sum(1 for p in podium(hot_card) if p[1])
+    out["台上有人有\"你\"那一行时，别人留出同样高的空行（左右对称）"] = (
+        you_slots > 0 and hot_card.count('class="podium-meta podium-you-blank" aria-hidden="true"') == 3 - you_slots)
     out["热门组合：卡片上列前 5 个（前三个在颁奖台上，只放头像，名字在悬停和读屏里），完整的表格 7 个"] = (
         len(card_rows(combo_card)) == 5 and len(podium(combo_card)) == 3 and len(rows_of(combo_card)) == 2
         and podium(combo_card)[0][0] == "、".join(COMBOS[0])

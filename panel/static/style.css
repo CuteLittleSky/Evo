@@ -549,10 +549,11 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .podium-step { --step: var(--p2-bg); align-self: stretch; margin-top: 6px; display: flex; align-items: center; justify-content: center;
   border-top: 3px solid var(--step); border-radius: 6px 6px 0 0; background: color-mix(in srgb, var(--step) 14%, transparent); }
 .podium-step .num { color: var(--step); font-size: 18px; font-weight: 700; }
+/* 第二、第三的台子一样高，只有中间第一名高一截，左右对称（用户 2026-11-08 要的） */
 .podium-1 .podium-step { --step: var(--p1-bg); height: 56px; }
-.podium-2 .podium-step { height: 38px; }
-.podium-3 .podium-step { height: 26px; }
+.podium-2 .podium-step, .podium-3 .podium-step { height: 34px; }
 .podium + .table-wrap { margin-top: 16px; }
+.podium-rest .rest-rank { width: 28px; padding-right: 0; color: var(--muted); font-size: 15px; font-weight: 700; }
 .combo-icons { display: inline-flex; align-items: center; gap: 10px; vertical-align: middle; }
 .combo-name { font-size: 12px; font-weight: 400; }
 .peek-ref { margin: 12px 0 0; color: var(--muted); font-size: 12px; }

@@ -47,6 +47,8 @@
    第四、第五照旧是下面的表格。读屏软件按 1、2、3 的顺序读（HTML 里就是这个顺序，左中右的位置由 CSS 摆）。
    kind = 'legend'：头像 + 名字 + 选用率；'combo'：三个头像（和表格里一样不写名字）+ 选取率 #}
 {% macro podium(items, kind) %}
+{# 有人有"你"那一行时，别人也留出同样高的空行，三个人的内容一样高，左右才对称（2026-11-08 用户觉得不对称） #}
+{% set any_you = items[:3]|selectattr('you_games')|list|length > 0 %}
 <ol class="podium podium-{{ kind }}" aria-label="前三名">
   {% for x in items[:3] %}
   <li class="podium-slot podium-{{ loop.index }}">
@@ -62,12 +64,17 @@
     <div class="podium-meta">场均名次 <span class="num">{{ x.place }}</span></div>
     {% if x.you_games %}
     <div class="podium-meta podium-you">你 <span class="you-value you-{{ x.you_vs or 'same' }}"><span class="num">{{ x.you_place }}</span>{{ versus(x.you_vs) }}</span> · <span class="num">{{ x.you_games }}</span> 局</div>
+    {% elif any_you %}
+    <div class="podium-meta podium-you-blank" aria-hidden="true">&nbsp;</div>
     {% endif %}
     <div class="podium-step" aria-hidden="true"><span class="num">{{ loop.index }}</span></div>
   </li>
   {% endfor %}
 </ol>
 {% endmacro %}
+
+{# 颁奖台下面的表格（第四、第五）最前面一列写名次，接着台上的 1、2、3（2026-11-08 用户要求） #}
+{% macro rest_rank_head() %}<th scope="col" class="rest-rank"><span class="sr-only">名次</span></th>{% endmacro %}
 
 {# 卡片右上角：大家常用的武器记下了几局 #}
 {% macro weapon_games() %}{% if view.weapons %}<span class="muted small">记下了武器的 <span class="num">{{ '{:,}'.format(view.weapon_games) }}</span> 局</span>{% endif %}{% endmacro %}
@@ -177,10 +184,11 @@
   {% if view.legends|length > 3 %}
   <div class="table-wrap">
     <table class="stats-table peek-table podium-rest">
-      <thead><tr><th scope="col">传奇</th>{{ pick_head() }}<th scope="col" class="right">场均名次</th>{{ legend_you_head() }}</tr></thead>
+      <thead><tr>{{ rest_rank_head() }}<th scope="col">传奇</th>{{ pick_head() }}<th scope="col" class="right">场均名次</th>{{ legend_you_head() }}</tr></thead>
       <tbody>
         {% for l in view.legends[3:peek] %}
         <tr>
+          <td class="rest-rank num">{{ loop.index + 3 }}</td>
           <th scope="row"><span class="legend-label">{{ legend_icon(l.icon) }}{{ l.name }}</span></th>
           {{ pick_cell(l.pick_width, l.pick) }}
           <td class="right num">{{ l.place }}</td>
@@ -205,10 +213,11 @@
   {% if view.combos|length > 3 %}
   <div class="table-wrap">
     <table class="stats-table peek-table podium-rest">
-      <thead><tr><th scope="col">组合</th>{{ combo_rate_head() }}<th scope="col" class="right">场均名次</th>{{ combo_you_head() }}</tr></thead>
+      <thead><tr>{{ rest_rank_head() }}<th scope="col">组合</th>{{ combo_rate_head() }}<th scope="col" class="right">场均名次</th>{{ combo_you_head() }}</tr></thead>
       <tbody>
         {% for c in view.combos[3:peek] %}
         <tr>
+          <td class="rest-rank num">{{ loop.index + 3 }}</td>
           <th scope="row">{{ combo_icons(c.legends) }}</th>
           <td class="right num">{{ c.rate }}</td>
           <td class="right num">{{ c.place }}</td>
