@@ -18,11 +18,15 @@ from cloud import state as cloud_state
 ENABLED_KEY = "obs_projector_enabled"
 SOURCE_KEY = "obs_capture_source"
 PAUSE_KEY = "obs_pause_when_projector_closed"
+DEVICE_KEY = "obs_camera_device"
+WS_PORT_KEY = "obs_ws_port"           # 手填端口（空 = 自动读 OBS 配置）
+WS_PASSWORD_KEY = "obs_ws_password"   # 手填密码（空 = 自动读 OBS 配置）
 
 # 来源的取值
 SOURCE_SCREEN = "screen"
 SOURCE_PROJECTOR = "projector"
-SOURCES = (SOURCE_SCREEN, SOURCE_PROJECTOR)
+SOURCE_CAMERA = "camera"        # OBS 虚拟摄像头（2026-11-07 加）
+SOURCES = (SOURCE_SCREEN, SOURCE_PROJECTOR, SOURCE_CAMERA)
 
 
 def _settings():
@@ -47,8 +51,43 @@ def source() -> str:
 
 
 def enabled() -> bool:
-    """是否启用了「OBS 源投影」这个来源。等价于 source() == "projector"。"""
+    """是否启用了「OBS 源投影」这个来源。等价于 source() == "projector"。
+
+    保留旧名字给投影相关代码/托盘用；判断虚拟摄像头请用 is_camera()。
+    """
     return source() == SOURCE_PROJECTOR
+
+
+def is_projector() -> bool:
+    return source() == SOURCE_PROJECTOR
+
+
+def is_camera() -> bool:
+    return source() == SOURCE_CAMERA
+
+
+def camera_device() -> str:
+    """选中的虚拟摄像头设备名；空串 = 自动找 OBS Virtual Camera。"""
+    module = _settings()
+    if module is None:
+        return ""
+    try:
+        return str(module.get(DEVICE_KEY, "") or "")
+    except Exception:
+        return ""
+
+
+def set_camera_device(name: str) -> bool:
+    """改选中的虚拟摄像头设备名（空串 = 自动）。返回是否写进去了。"""
+    module = _settings()
+    if module is None:
+        return False
+    try:
+        module.set_value(DEVICE_KEY, str(name or ""))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log(f"保存虚拟摄像头设备失败：{exc!r}")
+        return False
 
 
 def set_source(value: str) -> bool:
@@ -88,6 +127,42 @@ def set_pause_when_closed(on: bool) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001
         _log(f"保存暂停开关失败：{exc!r}")
+        return False
+
+
+def ws_port() -> str:
+    """手填的 OBS WebSocket 端口；空串 = 自动读 OBS 配置（默认 4455）。"""
+    module = _settings()
+    if module is None:
+        return ""
+    try:
+        return str(module.get(WS_PORT_KEY, "") or "")
+    except Exception:
+        return ""
+
+
+def ws_password() -> str:
+    """手填的 OBS WebSocket 密码；空串 = 自动读 OBS 配置。"""
+    module = _settings()
+    if module is None:
+        return ""
+    try:
+        return str(module.get(WS_PASSWORD_KEY, "") or "")
+    except Exception:
+        return ""
+
+
+def set_ws(port: str, password: str) -> bool:
+    """保存手填的 WebSocket 端口/密码。两个都空 = 改回「自动读 OBS 配置」。"""
+    module = _settings()
+    if module is None:
+        return False
+    try:
+        module.set_value(WS_PORT_KEY, str(port or "").strip())
+        module.set_value(WS_PASSWORD_KEY, str(password or ""))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log(f"保存 OBS WebSocket 设置失败：{exc!r}")
         return False
 
 

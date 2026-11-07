@@ -25,6 +25,7 @@ MARK = "_paimiao_obs_tray_title"
 
 WAITING_OLD = "等待 Apex 启动"
 WAITING_NEW = "等待投影窗口"
+WAITING_CAMERA = "等待虚拟摄像头"
 NOT_TOPMOST_NOTE = " · 投影未置顶"
 
 
@@ -66,17 +67,25 @@ def format_title(title):
         return title
     try:
         from cloud.obs import settings as obs_settings  # noqa: PLC0415
-        if not obs_settings.enabled():
-            return title
+        source = obs_settings.source()
     except Exception:
         return title
-    out = title.replace(WAITING_OLD, WAITING_NEW)
-    if "正在记录" in out:
-        try:
-            from cloud.obs import trigger  # noqa: PLC0415
-            found = trigger.last_projector()
-            if found is not None and not found.get("topmost"):
-                out += NOT_TOPMOST_NOTE
-        except Exception:
-            pass
-    return out
+
+    if source == obs_settings.SOURCE_CAMERA:
+        # 主机等的是 OBS 虚拟摄像头；相机没有「置顶」概念，不加那句提醒
+        return title.replace(WAITING_OLD, WAITING_CAMERA)
+
+    # 投影分支：source 判断为主；再 OR 一下旧的 enabled()，兼容老的验证脚本只改 enabled
+    if source == obs_settings.SOURCE_PROJECTOR or obs_settings.enabled():
+        out = title.replace(WAITING_OLD, WAITING_NEW)   # 等待投影窗口
+        if "正在记录" in out:
+            try:
+                from cloud.obs import trigger  # noqa: PLC0415
+                found = trigger.last_projector()
+                if found is not None and not found.get("topmost"):
+                    out += NOT_TOPMOST_NOTE
+            except Exception:
+                pass
+        return out
+
+    return title

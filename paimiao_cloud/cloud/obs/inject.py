@@ -51,13 +51,38 @@ def install():
 
 
 def _after_import(module):
-    """live_collect 已经导入，它的命名空间里有 dxcam 了，接管它的 create。"""
+    """live_collect 已经导入，接管截屏来源（OBS 投影 / OBS 虚拟摄像头）。
+
+    ⚠ 2026-11-07 实测：上游 0.5.4 起 live_collect **不再 `import dxcam`**，截屏改走
+    `capture.open_camera()`（live_collect.py:669），所以 `getattr(module, "dxcam", None)` 是 None。
+    以前的写法拿不到 dxcam 就 `return`，导致 _patch_collect_log / 投影钩子 / 虚拟摄像头钩子全都没装
+    （投影在现上游其实是失效的）。现在改成：
+      · 有 module.dxcam 就包它；没有就自己 import dxcam 再包（capture.open_camera 内部也是 import dxcam）；
+      · capture.open_camera 的包装和 dxcam 无关，**一定要装**（虚拟摄像头靠它）。
+    任何一步失败都只写日志，绝不让记录程序起不来。
+    """
+    from cloud.obs import capture as obs_capture  # noqa: PLC0415
+
     dxcam_module = getattr(module, "dxcam", None)
     if dxcam_module is None:
-        return
-    from cloud.obs import capture as obs_capture  # noqa: PLC0415
-    if obs_capture.install(dxcam_module, log=_log_now):
-        _log("[OBS 投影] 已接管截屏（设置里选「OBS 投影」时截那块屏，否则照旧整屏）")
+        try:
+            import dxcam as dxcam_module  # noqa: PLC0415  记录子进程里本来就要用
+        except Exception:
+            dxcam_module = None
+    if dxcam_module is not None:
+        try:
+            if obs_capture.install(dxcam_module, log=_log_now):
+                _log("[OBS 投影] 已接管截屏（设置里选「OBS 投影」时截那块屏，否则照旧整屏）")
+        except Exception as exc:  # noqa: BLE001
+            _log(f"[OBS 投影] 接管 dxcam 失败（不影响其它）：{exc!r}")
+
+    # 虚拟摄像头：包 capture.open_camera（不依赖 dxcam）
+    try:
+        if obs_capture.install_open_camera(getattr(module, "capture", None), log=_log_now):
+            _log("[OBS 虚拟摄像头] 已接管截屏来源（选「OBS 虚拟摄像头」时读 OBS 的虚拟摄像头）")
+    except Exception as exc:  # noqa: BLE001
+        _log(f"[OBS 虚拟摄像头] 接管 capture.open_camera 失败（不影响其它）：{exc!r}")
+
     _patch_collect_log(module)
     _patch_dedupe(module)
 

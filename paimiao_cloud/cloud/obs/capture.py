@@ -239,3 +239,46 @@ def install(dxcam_module, log=print):
     dxcam_module.create = create
     _patched = True
     return True
+
+
+def install_open_camera(capture_module, log=print):
+    """把记录子进程里的 `capture.open_camera` 换成「选 OBS 虚拟摄像头时读 DirectShow 设备」。
+
+    幂等；capture_module 为空（上游结构变了）时返回 False（只写日志，不影响记录）。
+    选整屏 / OBS 投影时原样转发给上游 open_camera —— 投影那条仍由 install() 包住的
+    dxcam.create 生效（那个包装只在上游 open_camera 内部调 dxcam.create 时才触发）。
+    """
+    if capture_module is None:
+        return False
+    real = getattr(capture_module, "open_camera", None)
+    if real is None or getattr(real, "_paimiao_vcam", False):
+        return False
+
+    def open_camera(*args, **kwargs):
+        try:
+            camera_mode = obs_settings.is_camera()
+        except Exception:
+            camera_mode = False
+        if not camera_mode:
+            return real(*args, **kwargs)
+        # 记录子进程里是 open_camera(log)，第一个位置参数就是日志函数
+        logf = kwargs.get("log") or (args[0] if args and callable(args[0]) else log)
+        try:
+            from cloud.capture import frame as vcam  # noqa: PLC0415
+            return vcam.open_camera(log=logf, wanted=obs_settings.camera_device())
+        except Exception as exc:  # noqa: BLE001  打开失败绝不能把记录拖崩：返回空相机
+            try:
+                logf(f"[OBS 虚拟摄像头] 打开虚拟摄像头失败：{exc!r}")
+            except Exception:
+                pass
+            try:
+                from cloud.capture import frame as vcam
+                return (vcam.DirectShowCamera(None, "", log=logf),
+                        {"截法": "directshow", "directshow": str(exc), "设备": ""})
+            except Exception:
+                return real(*args, **kwargs)
+
+    open_camera._paimiao_vcam = True  # type: ignore[attr-defined]
+    open_camera._paimiao_real = real  # type: ignore[attr-defined]
+    capture_module.open_camera = open_camera
+    return True

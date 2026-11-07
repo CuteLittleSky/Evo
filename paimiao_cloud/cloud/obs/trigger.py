@@ -159,6 +159,13 @@ def _after_import(module):
         if _patch(module):
             patched.append(module.__name__)
     looped = _patch_loop(module)
+    # 退出兜底（2026-11-07）：包 Recorder.quit / PanelServer.close / Icon.stop，正常退出卡住时强退。
+    try:
+        from cloud import quit_guard  # noqa: PLC0415
+        if quit_guard.install(module, log=_log):
+            _log("[退出守护] 已接管退出：正常收尾超过 12 秒会自动结束进程")
+    except Exception as exc:  # noqa: BLE001 注入失败绝不能让退出流程更糟
+        _log(f"[退出守护] 注入失败（不影响退出流程）：{exc!r}")
     if patched:
         tail = "，记录循环改用投影判断" if looped else "（记录循环没换成，仅 game_running 生效）"
         _log(f"[主机模式] 启动条件已接管（{'、'.join(patched)}）{tail}："
@@ -189,8 +196,12 @@ def _patch(module) -> bool:
 
     def game_running(*args, **kwargs):
         recording = kwargs.pop("recording", False)
-        if recording and obs_settings.enabled() and projector_running():
-            return True
+        if recording:
+            source = obs_settings.source()
+            if source == obs_settings.SOURCE_PROJECTOR and projector_running():
+                return True
+            if source == obs_settings.SOURCE_CAMERA:
+                return _camera_active()
         return real(*args, **kwargs)
 
     setattr(game_running, _MARK, True)
@@ -237,7 +248,9 @@ def _patch_loop(module) -> bool:
             state = (bool(game), bool(want), bool(self.paused), bool(self.held))
             if state != last_state:
                 last_state = state
-                _log(f"[主机模式] 第 {_TICKS} 次判断：投影={'有' if game else '没有'}"
+                label = ("虚拟摄像头" if obs_settings.is_camera()
+                         else ("投影" if obs_settings.is_projector() else "游戏"))
+                _log(f"[主机模式] 第 {_TICKS} 次判断：{label}={'有' if game else '没有'}"
                      f" paused={self.paused} held={self.held} 记录中={self._recording()}"
                      f" 该记录={bool(want)}")
             if want and not self._recording():
@@ -305,6 +318,32 @@ def projector_running() -> bool:
     _LAST_PROJECTOR = found
     _LAST_PROBE = time.monotonic()
     return found is not None
+
+
+def obs_running() -> bool:
+    """OBS 进程在不在（选「OBS 虚拟摄像头」时用它当「该不该记录」）。只读进程名。
+
+    虚拟摄像头的画面来自 OBS，OBS 一关就没有画面，所以这时直接按 OBS 进程判断，
+    不再退回 Apex 进程（PC 版 Apex 进程即使开着，只要 OBS 关了，虚拟摄像头也没画面）。
+    """
+    try:
+        from game_detect import process_names  # noqa: PLC0415  上游模块，只读
+        return bool(process_names() & {"obs64.exe", "obs.exe"})
+    except Exception as exc:  # noqa: BLE001
+        _log(f"[主机模式] 查 OBS 进程失败，这次当作没有：{exc!r}")
+        return False
+
+
+def _camera_active() -> bool:
+    """camera 来源：优先用 OBS WebSocket 精确判断「虚拟摄像头开没开」；连不上退回 OBS 进程判断。"""
+    try:
+        from cloud.obs import obs_ws  # noqa: PLC0415
+        active = obs_ws.virtual_cam_active()
+        if active is not None:
+            return bool(active)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"[主机模式] 查 OBS WebSocket 失败，改用进程判断：{exc!r}")
+    return obs_running()
 
 
 def last_projector(max_age: float = 12.0):

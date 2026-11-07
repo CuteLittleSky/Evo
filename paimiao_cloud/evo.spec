@@ -45,6 +45,26 @@ _HIDDEN = [
     "summary_page",     # summary_rows 包它（上游模块，主程序不一定导入过）
 ]
 
+# Evo 只用 onnxruntime(RapidOCR)，从不使用 torch/paddle 等备用推理引擎。但 RapidOCR 的
+# inference_engine 里有 pytorch/paddle/tensorrt/mnn/openvino 这些**可选**引擎，PyInstaller 静态
+# 分析仍会去 import 它们（2026-11-07 实测：import torch 卡在 torch._load_dll_libraries，
+# 直接把打包卡死；paddle 还会额外带进 scipy/pandas/pyarrow/llvmlite 等 1.8GB+ 依赖）。
+# 排除这些引擎和它们的大依赖，既避免卡死/崩溃，也把体积降回正常。
+_EXCLUDES = [
+    # RapidOCR 的备用引擎（只用 onnx 时才不会被 import）
+    "rapidocr.inference_engine.pytorch",
+    "rapidocr.inference_engine.paddle",
+    "rapidocr.inference_engine.tensorrt",
+    "rapidocr.inference_engine.mnn",
+    "rapidocr.inference_engine.openvino",
+    # 深度学习/科学计算大包（Evo 用不到）
+    "torch", "torchvision", "torchaudio", "torch_npu", "functorch",
+    "paddle", "paddlepaddle", "paddleclas", "paddleocr",
+    "tensorflow", "tensorflow_intel", "tensorboard",
+    "numba", "llvmlite", "pyarrow", "pandas", "scipy", "sympy", "sqlalchemy",
+    "sklearn", "skimage", "matplotlib", "IPython",
+]
+
 _RealAnalysis = Analysis
 
 
@@ -59,6 +79,9 @@ def Analysis(*args, **kwargs):                              # noqa: N802  (PyIns
     hidden = list(kwargs.get("hiddenimports") or [])
     hidden.extend(h for h in _HIDDEN if h not in hidden)
     kwargs["hiddenimports"] = hidden
+    excludes = list(kwargs.get("excludes") or [])
+    excludes.extend(e for e in _EXCLUDES if e not in excludes)
+    kwargs["excludes"] = excludes
     return _RealAnalysis(*args, **kwargs)
 
 

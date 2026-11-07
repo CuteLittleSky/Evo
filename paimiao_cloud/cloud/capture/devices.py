@@ -34,9 +34,11 @@ VT_EMPTY = 0
 
 # 友好名属性：{FriendlyName GUID, PID=0}
 _FRIENDLY = "{A45C254E-DF1C-4EFD-8020-67D146A850E0}"
-_FRIENDLY_PID = 14
+# IPropertyBag 的属性名是**字符串**，不是数字 PID。2026-11-07 实测：写成数字 "14"、
+# 或把 VARIANT 的指针放在偏移 16，读出来永远是空；改成 "FriendlyName" + 偏移 8 才读到。
+_FRIENDLY_PID = "FriendlyName"
 _DEVICE_PATH = "{A45C254E-DF1C-4EFD-8020-67D146A850E0}"
-_DEVICE_PATH_PID = 15
+_DEVICE_PATH_PID = "DevicePath"
 
 _ole32 = ctypes.WinDLL("ole32")
 _oleaut32 = ctypes.WinDLL("oleaut32")   # SysAllocString / SysFreeString 在 oleaut32，不在 ole32
@@ -84,12 +86,12 @@ class _BStrBlob(ctypes.Structure):
 class _VARIANT(ctypes.Structure):
     """VARIANT 只用得到 vt（类型）和 BSTR 那一格。
 
-    64 位下 BSTR 在偏移 16（vt 2 字节 + 3 个保留字 + 8 字节的指针格），
-    所以这里留两份空白再放指针，读数时用 `value` 取 BSTR。
+    64 位下：vt / wReserved1 / 2 / 3 共 8 字节，BSTR 是指针，紧跟在偏移 8（union 的第一格）。
+    2026-11-07 实测：原来多留一个 pad 把指针放到偏移 16，读出来永远是空 —— 去掉就对了。
     """
 
     _fields_ = [("vt", wintypes.WORD), ("r1", wintypes.WORD), ("r2", wintypes.WORD),
-                ("r3", wintypes.WORD), ("pad", c_void_p), ("value", c_void_p)]
+                ("r3", wintypes.WORD), ("value", c_void_p)]
 
 
 def _release(ptr) -> None:
@@ -213,3 +215,18 @@ def list_devices() -> list[dict]:
             _release(dev_enum)
         _release(enum_ptr)
     return out
+
+
+OBS_NAME_HINT = "obs virtual camera"
+
+
+def find_obs(devices=None) -> dict | None:
+    """在视频设备里找 OBS 的虚拟摄像头。传 devices 可避免重复枚举。
+
+    按友好名不区分大小写匹配 "obs virtual camera"；返回值就是 list_devices() 的一项
+    （index 即 OpenCV(CAP_DSHOW) 要用的设备号，2026-11-07 实测两者顺序一致）。
+    """
+    for d in (list_devices() if devices is None else devices):
+        if OBS_NAME_HINT in (d.get("name") or "").lower():
+            return d
+    return None
