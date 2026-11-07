@@ -527,6 +527,32 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .peek-table .pick-col { width: 40%; min-width: 120px; }
 .peek-table .pick-bar { min-width: 48px; }
 .peek-table .stats-name { max-width: 180px; }
+/* 全体玩家：传奇热度、热门组合的前三名像颁奖台（2026-11-08 用户要求）。HTML 里是 1、2、3 的顺序（读屏照这个读），
+   用 grid 摆成 左 2、中 1、右 3；台子第一名最高，所以中间那位站得最高。台子颜色和名次的颜色一样：冠军红、第 2–3 名紫，
+   颜色之外台子上写着名次（不只靠颜色）。第四、第五照旧是下面的表格 */
+.podium { list-style: none; margin: 4px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-areas: "second first third"; align-items: end; gap: 12px; }
+.podium-slot { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; text-align: center; }
+.podium-1 { grid-area: first; } .podium-2 { grid-area: second; } .podium-3 { grid-area: third; }
+.podium-who { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.podium-legend .legend-icon { width: 36px; height: 36px; }
+.podium-legend .podium-1 .legend-icon { width: 44px; height: 44px; }
+.podium-combo .combo-icons { gap: 6px; }
+.podium-combo .legend-icon { width: 24px; height: 24px; }
+.podium-combo .podium-1 .legend-icon { width: 28px; height: 28px; }
+.podium-name { font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.podium-rate { display: flex; align-items: baseline; gap: 4px; margin-top: 2px; }
+.podium-rate .num { font-size: 20px; font-weight: 600; }
+.podium-1 .podium-rate .num { font-size: 24px; }
+.podium-cap, .podium-meta { color: var(--muted); font-size: 12px; }
+.podium-you .you-value { gap: 2px; }
+.podium-step { --step: var(--p2-bg); align-self: stretch; margin-top: 6px; display: flex; align-items: center; justify-content: center;
+  border-top: 3px solid var(--step); border-radius: 6px 6px 0 0; background: color-mix(in srgb, var(--step) 14%, transparent); }
+.podium-step .num { color: var(--step); font-size: 18px; font-weight: 700; }
+.podium-1 .podium-step { --step: var(--p1-bg); height: 56px; }
+.podium-2 .podium-step { height: 38px; }
+.podium-3 .podium-step { height: 26px; }
+.podium + .table-wrap { margin-top: 16px; }
 .combo-icons { display: inline-flex; align-items: center; gap: 10px; vertical-align: middle; }
 .combo-name { font-size: 12px; font-weight: 400; }
 .peek-ref { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
