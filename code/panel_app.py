@@ -1436,7 +1436,6 @@ def settings():
         keep_shots=app_settings.get(screenshots.KEEP_ALL_KEY, False) is True,
         shots_locked=screenshots.in_project(),  # 用源码运行：永远保留全部，开关和删除按钮都不能用
         recording=recording is not None,
-        organize_count=screenshots.organizable_count(skip=recording),
         clean_count=clean.deleted,
         clean_convert=clean.converted,
         clean_size=size_text(clean.freed),
@@ -1711,17 +1710,6 @@ def clean_shots():
         flash(f"{stuck} 张截图没处理（可能正被别的程序打开），关掉后再试一次", "error")
     else:
         flash("没有可以删的截图", "ok")
-    return redirect(url_for("settings"))
-
-
-@app.post("/settings/organize-shots")
-def organize_shots():
-    """把以前平铺存放的截图按画面类型整理；正在记录的文件夹不动。"""
-    if screenshots.in_project():
-        abort(400)
-    moved = screenshots.organize(db(), skip=screenshots.recording_folder())
-    flash(f"已按画面类型整理 {moved} 张截图，战绩里的截图链接已同步更新。" if moved
-          else "没有需要整理的旧截图。", "ok")
     return redirect(url_for("settings"))
 
 
