@@ -127,7 +127,7 @@
     - 一轮多约 75 次请求（共约 120 次、十个小时抓完，24 小时一轮够用）
     - 本机看效果：`node shots_team.js <文件夹> Team_Liquid [light] [en]`（样本是 11-07 用 `demo-data/pro/fetch_teams.mjs` 抓的 9 支队，用法见 `miniprogram/paiquan-preview/README.md`「战队页」）。用户还没看过
   - 剩下：
-    - 等部署 `apex`（`LIQUIPEDIA_API_KEY` 11-08 用户看到已经配好）；约 10 小时后在正式版里看战队页和照片。11-08 用户看控制台还没有 `pro_players`、`pro_teams`：抓取没跑过（这几个集合代码第一次写入时自己建，不用手动建）。部署后 5–10 分钟看 `pro_meta` 出现没有；11-08 用户看控制台：**线上 `apex` 没有定时触发器**（代码其实已经部署过，有 `proSync.js`，只是从没被触发）。配置已加并推送（`cloudfunctions/apex/config.json`，派圈 `648de92`），部署后在开发者工具里右键「上传触发器」。`tracked_players` 没建，定时器按空名单跳过（以后人多了要防 20 秒超时：选手数据排在轮询后面）。命令行部署到他的环境失败：`cloud functions deploy` 报 `ResourceNotFound.Namespace`（list、info、download 都行），试开发者工具右键「上传并部署：云端安装依赖」，也不行就请合作者部署；数据抓好再发小程序新版本
+    - 等部署 `apex`（`LIQUIPEDIA_API_KEY` 11-08 用户看到已经配好）；约 10 小时后在正式版里看战队页和照片。11-08 用户看控制台还没有 `pro_players`、`pro_teams`：抓取没跑过（这几个集合代码第一次写入时自己建，不用手动建）。部署后 5–10 分钟看 `pro_meta` 出现没有；11-08 用户看控制台：**线上 `apex` 没有定时触发器**（代码其实已经部署过，有 `proSync.js`，只是从没被触发）。配置已加并推送（`cloudfunctions/apex/config.json`，派圈 `648de92`），部署后在开发者工具里右键「上传触发器」。`tracked_players` 没建，定时器按空名单跳过（以后人多了要防 20 秒超时：选手数据排在轮询后面）。命令行部署到他的环境报 `ResourceNotFound.Namespace`（list、info、download 都行），要用开发者工具右键「上传并部署：云端安装依赖」。11-08 用户部署好了 `apex`、`evo_mp`，下载核对过和 `main`（`648de92`）一致；数据抓好再发小程序新版本
     - 用户说上线这几步做完再讨论：`pro_events` 读不到（见上）、测试环境欠费和那 242 张没用的照片
     - 告诉合作者（要部署 `apex`；Key 已经配好，不用再加）
     - 比赛页按懂球帝 / 虎扑的方向重构：方案先给用户看（赛事切换、积分榜、选手榜、战队页、选手页……）
@@ -135,7 +135,7 @@
     - 用户定的：这一届的 39 支队用 ALS 的队标，其他队从 Liquipedia 补齐；放四处：战队页大卡、选手页大卡现役战队、选手页战队经历每一行、比赛页冠军卡队名前
     - 851 支队有队标（Apex 维基全部战队里有真队标的），压好的在 `E:\Evo\assets\队标\v1`（851 个 PNG、4.4 MB，不进 git），放云存储（几百个打进分包会超 2 MB）
     - 本机看效果：`$env:PAIQUAN_COPY="copy-logos"` 再 `node demo-data\pro\export.mjs` + `python make_copy.py`，开发者工具用 `--auto-port 9421` 开 `copy-logos`，截图脚本加 `$env:AUTO_PORT="9421"`（README「战队队标」）
-    - 剩下：合作者部署 `apex` + 上传小程序新版本，线上才有队标（先后都安全：旧版小程序不看新字段，新版小程序拿不到队标地址就写缩写）。851 个队标 11-08 已传到合作者云存储 `pro/logos/v1/`，逐字节核对过；本机 `copy-logos` 副本用完可删
+    - 剩下：`apex` 11-08 已部署；等数据抓好上传小程序新版本，线上才有队标（先后都安全：旧版小程序不看新字段，新版小程序拿不到队标地址就写缩写）。851 个队标 11-08 已传到合作者云存储 `pro/logos/v1/`，逐字节核对过；本机 `copy-logos` 副本用完可删
 - [ ] **整理派圈助手的文件结构**（11-07 开始，用户说已和合作者说好；用户负责首页、电竞页面、Evo 相关页面、「我的」页）：
   - 用户定的四步，先做 1、2：① 三个小游戏搬进分包 `games/`；② 主包的离线数据快照从 `utils/` 搬到 `data/`；③ `app.wxss`（50 KB，大部分是地图页、战绩页专用）拆到各页面；④ 整理根目录文档（`START-HERE.md`、`FILE-INDEX.md` 已过时）。比赛页、`i18n.js` 改得最勤，这次不动；云函数、`core.js` 两份也不动
   - 做到哪了（11-07）：1、2 做完（`2caf765` 小游戏进分包、`7e7a481` 数据进 `data/`、`14003df` 旧位置又冒出数据文件就报错），用户同意后**已合回派圈 `main` 并推送**（`43e3796`）。主包按文件大小算 1.66 MB → 约 1.21 MB。33 个测试文件全过；本机测试副本在开发者工具模拟器里点过首页、比赛、战绩、小游戏和三个玩法页，没有报错
@@ -147,13 +147,13 @@
   - 和设计稿不一样的：卡片说明照实写"会传队友名字、不传截图"（设计稿写"不上传队友名字"，和 `evo_pc` 实际传的不符）；这个赛季还没有段位时「赛季最高」那格不出；分享卡片默认不显示游戏名（以前就不带）；隐私说明打不开微信后台的指引时弹一段本地说明（文案照实写了 openid、「大家在玩什么」汇总所有人的对局），请用户看一眼措辞
   - `evo_mp` 改了（`me` 多回统计、`home` 多回游戏名、`stats.js` 加 `SEASONS`）：要部署到合作者环境；新赛季要在 `SEASONS` 加一行（Evo `config/seasons.json` 的说明里写了）
   - 本机看效果：`miniprogram/paiquan-preview` 的 `node shots_me.js <文件夹> [theme] [lang]`（evo_mp 已部署到测试环境的 `ping`）
-  - 剩下：部署 `evo_mp` 到合作者环境（用户问过能不能自己部署：账号看得到他的云函数，真部署还没试过；11-08 主文件夹 `E:\paiquan-miniprogram` 已切回 `main`，从那里部署）→ 上传小程序新版本。上线前用户真机看一眼：QQ 扫群码（OpenCV 认不出 QQ 的圆点样式）、隐私说明的措辞
+  - 剩下：`evo_mp` 11-08 已部署 → 上传小程序新版本。上线前用户真机看一眼：QQ 扫群码（OpenCV 认不出 QQ 的圆点样式）、隐私说明的措辞
 - [ ] **比赛页照用户的「赛季进度条」设计稿改版**（11-08，用户给的 HTML 设计稿）：做完。11-08 用户同意，**已合回派圈 `main` 并推送**（合并提交 `bdb543b`；含 `065a05a` 云端数据、`a5a037e` 页面、`45a979b` 修正、`4c17448` CN 名单），本机工作目录 `E:\paiquan-season` 和分支 `feat/matches-season` 删了
   - 用户定的：原来比赛页的三块（S2 季后赛最终成绩、下一场比赛、ALGS 职业赛场）挪进「这个赛季」每一站的详情页 `pro/event`；小比赛**只收中国的**（Liquipedia `locations` 有 China）；**加一张自己录入比赛的表**（集合 `pro_manual_events`）；「所有 CN 战队」**只用手动名单**（集合 `pro_cn_teams`，初始名单是设计稿的 14 支：派圈 `tools/pro_cn_teams_import.json`，控制台导入）
   - 和设计稿不一样的（数据没有）：只写日期不写几点（Liquipedia 没有开打时间）；"进行中"不写第几局；国内小比赛 Liquipedia 2026 年只收了 4 场（B 站 Stellar Cup 第 7、8 季，VK 两场），别的靠自己录入；设计稿里的星火杯、Challenger Circuit 这些是示例
-  - 上线要做：合作者部署 `apex`；控制台导入 `pro_cn_teams`；自己录入的比赛在 `pro_manual_events` 加（字段见派圈 `AI-CONTEXT.md` §18「比赛页」）。换赛季要改 `proSeason.js` 的 `SEASON` 等（同一节写了）
+  - 上线要做：部署 `apex`（11-08 已做）；控制台导入 `pro_cn_teams`；自己录入的比赛在 `pro_manual_events` 加（字段见派圈 `AI-CONTEXT.md` §18「比赛页」）。换赛季要改 `proSeason.js` 的 `SEASON` 等（同一节写了）
   - 本机看效果：派圈 `main` 的代码 `python make_copy.py`（在别的工作目录时用 `PAIQUAN_SRC` 指过去），`node shots_season.js <文件夹> [theme] [lang]`；样本 `demo-data/pro/fetch_season.mjs`（约 7 个请求）
-  - 剩下：合作者部署 `apex`；用户在控制台导入 `pro_cn_teams`、按需在 `pro_manual_events` 加国内比赛；TEC 用户 11-08 定了不再显示（名单去掉 Titan Esports Club，剩 13 支，派圈 main `7db7cc1`，已推送）
+  - 剩下：`apex` 11-08 已部署；用户在控制台导入 `pro_cn_teams`、按需在 `pro_manual_events` 加国内比赛；TEC 用户 11-08 定了不再显示（名单去掉 Titan Esports Club，剩 13 支，派圈 main `7db7cc1`，已推送）
 - [ ] 要用户 / 合作者定的：英文名（导航栏现在写 "Paiquan"）
 - 第一版先不做（10-28 用户定，以后再说）：「我的」页改版（⚙ 语言、主题现在只在「我的」和「全部地图」里有）；隐私说明写上「大家在玩什么」用到所有 Evo 玩家的对局
 - 我们自己的小程序 EVO Tracker：10-26 起搁置，剩下的待办在 `docs/小程序.md`"搁置时还没做的"
