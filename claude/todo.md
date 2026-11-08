@@ -148,6 +148,13 @@
   - `evo_mp` 改了（`me` 多回统计、`home` 多回游戏名、`stats.js` 加 `SEASONS`）：要部署到合作者环境；新赛季要在 `SEASONS` 加一行（Evo `config/seasons.json` 的说明里写了）
   - 本机看效果：`miniprogram/paiquan-preview` 的 `node shots_me.js <文件夹> [theme] [lang]`（evo_mp 已部署到测试环境的 `ping`）
   - 剩下：用户真机看效果（11-08 给了预览码；顺手用 QQ 扫一下群码，OpenCV 认不出 QQ 的圆点样式）→ 推送合并（等用户点头）；合作者部署 `evo_mp`
+- [ ] **比赛页照用户的「赛季进度条」设计稿改版**（11-08，用户给的 HTML 设计稿）：做完，派圈分支 `feat/matches-season`（单独的工作目录 **`E:\paiquan-season`**，从 `origin/main` 开的），提交 `065a05a` 云端数据、`a5a037e` 页面、`45a979b` 修正、`4c17448` CN 名单，**还没推送、没合回 `main`**
+  - 用户定的：原来比赛页的三块（S2 季后赛最终成绩、下一场比赛、ALGS 职业赛场）挪进「这个赛季」每一站的详情页 `pro/event`；小比赛**只收中国的**（Liquipedia `locations` 有 China）；**加一张自己录入比赛的表**（集合 `pro_manual_events`）；「所有 CN 战队」**只用手动名单**（集合 `pro_cn_teams`，初始名单是设计稿的 14 支：派圈 `tools/pro_cn_teams_import.json`，控制台导入）
+  - 和设计稿不一样的（数据没有）：只写日期不写几点（Liquipedia 没有开打时间）；"进行中"不写第几局；国内小比赛 Liquipedia 2026 年只收了 4 场（B 站 Stellar Cup 第 7、8 季，VK 两场），别的靠自己录入；设计稿里的星火杯、Challenger Circuit 这些是示例
+  - 上线要做：合作者部署 `apex`；控制台导入 `pro_cn_teams`；自己录入的比赛在 `pro_manual_events` 加（字段见派圈 `AI-CONTEXT.md` §18「比赛页」）。换赛季要改 `proSeason.js` 的 `SEASON` 等（同一节写了）
+  - 和 `feat/me-redesign` 合并时会在 `i18n.js`、`app.json`、`static.test.mjs`、文档的测试数上冲突（都是各加各的，好合）；做队标的窗口在 `E:\paiquan-logos`（`feat/pro-logos`）
+  - 本机看效果：`$env:PAIQUAN_SRC="E:/paiquan-season"; python make_copy.py`，`node shots_season.js <文件夹> [theme] [lang]`；样本 `demo-data/pro/fetch_season.mjs`（约 7 个请求）
+  - 剩下：用户看效果 → 推送合并（等用户点头）
 - [ ] 要用户 / 合作者定的：英文名（导航栏现在写 "Paiquan"）
 - 第一版先不做（10-28 用户定，以后再说）：「我的」页改版（⚙ 语言、主题现在只在「我的」和「全部地图」里有）；隐私说明写上「大家在玩什么」用到所有 Evo 玩家的对局
 - 我们自己的小程序 EVO Tracker：10-26 起搁置，剩下的待办在 `docs/小程序.md`"搁置时还没做的"
