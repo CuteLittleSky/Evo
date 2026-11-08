@@ -237,7 +237,10 @@ def _patch_loop(module) -> bool:
         last_state = None
         while not self._quit.is_set():
             # ↓ 和上游 evo_app.py:304 唯一的不同：多传 recording=True
-            game = ask(self.game_names, recording=True)
+            if obs_settings.source() == obs_settings.SOURCE_CARD:
+                game = _card_wanted(self)      # 采集卡直读：有帧才算
+            else:
+                game = ask(self.game_names, recording=True)
             want = (game and not self.paused and not self.held
                     and time.monotonic() - self._last_error > self._retry_after)
             _TICKS += 1
@@ -248,8 +251,9 @@ def _patch_loop(module) -> bool:
             state = (bool(game), bool(want), bool(self.paused), bool(self.held))
             if state != last_state:
                 last_state = state
-                label = ("虚拟摄像头" if obs_settings.is_camera()
-                         else ("投影" if obs_settings.is_projector() else "游戏"))
+                label = ("采集卡" if obs_settings.is_card()
+                         else ("虚拟摄像头" if obs_settings.is_camera()
+                               else ("投影" if obs_settings.is_projector() else "游戏")))
                 _log(f"[主机模式] 第 {_TICKS} 次判断：{label}={'有' if game else '没有'}"
                      f" paused={self.paused} held={self.held} 记录中={self._recording()}"
                      f" 该记录={bool(want)}")
@@ -344,6 +348,16 @@ def _camera_active() -> bool:
     except Exception as exc:  # noqa: BLE001
         _log(f"[主机模式] 查 OBS WebSocket 失败，改用进程判断：{exc!r}")
     return obs_running()
+
+
+def _card_wanted(rec) -> bool:
+    """采集卡直读：为了让游戏里不断连，Evo 开着就一直记录。
+
+    以前按「有帧才算」会在偶尔读到纯黑时判定没信号 → 停止记录，停掉后探测又看到画面 → 再开，
+    于是在游戏里反复「断开—重连」。现在改为：只要 Evo 在跑就持续记录，采集卡没信号/掉线
+    由 DirectShowCamera 自己在内部重开重试，有画面自动恢复，**不启停记录子进程**。
+    """
+    return True
 
 
 def last_projector(max_age: float = 12.0):

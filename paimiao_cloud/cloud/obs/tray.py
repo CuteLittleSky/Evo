@@ -72,11 +72,8 @@ def format_title(title):
         return title
 
     if source == obs_settings.SOURCE_CAMERA:
-        # 主机等的是 OBS 虚拟摄像头；相机没有「置顶」概念，不加那句提醒
-        return title.replace(WAITING_OLD, WAITING_CAMERA)
-
-    # 投影分支：source 判断为主；再 OR 一下旧的 enabled()，兼容老的验证脚本只改 enabled
-    if source == obs_settings.SOURCE_PROJECTOR or obs_settings.enabled():
+        out = title.replace(WAITING_OLD, WAITING_CAMERA)
+    elif source == obs_settings.SOURCE_PROJECTOR or obs_settings.enabled():
         out = title.replace(WAITING_OLD, WAITING_NEW)   # 等待投影窗口
         if "正在记录" in out:
             try:
@@ -86,6 +83,15 @@ def format_title(title):
                     out += NOT_TOPMOST_NOTE
             except Exception:
                 pass
-        return out
+    else:
+        out = title
 
-    return title
+    # 画面全黑提示（任何来源、记录中）：托盘标题后面挂一句，别让用户以为在正常记录
+    if "正在记录" in out:
+        try:
+            from cloud.obs import blackwatch  # noqa: PLC0415
+            if blackwatch.status().get("black"):
+                out += " · 画面全黑？"
+        except Exception:
+            pass
+    return out

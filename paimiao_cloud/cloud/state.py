@@ -68,6 +68,13 @@ DEFAULTS = {
     "pair_code_at": 0.0,
     "pair_expires_ms": 0,
     "hashes": {},
+
+    # 去重记忆必须写进 DEFAULTS 并在 load() 里显式恢复，否则每次 load 都被丢弃，
+    # 同步线程每 30 秒重载一次快照 → 就会把段位读数/赛季聚合当成「没传过」整批重传。
+    # （2026-11-08 修复：lobby_hashes / season_hashes / weapon_hashes 原来不在白名单里。）
+    "lobby_hashes": {},
+    "season_hashes": {},
+    "weapon_hashes": {},
     "stats": {"uploaded": 0, "failed": 0, "last_ok_at": "", "last_error": ""},
 
     "notice_seen": "",
@@ -84,6 +91,9 @@ def load() -> dict:
     merged["stats"] = {**DEFAULTS["stats"], **(raw.get("stats") or {})}
     merged["device"] = raw.get("device") or {}
     merged["hashes"] = raw.get("hashes") or {}
+    merged["lobby_hashes"] = raw.get("lobby_hashes") or {}
+    merged["season_hashes"] = raw.get("season_hashes") or {}
+    merged["weapon_hashes"] = raw.get("weapon_hashes") or {}
     merged["consent"] = raw.get("consent") or {}
     merged["notice_seen"] = str(raw.get("notice_seen") or "")
     merged["recommend_seen"] = str(raw.get("recommend_seen") or "")

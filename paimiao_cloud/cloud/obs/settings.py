@@ -19,6 +19,7 @@ ENABLED_KEY = "obs_projector_enabled"
 SOURCE_KEY = "obs_capture_source"
 PAUSE_KEY = "obs_pause_when_projector_closed"
 DEVICE_KEY = "obs_camera_device"
+CARD_DEVICE_KEY = "obs_card_device"   # 采集卡直读选的设备名（空 = 自动找非 OBS 的采集设备）
 WS_PORT_KEY = "obs_ws_port"           # 手填端口（空 = 自动读 OBS 配置）
 WS_PASSWORD_KEY = "obs_ws_password"   # 手填密码（空 = 自动读 OBS 配置）
 
@@ -26,7 +27,8 @@ WS_PASSWORD_KEY = "obs_ws_password"   # 手填密码（空 = 自动读 OBS 配�
 SOURCE_SCREEN = "screen"
 SOURCE_PROJECTOR = "projector"
 SOURCE_CAMERA = "camera"        # OBS 虚拟摄像头（2026-11-07 加）
-SOURCES = (SOURCE_SCREEN, SOURCE_PROJECTOR, SOURCE_CAMERA)
+SOURCE_CARD = "card"            # 采集卡直读（2026-11-08 加）
+SOURCES = (SOURCE_SCREEN, SOURCE_PROJECTOR, SOURCE_CAMERA, SOURCE_CARD)
 
 
 def _settings():
@@ -64,6 +66,33 @@ def is_projector() -> bool:
 
 def is_camera() -> bool:
     return source() == SOURCE_CAMERA
+
+
+def is_card() -> bool:
+    return source() == SOURCE_CARD
+
+
+def card_device() -> str:
+    """采集卡直读选中的设备名；空串 = 自动找非 OBS 的采集设备。"""
+    module = _settings()
+    if module is None:
+        return ""
+    try:
+        return str(module.get(CARD_DEVICE_KEY, "") or "")
+    except Exception:
+        return ""
+
+
+def set_card_device(name: str) -> bool:
+    module = _settings()
+    if module is None:
+        return False
+    try:
+        module.set_value(CARD_DEVICE_KEY, str(name or ""))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log(f"保存采集卡设备失败：{exc!r}")
+        return False
 
 
 def camera_device() -> str:

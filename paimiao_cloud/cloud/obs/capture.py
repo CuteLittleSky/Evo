@@ -257,15 +257,39 @@ def install_open_camera(capture_module, log=print):
     def open_camera(*args, **kwargs):
         try:
             camera_mode = obs_settings.is_camera()
+            card_mode = obs_settings.is_card()
         except Exception:
-            camera_mode = False
-        if not camera_mode:
-            return real(*args, **kwargs)
+            camera_mode = card_mode = False
         # 记录子进程里是 open_camera(log)，第一个位置参数就是日志函数
         logf = kwargs.get("log") or (args[0] if args and callable(args[0]) else log)
+        if card_mode:
+            try:
+                from cloud.capture import frame as vcam  # noqa: PLC0415
+                cam, notes = vcam.open_card(log=logf, wanted=obs_settings.card_device())
+                return _wrap_blackwatch(cam, card=True), notes
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    logf(f"[采集卡] 打开采集卡失败：{exc!r}")
+                except Exception:
+                    pass
+                try:
+                    from cloud.capture import frame as vcam
+                    # mjpg=True：采集卡回退的空相机别误报「[OBS 虚拟摄像头]」提示（2026-11-08 修复）
+                    return (vcam.DirectShowCamera(None, "", log=logf, mjpg=True),
+                            {"截法": "directshow", "directshow": str(exc), "设备": ""})
+                except Exception:
+                    return real(*args, **kwargs)
+        if not camera_mode:
+            result = real(*args, **kwargs)
+            try:
+                cam, notes = result
+                return _wrap_blackwatch(cam), notes
+            except Exception:
+                return result
         try:
             from cloud.capture import frame as vcam  # noqa: PLC0415
-            return vcam.open_camera(log=logf, wanted=obs_settings.camera_device())
+            cam, notes = vcam.open_camera(log=logf, wanted=obs_settings.camera_device())
+            return _wrap_blackwatch(cam), notes
         except Exception as exc:  # noqa: BLE001  打开失败绝不能把记录拖崩：返回空相机
             try:
                 logf(f"[OBS 虚拟摄像头] 打开虚拟摄像头失败：{exc!r}")
@@ -282,3 +306,44 @@ def install_open_camera(capture_module, log=print):
     open_camera._paimiao_real = real  # type: ignore[attr-defined]
     capture_module.open_camera = open_camera
     return True
+
+
+def _wrap_blackwatch(cam, card=False):
+    """给相机的 grab 套一层「是不是全黑」检测（所有来源都生效）。幂等。
+
+    card=True 时额外写采集卡心跳（`mark_frame`）与最近帧快照（`save_snapshot`）——
+    这两样只对「采集卡直读」有意义。整屏 / OBS 虚拟摄像头等非采集卡来源不做，
+    免得多余地把每张 1080p 画面编码成 JPEG 写盘（CLAUDE.md「轻量」原则）。
+    """
+    if cam is None:
+        return cam
+    try:
+        from cloud.obs import blackwatch  # noqa: PLC0415
+    except Exception:
+        return cam
+    real_grab = getattr(cam, "grab", None)
+    if real_grab is None or getattr(real_grab, "_paimiao_black", False):
+        return cam
+
+    def grab(*args, **kwargs):
+        frame = real_grab(*args, **kwargs)
+        try:
+            blackwatch.note_frame(frame)
+        except Exception:
+            pass
+        if card:
+            try:
+                from cloud.obs import cardsignal  # noqa: PLC0415
+                cardsignal.mark_frame(frame)
+                cardsignal.save_snapshot(frame)
+            except Exception:
+                pass
+        return frame
+
+    setattr(grab, "_paimiao_black", True)
+    setattr(grab, "_paimiao_real", real_grab)
+    try:
+        cam.grab = grab
+    except Exception:
+        pass
+    return cam

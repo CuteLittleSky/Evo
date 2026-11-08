@@ -108,6 +108,15 @@ def clear_pair_fields(snapshot):
     snapshot["pair_code_at"] = 0.0
     snapshot["pair_expires_ms"] = 0
 
+def clear_hashes(snapshot):
+    """清掉去重指纹。撤回同意 / 解除配对时要连 lobby/season/weapon 一起清：
+    这三项已写进 DEFAULTS 并持久化（见 state.py），只清 hashes 会让重新配对后的
+    段位读数、赛季聚合、武器持有因为指纹还在而被跳过，导致云端缺这几块数据。"""
+    snapshot["hashes"] = {}
+    snapshot["lobby_hashes"] = {}
+    snapshot["season_hashes"] = {}
+    snapshot["weapon_hashes"] = {}
+
 def seconds_left(snapshot):
 
     expires_ms = int(snapshot.get("pair_expires_ms") or 0)
@@ -178,7 +187,7 @@ def revoke():
     snapshot["consent"] = {}
     snapshot["device"] = {}
     snapshot["enabled"] = False
-    snapshot["hashes"] = {}
+    clear_hashes(snapshot)
     clear_pair_fields(snapshot)
     cloud_state.save(snapshot)
     cloud_state.log("用户撤回同意")
@@ -290,7 +299,7 @@ def unpair():
     pairing.revoke_qr(snapshot)
     snapshot["device"] = {}
     snapshot["enabled"] = False
-    snapshot["hashes"] = {}
+    clear_hashes(snapshot)
     clear_pair_fields(snapshot)
     cloud_state.save(snapshot)
     cloud_state.log("用户解除了配对")

@@ -263,6 +263,25 @@ def weapon_payloads(match_map, holds_by_match):
         items.append({"clientId": client_id_of(match), "weaponHolds": holds})
     return items
 
+def _pending_weapons(match_map, known):
+
+    # 按 clientId + 武器段内容算指纹，只有新增或内容变过的才传。
+    # 原来每次都把最近 200 局里有武器数据的全部重丢一遍（weapon_uploaded 虚高到 1496）。
+    holds = read_weapon_holds()
+    # read_weapon_holds() 在 sqlite 报错或表/列缺失时返回 []（不是 dict）。
+    # 这里兜底成空，否则 weapon_payloads 里 holds_by_match.get() 会抛
+    # AttributeError: 'list' object has no attribute 'get'，把整轮同步带崩。
+    if not isinstance(holds, dict):
+        holds = {}
+    out = []
+    for item in weapon_payloads(match_map, holds):
+        key = item["clientId"]
+        mark = fingerprint(item)
+        if known.get(key) == mark:
+            continue
+        out.append((key, mark, item))
+    return out
+
 def _boss_payload(match):
 
     value = match.get("participation")
@@ -341,6 +360,7 @@ def push(snapshot):
 
     known = snapshot.get("hashes") or {}
     lobby_known = snapshot.get("lobby_hashes") or {}
+    weapon_known = snapshot.get("weapon_hashes") or {}
 
     rows = read_matches()
     pending = _pending(rows, known, payload_of) if rows else []
@@ -348,6 +368,15 @@ def push(snapshot):
 
     lobby_pending = [item for item in drop_repeats(lobby_rows)
                      if lobby_known.get(item[0]) != item[1]] if lobby_rows else []
+
+    # 武器持有段：按 clientId + holds 指纹去重（原来没有去重，每轮都整批重传）。
+    # 单独兜住异常：武器段在上传循环之前算，出错也不该影响战绩/段位上传（与下方 season 一致）。
+    weapon_pending = []
+    if rows:
+        try:
+            weapon_pending = _pending_weapons(rows, weapon_known)
+        except Exception:  # noqa: BLE001
+            weapon_pending = []
 
     # 赛季聚合：没有新对局时也要能传（玩家可能只录了历史赛季）。只读本地库，失败不影响其它上传。
     season_rows, season_pending, season_keys = [], [], set()
@@ -361,7 +390,7 @@ def push(snapshot):
     except Exception:  # noqa: BLE001
         season_rows, season_pending, season_keys = [], [], set()
 
-    if not pending and not lobby_pending and not season_pending:
+    if not pending and not lobby_pending and not weapon_pending and not season_pending:
         return 0
 
     sent = 0
@@ -395,10 +424,11 @@ def push(snapshot):
     stats = snapshot.setdefault("stats", {})
     weapon_sent = 0
     try:
-        weapon_items = weapon_payloads(rows, read_weapon_holds())
-        for start in range(0, len(weapon_items), BATCH):
-            chunk = weapon_items[start:start + BATCH]
-            result = pairing.upload_weapons(snapshot, {"matches": chunk})
+        for start in range(0, len(weapon_pending), BATCH):
+            chunk = weapon_pending[start:start + BATCH]
+            result = pairing.upload_weapons(snapshot, {"matches": [item[2] for item in chunk]})
+            for key, mark, _ in chunk:
+                weapon_known[key] = mark
             weapon_sent += int(result.get("accepted") or len(chunk))
     except pairing.CloudError as exc:
         stats["weapon_error"] = str(exc)[:200]
@@ -417,9 +447,13 @@ def push(snapshot):
     if len(lobby_known) > LOBBY_LIMIT * 2:
         keep = {str(m.get("read_at")) for m in lobby_rows}
         lobby_known = {k: v for k, v in lobby_known.items() if k in keep}
+    if len(weapon_known) > SCAN_LIMIT * 2:
+        keep = {client_id_of(m) for m in rows}
+        weapon_known = {k: v for k, v in weapon_known.items() if k in keep}
 
     snapshot["hashes"] = known
     snapshot["lobby_hashes"] = lobby_known
+    snapshot["weapon_hashes"] = weapon_known
     stats = snapshot.setdefault("stats", {})
     stats["uploaded"] = int(stats.get("uploaded") or 0) + sent
     stats["rank_uploaded"] = int(stats.get("rank_uploaded") or 0) + lobby_sent

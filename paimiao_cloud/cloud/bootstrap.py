@@ -88,6 +88,18 @@ def install():
     except Exception as exc:
         _log(f"主机模式启动条件注入失败（不影响记录）：{exc!r}")
 
+    # 通知模块的托盘早期启动（2026-11-08 代码审查 P2）：必须在**面板被打开之前**
+    # 就能起发送线程。开机自启（--background）时 setup() 不会调 panel.open()，
+    # panel_app 永远不导入，原来只在 register()（attach 时）起线程的写法在后台模式下
+    # 一条通知都发不出。这里用的 cloud.notify.boot 不 import Flask，不会把 Flask 带进
+    # 轻量的记录子进程；真正开线程是在 pystray.Icon.run（只有托盘进程才调用）里，
+    # 记录子进程不会误开通知线程、也不会去拉后端。
+    try:
+        from cloud.notify import boot as notify_boot
+        notify_boot.install()
+    except Exception as exc:
+        _log(f"通知模块预注入失败（不影响使用）：{exc!r}")
+
     try:
         from cloud.lobby_mode import inject as mode_inject
         mode_inject.install()
@@ -283,5 +295,13 @@ def attach(module):
     if not getattr(app, "_cloud_sync_armed", False):
         app._cloud_sync_armed = True
         app.before_request(cloud_sync.arm_once)
+
+    if not getattr(app, "_paimiao_notify_installed", False):
+        app._paimiao_notify_installed = True
+        try:
+            from cloud.notify import inject as notify_inject
+            notify_inject.register(app, module)
+        except Exception as exc:
+            _log(f"通知模块注入失败（不影响使用）：{exc!r}")
 
     _log(f"已接入：{app.name}")

@@ -115,6 +115,10 @@ _CURRENT: dict[str, Any] = {}
 
 # 这一轮是不是已经交给上游一次了（对局中每 0.3 秒一帧，不能每帧都交）
 _FEED_DONE = {"done": False}
+# 「补给跳过」/「补给这一局」这两类日志：同一局同一状态只打一次。
+# 2026-11-08 用户报 cloud.log 被刷屏（每帧一行），因为大厅每帧 remember() 都会把
+# _FEED_DONE 复位，对局里于是每帧又走一遍 _feed、每帧打一行。日志本身不该按帧写。
+_LOG_ONCE: dict[str, Any] = {"skip_key": None, "feed_key": None}
 
 # 截屏钩子：当前这台记录程序的识别引擎（由 collect 开头那行建引擎时抓到）
 _ENGINE = {"engine": None}
@@ -317,6 +321,13 @@ def _wrap_instance(self):
     def wrapped_reset(saw_start=None, *args, **kwargs):
         try:
             _FEED_DONE["done"] = False
+            # 2026-11-08 修复：_LOG_ONCE 的跳过键是 (id(post), mode)，而 id(post)
+            # 整段记录都不变（PostMatch 只建一次）。于是「继续匹配」连打同模式时，
+            # 第 2 局起 _feed 会命中上一局留下的 feed_key 提前 return —— 模式整批丢。
+            # 每局在 _reset（一局正好一次）里清空，保证每一局都能重新交一次；
+            # 同一局内它仍负责压掉重复交付/重复日志（见 _feed 里的 key 判断）。
+            _LOG_ONCE["skip_key"] = None
+            _LOG_ONCE["feed_key"] = None
         except Exception:
             pass
         return reset(saw_start, *args, **kwargs)
@@ -340,8 +351,11 @@ def _feed(watcher, now):
     # 上游已经读到模式了（开局画面顶部那行），以它为准
     if info.get("mode") is not None:
         if _CURRENT.get("mode"):
-            _log("补给跳过：开局画面已经读到 %s（大厅读到的是 %s）"
-                 % (info["mode"], _CURRENT.get("mode")))
+            key = (id(post), str(info.get("mode")), str(_CURRENT.get("mode")))
+            if _LOG_ONCE["skip_key"] != key:
+                _LOG_ONCE["skip_key"] = key
+                _log("补给跳过：开局画面已经读到 %s（大厅读到的是 %s）"
+                     % (info["mode"], _CURRENT.get("mode")))
         _mark_fed()
         return
     # 这一局已经补过（或者已经确认没得补），别再往里塞
@@ -350,10 +364,15 @@ def _feed(watcher, now):
     mode = _CURRENT.get("mode")
     if mode is None:
         return
+    key = (id(post), str(mode))
+    if _LOG_ONCE["feed_key"] == key:
+        return
+    _LOG_ONCE["feed_key"] = key
     try:
         # 复用上游自己的入口：它会写进 self.info，建局时 _base_fields() 自然带上。
         # map 传 None —— 这里只补模式，地图仍然只由开局画面决定，绝不猜。
         post.on_match_start({"mode": mode, "map": None, "raw_mode": "", "raw_map": ""}, now)
+        _mark_fed()
         # 记一笔：用户 2026-10-24 要能看出"这一局的模式是不是大厅给的"
         _log("补给这一局：%s（来自大厅读数）" % mode)
     except Exception as exc:
