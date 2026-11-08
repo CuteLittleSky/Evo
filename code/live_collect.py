@@ -260,7 +260,8 @@ class SummaryWatcher:
     def _upgrade_if_same_page(self, results, problems, frame, when):
         """上一次「没读全就离开」存成了待确认，这次又读到同一张总结页：把读数补进那一局，不新插一局。
         判据见 same_page（伤害、生存时间一致；kda 两边都读到也要一致），且两次读数相隔不超过 SAME_MATCH_SECONDS。
-        补全后这一局不再是"待确认"（problems 为空时），地图、模式等已经写在那一局上，这里只更新总结页那几项。"""
+        补全后这一局不再是"待确认"（problems 为空时），地图、模式等已经写在那一局上，这里只更新总结页那几项。
+        ended_at 沿用第一次存下的时间（云同步的 clientId 由它算出，一改就会被当成新的一局再传一遍）。"""
         if not self.last_saved_partial or self.last_saved_id is None or self.last_saved_when is None:
             return False
         if getattr(self.post, "match_id", None) != self.last_saved_id:
@@ -274,8 +275,12 @@ class SummaryWatcher:
         image_path = screenshots.path_for(self.run_dir, name)
         image_path.parent.mkdir(parents=True, exist_ok=True)
         save_png(image_path, frame)
+        # ended_at 必须沿用第一次存下时的值：云同步的 clientId = 「ended_at 的哈希」（见 paimiao_cloud/cloud/sync.py
+        # 的 client_id_of），这次若把它改成读全的时间，同一局会被算成新的 clientId 再传一遍，小程序里就多一条。
+        row = storage.get_match(self.conn, self.last_saved_id)
+        ended_at = (row["ended_at"] if row is not None and row["ended_at"] else f"{when:%Y-%m-%d %H:%M:%S}")
         storage.update_match(self.conn, self.last_saved_id,
-                             summary_to_match(results, problems, f"{when:%Y-%m-%d %H:%M:%S}", image_path))
+                             summary_to_match(results, problems, ended_at, image_path))
         readings, scores = summary_readings(results)
         storage.save_readings(self.conn, self.last_saved_id, SOURCE_SUMMARY, readings,
                               f"{when:%Y-%m-%d %H:%M:%S}", scores)
