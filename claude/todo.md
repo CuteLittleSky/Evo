@@ -142,17 +142,16 @@
   - 合作者要做的：仓库外 `直播识别/` 的生成脚本改输出路径，对照表在派圈 `AI-CONTEXT.md` §6「文件搬家」（写旧路径的话 `static.test` 会报错）
   - 剩下：③（要在深浅 × 中英四种组合下逐页看，单独做）；④
   - 顺手看到的：小游戏分类页底部写"两个都是本地玩法"，现在是三个玩法（没改，文案归合作者还是用户管待定）
-- [ ] **「我的」页照用户的设计稿改版**（11-08，用户在聊天里给的设计图）：做完，派圈分支 `feat/me-redesign` 提交 `66a6fb4`，**还没推送、没合回 `main`**
+- [ ] **「我的」页照用户的设计稿改版**（11-08，用户在聊天里给的设计图）：做完，11-08 用户同意，**已合回派圈 `main` 并推送**（合并提交 `36693aa`；含 `66a6fb4`、`6a15a65`），等上线
   - 用户定的：头像昵称用 Evo 游戏 ID 代替（不采集微信信息）；每周战报 / 地图轮换推送、意见反馈、导出战绩、删除全部战绩**不做**；底部 tab 不动；外观**加跟随系统**（`app.json` 开了 darkmode）；玩家群：用户 11-08 给了 **QQ 群**码（群号 1128519951），微信里加不了，做成二级页 `evo/group`（群号 + 二维码 + 怎么用 QQ 加），提交 `6a15a65`
   - 和设计稿不一样的：卡片说明照实写"会传队友名字、不传截图"（设计稿写"不上传队友名字"，和 `evo_pc` 实际传的不符）；这个赛季还没有段位时「赛季最高」那格不出；分享卡片默认不显示游戏名（以前就不带）；隐私说明打不开微信后台的指引时弹一段本地说明（文案照实写了 openid、「大家在玩什么」汇总所有人的对局），请用户看一眼措辞
   - `evo_mp` 改了（`me` 多回统计、`home` 多回游戏名、`stats.js` 加 `SEASONS`）：要部署到合作者环境；新赛季要在 `SEASONS` 加一行（Evo `config/seasons.json` 的说明里写了）
   - 本机看效果：`miniprogram/paiquan-preview` 的 `node shots_me.js <文件夹> [theme] [lang]`（evo_mp 已部署到测试环境的 `ping`）
-  - 剩下：用户真机看效果（11-08 给了预览码；顺手用 QQ 扫一下群码，OpenCV 认不出 QQ 的圆点样式）→ 推送合并（等用户点头）；合作者部署 `evo_mp`
+  - 剩下：部署 `evo_mp` 到合作者环境（用户问过能不能自己部署：账号看得到他的云函数，真部署还没试过；要从 `E:\paiquan-logos` 部署，它和 `main` 内容一样，主文件夹还停在 `feat/me-redesign`，没有队标）→ 上传小程序新版本。上线前用户真机看一眼：QQ 扫群码（OpenCV 认不出 QQ 的圆点样式）、隐私说明的措辞
 - [ ] **比赛页照用户的「赛季进度条」设计稿改版**（11-08，用户给的 HTML 设计稿）：做完。11-08 用户同意，**已合回派圈 `main` 并推送**（合并提交 `bdb543b`；含 `065a05a` 云端数据、`a5a037e` 页面、`45a979b` 修正、`4c17448` CN 名单），本机工作目录 `E:\paiquan-season` 和分支 `feat/matches-season` 删了
   - 用户定的：原来比赛页的三块（S2 季后赛最终成绩、下一场比赛、ALGS 职业赛场）挪进「这个赛季」每一站的详情页 `pro/event`；小比赛**只收中国的**（Liquipedia `locations` 有 China）；**加一张自己录入比赛的表**（集合 `pro_manual_events`）；「所有 CN 战队」**只用手动名单**（集合 `pro_cn_teams`，初始名单是设计稿的 14 支：派圈 `tools/pro_cn_teams_import.json`，控制台导入）
   - 和设计稿不一样的（数据没有）：只写日期不写几点（Liquipedia 没有开打时间）；"进行中"不写第几局；国内小比赛 Liquipedia 2026 年只收了 4 场（B 站 Stellar Cup 第 7、8 季，VK 两场），别的靠自己录入；设计稿里的星火杯、Challenger Circuit 这些是示例
   - 上线要做：合作者部署 `apex`；控制台导入 `pro_cn_teams`；自己录入的比赛在 `pro_manual_events` 加（字段见派圈 `AI-CONTEXT.md` §18「比赛页」）。换赛季要改 `proSeason.js` 的 `SEASON` 等（同一节写了）
-  - `feat/me-redesign` 合回 `main` 时会在 `i18n.js`、`app.json`、`static.test.mjs`、文档的测试数上和这次冲突（都是各加各的，好合）；做队标的窗口在 `E:\paiquan-logos`（`feat/pro-logos`）
   - 本机看效果：派圈 `main` 的代码 `python make_copy.py`（在别的工作目录时用 `PAIQUAN_SRC` 指过去），`node shots_season.js <文件夹> [theme] [lang]`；样本 `demo-data/pro/fetch_season.mjs`（约 7 个请求）
   - 剩下：合作者部署 `apex`；用户在控制台导入 `pro_cn_teams`、按需在 `pro_manual_events` 加国内比赛；TEC 用户 11-08 定了不再显示（名单去掉 Titan Esports Club，剩 13 支，派圈 main `7db7cc1`，已推送）
 - [ ] 要用户 / 合作者定的：英文名（导航栏现在写 "Paiquan"）
