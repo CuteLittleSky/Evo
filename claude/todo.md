@@ -151,9 +151,9 @@
 - [ ] **比赛页照用户的「赛季进度条」设计稿改版**（11-08，用户给的 HTML 设计稿）：做完。11-08 用户同意，**已合回派圈 `main` 并推送**（合并提交 `bdb543b`；含 `065a05a` 云端数据、`a5a037e` 页面、`45a979b` 修正、`4c17448` CN 名单），本机工作目录 `E:\paiquan-season` 和分支 `feat/matches-season` 删了
   - 用户定的：原来比赛页的三块（S2 季后赛最终成绩、下一场比赛、ALGS 职业赛场）挪进「这个赛季」每一站的详情页 `pro/event`；小比赛**只收中国的**（Liquipedia `locations` 有 China）；**加一张自己录入比赛的表**（集合 `pro_manual_events`）；「所有 CN 战队」**只用手动名单**（集合 `pro_cn_teams`，初始名单是设计稿的 14 支：派圈 `tools/pro_cn_teams_import.json`，控制台导入）
   - 和设计稿不一样的（数据没有）：只写日期不写几点（Liquipedia 没有开打时间）；"进行中"不写第几局；国内小比赛 Liquipedia 2026 年只收了 4 场（B 站 Stellar Cup 第 7、8 季，VK 两场），别的靠自己录入；设计稿里的星火杯、Challenger Circuit 这些是示例
-  - 上线要做：部署 `apex`（11-08 已做）；控制台导入 `pro_cn_teams`；自己录入的比赛在 `pro_manual_events` 加（字段见派圈 `AI-CONTEXT.md` §18「比赛页」）。换赛季要改 `proSeason.js` 的 `SEASON` 等（同一节写了）
+  - 上线要做：部署 `apex`（11-08 已做）；自己录入的比赛在 `pro_manual_events` 加（字段见派圈 `AI-CONTEXT.md` §18「比赛页」）。换赛季要改 `proSeason.js` 的 `SEASON` 等（同一节写了）
   - 本机看效果：派圈 `main` 的代码 `python make_copy.py`（在别的工作目录时用 `PAIQUAN_SRC` 指过去），`node shots_season.js <文件夹> [theme] [lang]`；样本 `demo-data/pro/fetch_season.mjs`（约 7 个请求）
-  - 剩下：`apex` 11-08 已部署；用户在控制台导入 `pro_cn_teams`、按需在 `pro_manual_events` 加国内比赛；TEC 用户 11-08 定了不再显示（名单去掉 Titan Esports Club，剩 13 支，派圈 main `7db7cc1`，已推送）
+  - 剩下：`apex` 11-08 已部署；`pro_cn_teams` 用户已在控制台导入；按需在 `pro_manual_events` 加国内比赛；TEC 用户 11-08 定了不再显示（名单去掉 Titan Esports Club，剩 13 支，派圈 main `7db7cc1`，已推送）
 - [ ] 要用户 / 合作者定的：英文名（导航栏现在写 "Paiquan"）
 - 第一版先不做（10-28 用户定，以后再说）：「我的」页改版（⚙ 语言、主题现在只在「我的」和「全部地图」里有）；隐私说明写上「大家在玩什么」用到所有 Evo 玩家的对局
 - 我们自己的小程序 EVO Tracker：10-26 起搁置，剩下的待办在 `docs/小程序.md`"搁置时还没做的"
