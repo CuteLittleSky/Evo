@@ -147,7 +147,7 @@
   - 和设计稿不一样的：卡片说明照实写"会传队友名字、不传截图"（设计稿写"不上传队友名字"，和 `evo_pc` 实际传的不符）；这个赛季还没有段位时「赛季最高」那格不出；分享卡片默认不显示游戏名（以前就不带）；隐私说明打不开微信后台的指引时弹一段本地说明（文案照实写了 openid、「大家在玩什么」汇总所有人的对局），请用户看一眼措辞
   - `evo_mp` 改了（`me` 多回统计、`home` 多回游戏名、`stats.js` 加 `SEASONS`）：要部署到合作者环境；新赛季要在 `SEASONS` 加一行（Evo `config/seasons.json` 的说明里写了）
   - 本机看效果：`miniprogram/paiquan-preview` 的 `node shots_me.js <文件夹> [theme] [lang]`（evo_mp 已部署到测试环境的 `ping`）
-  - 剩下：部署 `evo_mp` 到合作者环境（用户问过能不能自己部署：账号看得到他的云函数，真部署还没试过；要从 `E:\paiquan-logos` 部署，它和 `main` 内容一样，主文件夹还停在 `feat/me-redesign`，没有队标）→ 上传小程序新版本。上线前用户真机看一眼：QQ 扫群码（OpenCV 认不出 QQ 的圆点样式）、隐私说明的措辞
+  - 剩下：部署 `evo_mp` 到合作者环境（用户问过能不能自己部署：账号看得到他的云函数，真部署还没试过；11-08 主文件夹 `E:\paiquan-miniprogram` 已切回 `main`，从那里部署）→ 上传小程序新版本。上线前用户真机看一眼：QQ 扫群码（OpenCV 认不出 QQ 的圆点样式）、隐私说明的措辞
 - [ ] **比赛页照用户的「赛季进度条」设计稿改版**（11-08，用户给的 HTML 设计稿）：做完。11-08 用户同意，**已合回派圈 `main` 并推送**（合并提交 `bdb543b`；含 `065a05a` 云端数据、`a5a037e` 页面、`45a979b` 修正、`4c17448` CN 名单），本机工作目录 `E:\paiquan-season` 和分支 `feat/matches-season` 删了
   - 用户定的：原来比赛页的三块（S2 季后赛最终成绩、下一场比赛、ALGS 职业赛场）挪进「这个赛季」每一站的详情页 `pro/event`；小比赛**只收中国的**（Liquipedia `locations` 有 China）；**加一张自己录入比赛的表**（集合 `pro_manual_events`）；「所有 CN 战队」**只用手动名单**（集合 `pro_cn_teams`，初始名单是设计稿的 14 支：派圈 `tools/pro_cn_teams_import.json`，控制台导入）
   - 和设计稿不一样的（数据没有）：只写日期不写几点（Liquipedia 没有开打时间）；"进行中"不写第几局；国内小比赛 Liquipedia 2026 年只收了 4 场（B 站 Stellar Cup 第 7、8 季，VK 两场），别的靠自己录入；设计稿里的星火杯、Challenger Circuit 这些是示例
