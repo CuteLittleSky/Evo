@@ -164,7 +164,7 @@ except (OSError, ValueError, KeyError):
     MATCH_MAPS = ()
 
 # ---- 设置页 ----
-SOURCE_URL = "https://github.com/AugustHuangMX/Evo"
+SOURCE_URL = "https://github.com/Evo-Apex/Evo"
 FEEDBACK_URL = "https://qm.qq.com/q/6L2kTbmCWc"  # "意见反馈"：加 QQ 群（和 README、隐私政策里的是同一个群）
 FEEDBACK_GROUP = "1128519951"
 # 设置页右边"关于 Evo"下面的鸣谢卡片（2026-11-07 用户要求）：特别鸣谢（打赏的人）、开发者、官方合作（派圈助手）。
