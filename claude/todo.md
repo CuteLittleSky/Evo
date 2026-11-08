@@ -154,7 +154,7 @@
   - 上线要做：合作者部署 `apex`；控制台导入 `pro_cn_teams`；自己录入的比赛在 `pro_manual_events` 加（字段见派圈 `AI-CONTEXT.md` §18「比赛页」）。换赛季要改 `proSeason.js` 的 `SEASON` 等（同一节写了）
   - `feat/me-redesign` 合回 `main` 时会在 `i18n.js`、`app.json`、`static.test.mjs`、文档的测试数上和这次冲突（都是各加各的，好合）；做队标的窗口在 `E:\paiquan-logos`（`feat/pro-logos`）
   - 本机看效果：派圈 `main` 的代码 `python make_copy.py`（在别的工作目录时用 `PAIQUAN_SRC` 指过去），`node shots_season.js <文件夹> [theme] [lang]`；样本 `demo-data/pro/fetch_season.mjs`（约 7 个请求）
-  - 剩下：合作者部署 `apex`；用户在控制台导入 `pro_cn_teams`、按需在 `pro_manual_events` 加国内比赛；TEC 那一条要不要换（Liquipedia 的 Titan Esports Club 现役是泰国选手）用户定
+  - 剩下：合作者部署 `apex`；用户在控制台导入 `pro_cn_teams`、按需在 `pro_manual_events` 加国内比赛；TEC 用户 11-08 定了不再显示（名单去掉 Titan Esports Club，剩 13 支，派圈本机 main `7db7cc1`，还没推送）
 - [ ] 要用户 / 合作者定的：英文名（导航栏现在写 "Paiquan"）
 - 第一版先不做（10-28 用户定，以后再说）：「我的」页改版（⚙ 语言、主题现在只在「我的」和「全部地图」里有）；隐私说明写上「大家在玩什么」用到所有 Evo 玩家的对局
 - 我们自己的小程序 EVO Tracker：10-26 起搁置，剩下的待办在 `docs/小程序.md`"搁置时还没做的"
