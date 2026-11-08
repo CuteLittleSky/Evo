@@ -127,7 +127,7 @@
     - 一轮多约 75 次请求（共约 120 次、十个小时抓完，24 小时一轮够用）
     - 本机看效果：`node shots_team.js <文件夹> Team_Liquid [light] [en]`（样本是 11-07 用 `demo-data/pro/fetch_teams.mjs` 抓的 9 支队，用法见 `miniprogram/paiquan-preview/README.md`「战队页」）。用户还没看过
   - 剩下：
-    - 等部署 `apex`（`LIQUIPEDIA_API_KEY` 11-08 用户看到已经配好）；约 10 小时后在正式版里看战队页和照片。11-08 用户看控制台还没有 `pro_players`、`pro_teams`：抓取没跑过（这几个集合代码第一次写入时自己建，不用手动建）。部署后 5–10 分钟看 `pro_meta` 出现没有；11-08 用户看控制台：**线上 `apex` 没有定时触发器**（代码其实已经部署过，有 `proSync.js`，只是从没被触发）。配置已加并推送（`cloudfunctions/apex/config.json`，派圈 `648de92`），部署后在开发者工具里右键「上传触发器」。`tracked_players` 没建，定时器按空名单跳过（以后人多了要防 20 秒超时：选手数据排在轮询后面）。命令行部署到他的环境报 `ResourceNotFound.Namespace`（list、info、download 都行），要用开发者工具右键「上传并部署：云端安装依赖」。11-08 用户部署好了 `apex`、`evo_mp`，下载核对过和 `main`（`648de92`）一致；数据抓好再发小程序新版本
+    - 等部署 `apex`（`LIQUIPEDIA_API_KEY` 11-08 用户看到已经配好）；约 10 小时后在正式版里看战队页和照片。11-08 用户看控制台还没有 `pro_players`、`pro_teams`：抓取没跑过（这几个集合代码第一次写入时自己建，不用手动建）。部署后 5–10 分钟看 `pro_meta` 出现没有；11-08 用户看控制台：**线上 `apex` 没有定时触发器**（代码其实已经部署过，有 `proSync.js`，只是从没被触发）。配置已加并推送（`cloudfunctions/apex/config.json`，派圈 `648de92`），部署后在开发者工具里右键「上传触发器」。`tracked_players` 没建，定时器按空名单跳过（以后人多了要防 20 秒超时：选手数据排在轮询后面）。命令行部署到他的环境报 `ResourceNotFound.Namespace`（list、info、download 都行），要用开发者工具右键「上传并部署：云端安装依赖」。11-08 用户部署好了 `apex`、`evo_mp`，下载核对过和 `main`（`648de92`）一致；数据抓好再发小程序新版本。11-08 查清定时器为什么一直不跑：定时器每 5 分钟都调用了函数（临时记录实测 19:35、19:40），但线上传的 `Type` 是小写 `timer`，代码只认大写 `Timer`。修复、回归测试（`tests/apex-timer.test.mjs`）在派圈本机，临时排查代码已删，等用户同意推送并部署；部署后核对 `schedule` 的 `at` 有没有更新、`proSeason` 的 `cnTeams`（13 或 14 支），第一轮约 10 小时从那时算起。另外 `apex` 的 `config` 分支读不到 `site_config`（`cloud` 变量作用域问题），没修，建议定时器跑稳以后单独修，用户定
     - 用户说上线这几步做完再讨论：`pro_events` 读不到（见上）、测试环境欠费和那 242 张没用的照片
     - 告诉合作者（要部署 `apex`；Key 已经配好，不用再加）
     - 比赛页按懂球帝 / 虎扑的方向重构：方案先给用户看（赛事切换、积分榜、选手榜、战队页、选手页……）
