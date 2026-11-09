@@ -118,7 +118,11 @@ def _read_piece(engine, piece, name, spec, cfg):
 def read_summary(engine, img, cfg, save_crops=False, memo=None):
     """memo：同一次停在总结页时传同一个字典，没变的项不再识别（见 read_field）。"""
     results = {name: read_field(engine, img, name, spec, cfg, save_crops, memo) for name, spec in cfg["fields"].items()}
+    return results, summary_problems(results)
 
+
+def summary_problems(results):
+    """按各项的读数写出问题（有问题的局标记"待确认"）。没读全就切走、后来补全时，合并以后再算一遍（见 live_collect）。"""
     # 常识检查：自己的击杀数不可能超过小队总击杀
     problems = []
     kda, squad = results["kda"], results["squad_kills"]
@@ -129,7 +133,7 @@ def read_summary(engine, img, cfg, save_crops=False, memo=None):
         r = results[name]
         if r["status"] != "ok":
             problems.append(f"{r['label']}：{STATUS_TEXT[r['status']]}（OCR 原文：{r['raw'] or '无'}）")
-    return results, problems
+    return problems
 
 
 def is_champion(engine, img, cfg, memo=None):
