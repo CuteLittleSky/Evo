@@ -1,11 +1,14 @@
 # PyInstaller 打包配置。一般不直接用它，运行 python tools/build.py 即可（会先生成图标，打包后再放入许可证）。
 # 打包方式：文件夹模式（onedir）——一个很小的 Evo.exe 启动器 + _internal 文件夹（依赖、配置、网页、识别模型）。
 import os
+import subprocess
 
 from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 ROOT = os.path.dirname(SPECPATH)  # 项目文件夹（本文件在 tools/ 里）
 CODE = os.path.join(ROOT, "code")  # 程序代码
+# 素材只打包 git 里有的（2026-11-09 用户确认）：assets/ 里还有只在本机的东西（派圈助手的选手照片 2 GB、队标、头像），绝不能进安装包
+ASSETS = subprocess.run(["git", "ls-files", "-z", "assets"], cwd=ROOT, capture_output=True, check=True).stdout.decode("utf-8").split("\0")
 # 微信小程序（绑定、上传战绩：cloud_sync.py、panel_cloud.py、qr.py、_cloud.html）：这些文件只在开发者电脑上，不上传 GitHub
 # （2026-10-24 用户决定）。小程序上线以前不打进安装包（0.4.0–0.4.3），Evo 找不到它们就不显示那一栏、不同步；2026-10-29 派圈助手过审发布，0.5.0 起打进去（用户确认）
 WITH_CLOUD = True
@@ -15,10 +18,10 @@ datas = [
     (os.path.join(ROOT, "config"), "config"),                    # 识别规则
     (os.path.join(ROOT, "panel", "templates"), "panel/templates"),  # 面板网页
     (os.path.join(ROOT, "panel", "static"), "panel/static"),        # 面板样式、字体
-    (os.path.join(ROOT, "assets"), "assets"),                    # 图标
     # 微软的 WebView2 安装程序（build.py 先下载、核对签名；电脑上没有 WebView2 时用，见 webview2.py）
     (os.path.join(ROOT, "build", "webview2", "MicrosoftEdgeWebview2Setup.exe"), "webview2"),
 ]
+datas += [(os.path.join(ROOT, path), os.path.dirname(path)) for path in ASSETS if path]  # 图标、传奇头像、段位徽章、提示音
 datas += collect_data_files("rapidocr")      # 识别模型（.onnx）和识别引擎的配置（.yaml）
 datas += copy_metadata("pystray")            # pystray 的许可证信息（LGPL 要求）
 

@@ -9,6 +9,8 @@ tests/replay_20261016_teammates.csv
 assets/选手照片/
 # 派圈助手用的战队队标（各战队的商标，不能按 AGPL 开源；派圈 tools/build_pro_logos.py 下载处理后传到派圈的云存储）
 assets/队标/
+# 派圈助手的头像：只在本机，和 Evo 无关
+assets/icon/paiquan-avatar-E3-2048.png
 # 数据库等运行数据
 data/
 *.db
