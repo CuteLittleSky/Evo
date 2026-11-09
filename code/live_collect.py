@@ -64,7 +64,7 @@ from player_name import PlayerNameReader
 from post_match import SAME_MATCH_SECONDS, SOURCE_CHAMPION, SOURCE_SUMMARY, PostMatch
 from process_info import memory_mb, set_full_speed, set_low_priority
 from screens import GameScreens
-from summary_page import KEY_FIELDS, is_champion, read_summary, show, summary_readings, summary_to_match
+from summary_page import KEY_FIELDS, is_champion, read_summary, show, summary_problems, summary_readings, summary_to_match
 from teammates import describe, read_teammates
 from xp_page import numbers_moved, numbers_snapshot, read_rp, read_xp
 
@@ -74,39 +74,23 @@ NO_SCREEN_WARNING_MINUTES = 45  # 这么久一个画面都没认出来，在日�
 USAGE_EVERY_SECONDS = 300  # 每隔这么久在日志里写一行 CPU、内存占用
 
 
-def same_match(a, b, min_fields=4):
+def same_match(a, b, min_fields=4, split_kda=False):
     """两次读数是不是同一局：两边都读到的项全部相同（至少要有 min_fields 项可比）。
-    用于在总结页和经验值页之间来回切换时，避免同一局被存好几次。
-
-    击杀/助攻/击倒是一个小块里一起读出来的（values 里的 kda），但它们是三个独立的数据项，
-    这里拆开计数：名次还没滑进来时，kda、伤害、生存时间就已经能认出是同一张总结页，
-    不会因为名次、小队总击杀还没读到就凑不够 min_fields、被当成两局存两遍。"""
+    用于在总结页和经验值页之间来回切换、回到大厅后重新打开上一局时，避免同一局被存好几次。
+    split_kda：击杀/助攻/击倒（values 里的 kda，一起读出来的）按三项算，名次、小队总击杀还没读到也能凑够 min_fields。
+    条件更宽，两局数字碰巧一样的可能大一些，只在这一局还没收尾、刚存下不久时用（见 SummaryWatcher._same_round_recent）。"""
     if a is None or b is None:
         return False
 
     def items(v):
-        out = {k: x for k, x in v.items() if k != "kda"}
+        if not split_kda:
+            return v
         kills, assists, knockdowns = v.get("kda") or (None, None, None)
-        out.update(kills=kills, assists=assists, knockdowns=knockdowns)
-        return out
+        return {**{k: x for k, x in v.items() if k != "kda"}, "kills": kills, "assists": assists, "knockdowns": knockdowns}
 
     a, b = items(a), items(b)
     both = [k for k in a if a[k] is not None and b.get(k) is not None]
     return len(both) >= min_fields and all(a[k] == b[k] for k in both)
-
-
-def same_page(a, b):
-    """两次读数是不是同一张总结页（不拿名次、小队总击杀当判据：它们会晚 1–2 秒才滑进来）。
-    伤害、生存时间两边都读到且相同，击杀/助攻/击倒两边都读到也要相同。
-    用来把「没读全就离开存下的待确认」和「随后读全的同一张」接上，不重复成两局。"""
-    if a is None or b is None:
-        return False
-    for key in ("damage", "survival_time"):
-        if a.get(key) is None or b.get(key) is None or a[key] != b[key]:
-            return False
-    if a.get("kda") is not None and b.get("kda") is not None and a["kda"] != b["kda"]:
-        return False
-    return True
 
 
 def save_png(path, frame):
@@ -116,7 +100,8 @@ def save_png(path, frame):
 class SummaryWatcher:
     """总结页：名次、击杀/助攻/击倒、伤害都读到了，并且连续两次相同（名次会晚 1–2 秒滑进来，数字也可能有动画），
     就保存截图、把这一局写进数据库（冠军的总结页没有名次：其他数字连续两次相同、顶部是"捍卫者"就算读全）。还没读全就离开了、等太久、或者停止记录时，用读得最全的一次存下，标记"待确认"
-    （缺的项之后能用别的来源补上就取消，见 post_match.settle）。在总结页和别的画面之间来回切换，同一局不重复存。
+    （缺的项之后能用别的来源补上就取消，见 post_match.settle）。在总结页和别的画面之间来回切换，同一局不重复存；
+    没读全就切走、很快又回到同一张时，把新读到的项补进原来那一局（见 _upgrade_if_same_page）。
     同一次停留里，和上一张比没变的项不再识别、沿用上次的（2026-11-01，见 summary_page.read_field）：
     数字停住了，第二张几乎不用读，名次滑进来时只重读名次那几项。
     存下时只读自己的数据（2026-11-01 用户同意）：两名队友、自己的名字、顶部是不是"捍卫者"先把截图留在内存里，
@@ -135,8 +120,10 @@ class SummaryWatcher:
         self.done = False  # 这一次总结页已经存过了
         self.last_saved = None  # 最近存进数据库的那一局的读数（切到别的页再切回来时，用来认出是同一局）
         self.last_saved_id = None  # 最近存进数据库那一局的编号
-        self.last_saved_when = None  # 上一局存下的时间（判断两次读到的"同一张总结页"隔了多久）
-        self.last_saved_partial = False  # 上一局是不是"没读全就离开"存下的待确认（这种要被后来的读全补上）
+        self.last_saved_when = None  # 这一局最后一次写进数据库的时间（判断又看到的总结页隔了多久）
+        self.last_saved_results = None  # 这一局每一项的读数（补全时，这次没读到的项沿用这里的）
+        self.last_saved_image = None  # 这一局总结页截图的位置（补全时换成新读到的这一张，位置和名字不变）
+        self.last_saved_partial = False  # 这一局存下时读数有问题（待确认），很快又读到同一张时要补全
         self.later = []  # 存下了、还没读队友和名字的总结页（编号、截图、时间、每一项上次读的那一小块、要不要看"捍卫者"）
 
     @property
@@ -212,9 +199,13 @@ class SummaryWatcher:
         """把一次总结页的读数存进数据库（只是自己的数据；队友、名字等 catch_up 再读）。如果和上一局是同一局（来回切页），就不重复存。
         champion：已经看过顶部，是"捍卫者"（冠军的总结页没有名次，存之前要看）。"""
         values = {name: r["value"] for name, r in results.items()}
-        if self._upgrade_if_same_page(results, problems, frame, when):
+        if self._upgrade_if_same_page(results, frame, when):
+            if champion:
+                self.post.on_champion(when, SOURCE_SUMMARY)
             return
-        if self._same_round_recent(when) and same_match(values, self.last_saved):
+        # 数字都一样就是同一局，不管隔了多久、回没回过大厅（可以在大厅里重新打开上一局）；宽一些的条件只在刚存下不久时用
+        if same_match(values, self.last_saved) or (
+                self._same_round_recent(when) and same_match(values, self.last_saved, split_kda=True)):
             self.log(f"[{when:%H:%M:%S}] 回到了同一局的总结页，不重复保存")
             return
         if note:
@@ -228,9 +219,9 @@ class SummaryWatcher:
         readings, scores = summary_readings(results)
         storage.save_readings(self.conn, match_id, SOURCE_SUMMARY, readings, f"{when:%Y-%m-%d %H:%M:%S}", scores)
         self.saved += 1
-        self.last_saved = values
+        self.last_saved, self.last_saved_results, self.last_saved_image = values, results, image_path
         self.last_saved_id, self.last_saved_when = match_id, when
-        self.last_saved_partial = bool(note) or bool(problems)
+        self.last_saved_partial = bool(problems)
         self.log(f"[{when:%H:%M:%S}] 第 {self.saved} 局（编号 {match_id}）：第 {show(values['placement'])} 名，"
                  f"击杀/助攻/击倒 {show(values['kda'])}，伤害 {show(values['damage'])}")
         for p in problems:
@@ -243,57 +234,44 @@ class SummaryWatcher:
                            "banner": "banner" in self.cfg and not champion})
 
     def _same_round_recent(self, when):
-        """「回到同一张总结页」这道判重只在**同一局还没收尾、且相隔不超过 SAME_MATCH_SECONDS** 时才用。
-        - last_saved 为空：交给 same_match 自己（主机模式重启后靠它查数据库上一局判重）
-        - 这一局已经收尾过（post.match_id 变了/清了，比如已经进了下一局或回了大厅）：不是同一张，
-          新的总结页要照常记，不能因为两局数字碰巧一样就被当成"回到同一张"而漏记一局
-        - 和上一次存下隔了超过 SAME_MATCH_SECONDS：也不可能是同一张总结页
-        防止"上一局是待确认、下一局数据又恰好相同"时把真正的新一局并掉/漏掉。"""
-        if self.last_saved is None:
-            return True
-        if getattr(self.post, "match_id", None) != self.last_saved_id:
-            return False
-        if self.last_saved_when is None:
-            return True
-        return (when - self.last_saved_when).total_seconds() <= SAME_MATCH_SECONDS
+        """刚存下的这一局还没收尾（没回大厅、没开下一局），而且离上次写进数据库不超过 SAME_MATCH_SECONDS 秒。
+        这时又看到的总结页只可能是同一局，可以用宽一些的条件认（same_match 的 split_kda、_upgrade_if_same_page）；
+        一局收尾以后就不行了：两局数字碰巧一样时，不能把新的一局当成上一局。"""
+        return (self.last_saved_id is not None and self.post.match_id == self.last_saved_id
+                and (when - self.last_saved_when).total_seconds() <= SAME_MATCH_SECONDS)
 
-    def _upgrade_if_same_page(self, results, problems, frame, when):
-        """上一次「没读全就离开」存成了待确认，这次又读到同一张总结页：把读数补进那一局，不新插一局。
-        判据：① 还是同一局（post.match_id 没变）；② 相隔不超过 SAME_MATCH_SECONDS；
-        ③ 没有反证——两次都读到伤害或生存时间且不一样（那才是另一张页面）。
-        名次、小队总击杀、伤害、生存、急救/重生都可能晚 1–2 秒才画出来，第一次可能是空的，
-        所以不能要求"两边都读到且相同"才补，否则第一次空得多的那局就会被当成新的一局再存一次。
-        补全后这一局不再是"待确认"（problems 为空时），地图、模式等已经写在那一局上，这里只更新总结页那几项。
-        ended_at 沿用第一次存下的时间（云同步的 clientId 由它算出，一改就会被当成新的一局再传一遍）。"""
-        if not self.last_saved_partial or self.last_saved_id is None or self.last_saved_when is None:
+    def _upgrade_if_same_page(self, results, frame, when):
+        """上一次没读全就存下了（待确认），这一局还没收尾、很快又读到同一张总结页：把新读到的项补进那一局，不新插一局。
+        返回 True：这次读数处理完了（有新内容就补上，没有就什么都不动）；False：不是这种情况，照常往下走。
+        名次、小队总击杀、急救、重生等都可能晚 1–2 秒才画出来，第一次可能是空的，所以不要求"两边都读到且相同"，
+        只要没有反证：两次都读到伤害或生存时间而且不一样，那是另一张总结页。
+        这次没读到的项保留上次的（第二次可能停得更短、读得更少）。截图换成这一张，位置和名字不变（名字要对得上
+        screenshots.SUMMARY_NAME，总结页截图才会一直留着）；结束时间不变，模式、地图等第一次存下时已经写好了，只更新总结页那几项。"""
+        if not self.last_saved_partial or not self._same_round_recent(when):
             return False
-        if getattr(self.post, "match_id", None) != self.last_saved_id:
-            return False  # 这一局已经收尾/换了一局，不再往回补
-        if (when - self.last_saved_when).total_seconds() > SAME_MATCH_SECONDS:
-            return False
-        values = {name: r["value"] for name, r in results.items()}
-        # 反证：两次都读到伤害/生存时间且不同 → 是另一张总结页，不补
         for key in ("damage", "survival_time"):
-            old, new = self.last_saved.get(key), values.get(key)
+            old, new = self.last_saved[key], results[key]["value"]
             if old is not None and new is not None and old != new:
                 return False
-        name = f"{self.saved:02d}_{when:%H%M%S}_full.png"
-        image_path = screenshots.path_for(self.run_dir, name)
-        image_path.parent.mkdir(parents=True, exist_ok=True)
-        save_png(image_path, frame)
-        # ended_at 必须沿用第一次存下时的值：云同步的 clientId = 「ended_at 的哈希」（见 paimiao_cloud/cloud/sync.py
-        # 的 client_id_of），这次若把它改成读全的时间，同一局会被算成新的 clientId 再传一遍，小程序里就多一条。
-        row = storage.get_match(self.conn, self.last_saved_id)
-        ended_at = (row["ended_at"] if row is not None and row["ended_at"] else f"{when:%Y-%m-%d %H:%M:%S}")
-        storage.update_match(self.conn, self.last_saved_id,
-                             summary_to_match(results, problems, ended_at, image_path))
-        readings, scores = summary_readings(results)
+        merged = {name: r if r["value"] is not None else self.last_saved_results[name] for name, r in results.items()}
+        values = {name: r["value"] for name, r in merged.items()}
+        if values == self.last_saved:
+            self.log(f"[{when:%H:%M:%S}] 回到了同一局的总结页，不重复保存")
+            return True
+        problems = summary_problems(merged)
+        save_png(self.last_saved_image, frame)
+        fields = summary_to_match(merged, problems, None, self.last_saved_image)
+        del fields["ended_at"]
+        storage.update_match(self.conn, self.last_saved_id, fields)
+        readings, scores = summary_readings(merged)
         storage.save_readings(self.conn, self.last_saved_id, SOURCE_SUMMARY, readings,
                               f"{when:%Y-%m-%d %H:%M:%S}", scores)
-        self.last_saved, self.last_saved_when = values, when
+        self.last_saved, self.last_saved_results, self.last_saved_when = values, merged, when
         self.last_saved_partial = bool(problems)
         self.log(f"[{when:%H:%M:%S}] 又读到同一局的总结页（上次没读全），补全编号 {self.last_saved_id}："
                  f"第 {show(values['placement'])} 名")
+        for p in problems:
+            self.log(f"           ⚠ {p}")
         self.post.on_summary_upgraded(self.last_saved_id, values, when)
         return True
 
