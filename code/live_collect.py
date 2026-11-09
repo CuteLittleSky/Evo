@@ -259,18 +259,24 @@ class SummaryWatcher:
 
     def _upgrade_if_same_page(self, results, problems, frame, when):
         """上一次「没读全就离开」存成了待确认，这次又读到同一张总结页：把读数补进那一局，不新插一局。
-        判据见 same_page（伤害、生存时间一致；kda 两边都读到也要一致），且两次读数相隔不超过 SAME_MATCH_SECONDS。
+        判据：① 还是同一局（post.match_id 没变）；② 相隔不超过 SAME_MATCH_SECONDS；
+        ③ 没有反证——两次都读到伤害或生存时间且不一样（那才是另一张页面）。
+        名次、小队总击杀、伤害、生存、急救/重生都可能晚 1–2 秒才画出来，第一次可能是空的，
+        所以不能要求"两边都读到且相同"才补，否则第一次空得多的那局就会被当成新的一局再存一次。
         补全后这一局不再是"待确认"（problems 为空时），地图、模式等已经写在那一局上，这里只更新总结页那几项。
         ended_at 沿用第一次存下的时间（云同步的 clientId 由它算出，一改就会被当成新的一局再传一遍）。"""
         if not self.last_saved_partial or self.last_saved_id is None or self.last_saved_when is None:
             return False
         if getattr(self.post, "match_id", None) != self.last_saved_id:
             return False  # 这一局已经收尾/换了一局，不再往回补
-        values = {name: r["value"] for name, r in results.items()}
-        if not same_page(values, self.last_saved):
-            return False
         if (when - self.last_saved_when).total_seconds() > SAME_MATCH_SECONDS:
             return False
+        values = {name: r["value"] for name, r in results.items()}
+        # 反证：两次都读到伤害/生存时间且不同 → 是另一张总结页，不补
+        for key in ("damage", "survival_time"):
+            old, new = self.last_saved.get(key), values.get(key)
+            if old is not None and new is not None and old != new:
+                return False
         name = f"{self.saved:02d}_{when:%H%M%S}_full.png"
         image_path = screenshots.path_for(self.run_dir, name)
         image_path.parent.mkdir(parents=True, exist_ok=True)
