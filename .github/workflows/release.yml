@@ -1,8 +1,9 @@
 # 打 Windows 包（派喵云同步版）并发到 GitHub Releases。
 #
 # 触发方式：
-#   - 推一个形如 v0.3.7 的 tag（版本号必须和 code/storage.py 里的 APP_VERSION 一致）
-#   - 或在 Actions 页面手动点「Run workflow」
+#   - 推 main，且这次推送的提交信息里含关键词 release（例如 "release 0.5.8：修复……"）。
+#     普通改动推 main 不会发版，避免误触发；版本号取自 code/storage.py 的 APP_VERSION。
+#   - 或在 Actions 页面手动点「Run workflow」（workflow_dispatch，不受关键词限制）
 #
 # 做的事：
 #   1. 装依赖（rapidocr / onnxruntime / opencv / dxam / pyinstaller …）
@@ -18,6 +19,7 @@ name: Release
 
 on:
   push:
+    branches: [main]   # 只有推 main 才考虑发版；是否真发还要看下面 build 的 if（提交信息含 release）
   workflow_dispatch:
 
 permissions:
@@ -25,6 +27,9 @@ permissions:
 
 jobs:
   build:
+    # 只在「手动触发」或「推 main 且提交信息含关键词 release」时才发版。
+    # 普通推 main 会直接跳过整个 job：不打包、不上传、不动 latest.json、不建 tag。
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, 'release')) }}
     runs-on: windows-latest
     timeout-minutes: 120   # 跨境上传偶尔很慢，但也不该挂 6 小时（默认 360）
     steps:
