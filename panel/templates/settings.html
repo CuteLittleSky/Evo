@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_season_import.html" import import_box, import_script with context %}
+{% from "_shots.html" import usage_desc, clean_desc, clean_button %}
 {% block title %}设置 · Evo{% endblock %}
 
 {# 设置页（/settings）：常规、提示音、识别、账号、数据与隐私、匿名统计、更新、关于 Evo、支持我 #}
@@ -320,7 +321,7 @@
       <div class="setting">
         <div class="setting-text">
           <div class="setting-name">截图</div>
-          <div class="setting-desc">共 <span class="num">{{ shot_count }}</span> 张 · {{ shot_size }}</div>
+          {{ usage_desc(None) }}
           <div class="setting-path">{{ captures_dir }}</div>
         </div>
         <div class="setting-actions">
@@ -355,24 +356,12 @@
       <div class="setting">
         <div class="setting-text">
           <div class="setting-name">删除已识别完的截图</div>
-          <div class="setting-desc">
-            {%- if shots_locked %}用源码运行时不删截图
-            {%- elif clean_count or clean_convert %}可以腾出约 <span class="num">{{ clean_size }}</span>（
-              {%- if clean_count %}删掉 <span class="num">{{ clean_count }}</span> 张{% endif %}
-              {%- if clean_count and clean_convert %}，{% endif %}
-              {%- if clean_convert %}<span class="num">{{ clean_convert }}</span> 张总结页截图转成 JPG{% endif %}）。
-              {%- if clean_convert %}总结页截图转成 JPG 留着，{% else %}总结页截图、{% endif %}待确认的局要用的截图{% if recording %}、正在记录的这一次{% endif %}不删
-            {%- else %}没有可以删的截图{% if shot_count %}：剩下的是总结页截图、待确认的局要用的{% if recording %}，或者正在记录{% endif %}{% endif %}
-            {%- endif %}
-          </div>
+          {{ clean_desc(None, shots_locked) }}
         </div>
-        {% set clean_what = ('删除 %d 张已识别完的截图' % clean_count if clean_count else '')
-                            ~ ('、' if clean_count and clean_convert else '')
-                            ~ ('把 %d 张总结页截图转成 JPG' % clean_convert if clean_convert else '') %}
         <form method="post" action="{{ url_for('clean_shots') }}" id="clean-form"
-              onsubmit="return confirm('确定{{ clean_what }}吗？大约可以腾出 {{ clean_size }}。\n总结页截图会留着（转成 JPG），战绩页照样能看；待确认的局要用的截图也留着。\n删除后无法恢复。')">
+              onsubmit="return confirm(document.getElementById('clean-btn').dataset.confirm)">
           <input type="hidden" name="token" value="{{ token }}">
-          <button type="submit" class="btn btn-danger" id="clean-btn" {{ 'disabled' if shots_locked or not (clean_count or clean_convert) }}>删除截图</button>
+          {{ clean_button(None, shots_locked) }}
         </form>
       </div>
       <div class="setting danger-zone">
@@ -779,6 +768,22 @@
       sw.querySelector(".switch-state").textContent = on ? "已开启" : "已关闭";
     });
   });
+  // "截图""删除已识别完的截图"两行的数字：页面先打开，再来取，按 id 换掉"正在统计…"（_shots.html）。
+  // 截图多时数一遍要一会儿，不让它挡着整页（2026-11-11）
+  fetch("{{ url_for('shots_usage') }}", { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error(); return r.text(); })
+    .then(function (html) {
+      new DOMParser().parseFromString(html, "text/html").querySelectorAll("[data-shots]").forEach(function (el) {
+        var old = document.getElementById(el.id);
+        if (old) old.replaceWith(document.importNode(el, true));
+      });
+    })
+    .catch(function () {
+      document.querySelectorAll(".setting-desc[data-shots][aria-busy]").forEach(function (el) {
+        el.removeAttribute("aria-busy");
+        el.textContent = "没统计出来，重新打开这一页再试";
+      });
+    });
   // 删截图：确认后按钮变成"正在删除…"（截图多时要一两秒）
   document.getElementById("clean-form").addEventListener("submit", function (e) {
     if (e.defaultPrevented) return;  // 确认框里点了"取消"

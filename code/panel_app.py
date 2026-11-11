@@ -1438,12 +1438,6 @@ def screen_size():
         return None
 
 
-def folder_usage(path):
-    """文件夹里有几个文件、一共多大。"""
-    files = [p for p in path.rglob("*") if p.is_file()] if path.is_dir() else []
-    return len(files), sum(p.stat().st_size for p in files)
-
-
 def size_text(n):
     if n >= 1024 ** 3:
         return f"{n / 1024 ** 3:.1f} GB"
@@ -1458,9 +1452,7 @@ def db_path():
 
 @app.route("/settings")
 def settings():
-    shot_count, shot_bytes = folder_usage(CAPTURES_DIR / "live")
-    recording = screenshots.recording_folder()
-    clean = screenshots.cleanable(db())
+    # 截图有几张、能删几张这里不数（截图多时要好几秒，整页都等着），页面打开后脚本再取 /settings/shots（_shots.html）
     size = screen_size()
     return render_template(
         "settings.html",
@@ -1479,14 +1471,8 @@ def settings():
         total=storage.query_matches(db(), limit=1)[1],
         review_count=storage.count_review(db()),
         captures_dir=CAPTURES_DIR / "live",
-        shot_count=shot_count,
-        shot_size=size_text(shot_bytes),
         keep_shots=app_settings.get(screenshots.KEEP_ALL_KEY, False) is True,
         shots_locked=screenshots.in_project(),  # 用源码运行：永远保留全部，开关和删除按钮都不能用
-        recording=recording is not None,
-        clean_count=clean.deleted,
-        clean_convert=clean.converted,
-        clean_size=size_text(clean.freed),
         version=storage.APP_VERSION,
         source_url=SOURCE_URL,
         feedback_url=FEEDBACK_URL,
@@ -1725,6 +1711,16 @@ def open_folder():
     os.startfile(target)
     flash(f"已在资源管理器中打开 {target}", "ok")
     return redirect(url_for("settings"))
+
+
+@app.get("/settings/shots")
+def shots_usage():
+    """设置页"截图""删除已识别完的截图"两行的数字（_shots.html）：设置页先打开、写着"正在统计…"，页面上的脚本再来取，
+    按 id 换掉。截图多时数一遍要一会儿（2026-11-11 群友反映：几万张截图时设置页要等十几秒才打开，像是点不进去）。"""
+    count, size, clean = screenshots.usage(db())
+    return render_template("_shots.html", shots_locked=screenshots.in_project(), shots={
+        "count": count, "size": size_text(size), "recording": screenshots.recording_folder() is not None,
+        "clean_count": clean.deleted, "clean_convert": clean.converted, "clean_size": size_text(clean.freed)})
 
 
 @app.post("/settings/keep-shots")
