@@ -11,6 +11,8 @@
 - 开局横幅：这几局是跳伞制（白金），横幅只有"排位赛"、没有"- 空降地点"，也要认得出；选传奇时左上角的小字"排位赛"不算
 - 视频设置文件里没有能用的全屏分辨率（2026-11-11）：记录程序看游戏画面认（game_aspect.AspectGuess）。认的规矩不用截图；
   再用 16:9 / 16:10 / 4:3 几段截图一张一张认，票都投对；4:3 两局在文件里没有分辨率时整局重放，存下的和知道比例时一样
+- 第 31 赛季（2026-11-11 用户小号，captures/s31/，文件名写着是什么画面）：4:3 拉伸、原生 16:9 各一局，视频设置文件不存在，
+  整局重放：认出比例，这一局的数、队友的传奇、大厅读数都对（数字对着当天 Evo 实际记下的）
 
 运行：python tests/test_aspect.py
 """
@@ -22,6 +24,7 @@ import re
 import time
 from collections import Counter
 
+import fake_game
 from fake_game import SHOTS, _TEMP, load, report, run_collect  # 要在项目代码之前导入
 
 import numpy as np
@@ -47,7 +50,23 @@ ASPECT_4_3 = SHOTS / "aspect" / "4x3_20261020"
 # 看游戏画面认比例用的几段截图：(文件夹, 正确的比例, 每几张取一张)。测试员的截图见 test_testers_1104.py、test_season_stats.py
 GUESS_FOLDERS = [(SHOTS / "testers" / "20261104_16x9_a", "16:9", 1), (SHOTS / "testers" / "20261104_16x9_b", "16:9", 1),
                  (ASPECT_16_10, "16:10", 4), (ASPECT_4_3, "4:3", 4), (SHOTS / "testers" / "20261104_4x3", "4:3", 1),
-                 (SHOTS / "testers" / "20261103_seasons_4x3", "4:3", 1)]
+                 (SHOTS / "testers" / "20261103_seasons_4x3", "4:3", 1),
+                 *((SHOTS / "s31" / f"{name}_20261111", ratio, 1) for name, ratio in
+                   (("4x3_match", "4:3"), ("16x9_match", "16:9"), ("16x9_seasons", "16:9"), ("4x3_seasons", "4:3")))]
+# 第 31 赛季用户小号 2026-11-11 各打的一局排位（captures/s31/，从 captures/frames/20261111_225214、_230326 每段挑的关键截图，
+# 文件名写着是什么画面；挑过的和全部截图重放出来的一样）：视频设置文件不存在，记录程序自己看画面认比例
+S31_MATCHES = (
+    ("4x3_match_20261111", "4:3",
+     {"placement": 16, "squad_kills": 5, "kills": 0, "assists": 0, "knockdowns": 0, "damage": 44, "survival_time": 70,
+      "rp_delta": -45, "rank_tier": "白金", "rank_division": "IV", "rank_progress": 142, "legend": "班加罗尔",
+      "mode": "ranked", "map": "风暴点", "needs_review": 0},
+     {"罗芭", "动力小子"}, [("白金", "IV", 187), ("白金", "IV", 142)]),  # 赛前大厅 187，打完 -45
+    ("16x9_match_20261111", "16:9",
+     {"placement": 17, "squad_kills": 1, "kills": 0, "assists": 0, "knockdowns": 0, "damage": 240, "survival_time": 205,
+      "rp_delta": -45, "rank_tier": "白金", "rank_division": "IV", "rank_progress": 97, "legend": "班加罗尔",
+      "mode": "ranked", "map": "风暴点", "needs_review": 0},
+     {"密客", "动力小子"}, [("白金", "IV", 142), ("白金", "IV", 142)]),
+)
 VIDEO_CONFIG = _TEMP / "videoconfig.txt"  # fake_game 把 EVO_VIDEOCONFIG 指到这里
 
 # 关键截图（文件名前 4 位）→ 应该认成的画面和读数
@@ -348,6 +367,28 @@ def guess_checks():
     return out
 
 
+def s31_checks():
+    """第 31 赛季的两局（4:3 拉伸、原生 16:9）：视频设置文件不存在，整局重放：认出比例，这一局、队友的传奇、大厅读数都对。"""
+    out = {}
+    for name, ratio, want, mates, lobbies in S31_MATCHES:
+        folder = SHOTS / "s31" / name
+        if not folder.is_dir():
+            print(f"  ⏭ 跳过 {name}：截图不在这台电脑上")
+            continue
+        VIDEO_CONFIG.unlink(missing_ok=True)
+        rows, _, log = run_collect(sorted(glob.glob(str(folder / "*.jpg"))), load)
+        conn = storage.connect(fake_game.last_db)
+        got_mates = {r["legend"] for r in conn.execute("SELECT legend FROM teammates")}
+        got_lobby = [tuple(r) for r in conn.execute("SELECT rank_tier, rank_division, rank_progress FROM lobby_readings")]
+        conn.close()
+        line = next((l for l in log if "看游戏画面认出" in l), "没有")
+        out[f"{name}：看游戏画面认出 {ratio}（{line}）"] = line.startswith(f"游戏画面比例：{ratio}（")
+        got = {k: rows[0][k] for k in want} if len(rows) == 1 else rows
+        out[f"{name}：记下 1 局 {got}"] = got == want and bool(rows[0]["player_name"])
+        out[f"{name}：两名队友的传奇 {got_mates}、大厅读数 {got_lobby}"] = got_mates == mates and got_lobby == lobbies
+    return out
+
+
 def replay_checks(folder, w, h, want_rows, ratio, guess=False):
     """guess：视频设置文件里没有分辨率（1diot 那种），要记录程序自己看游戏画面认出来。"""
     if guess:
@@ -374,6 +415,7 @@ def replay_checks(folder, w, h, want_rows, ratio, guess=False):
 def main():
     print("游戏画面比例（16:9 / 16:10 / 4:3）")
     checks = {**layout_checks(), **detect_checks(), **guess_watcher_checks(), **panel_checks()}
+    checks.update({f"第 31 赛季：{k}": v for k, v in s31_checks().items()})
     if not (ASPECT_16_10.is_dir() and ASPECT_4_3.is_dir()):
         print(f"  ⏭ 跳过截图部分：找不到 {ASPECT_16_10} 或 {ASPECT_4_3}（截图不在仓库里）")
         return report(checks)
