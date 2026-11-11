@@ -115,10 +115,10 @@
   - 转告合作者：第 1 个 tab 换成首页、地图页成了「全部地图」子页面（他的 `AI-CONTEXT.md`、`PRODUCT.md` 跟着改了），`evo_mp` 多了 `home`、`crowd`；图鉴 4 个传奇中文名和游戏里不一样；段位叫法（新手 / 猎杀者 vs 菜鸟 / Apex 猎杀者）；「我的战绩」那栏要不要也放广告；奖杯图标没用了
   - 代码给他用的条件（要和用户商量）
 - [ ] **解绑改成一律删云端数据**（11-11 玩家反馈：选"只解绑"后小程序全空、"解绑并删除"点了没反应。用户定：去掉"只解绑"，解绑就删）。代码做完：派圈 `main` 已合并并推送（合并提交 `27dc370`；定时清理 `7067474`，11-11 用户同意推送），Evo 这边 `cloud_sync.py`、`panel_cloud.py`、`_cloud.html`（只在本机，随下一版发）。剩下：
-  - 部署 `evo_mp`、`evo_pc`、`evo_qrpool`（开发者工具右键「上传并部署：云端安装依赖」；部署后老版小程序选"只解绑"也会删）。**要从 `main` 部署**：`E:\paiquan-miniprogram` 现在在别的窗口的分支 `feat/pro-photos-active` 上，没有这些改动；`E:\paiquan-main` 是 `main` 的工作目录（git worktree），在开发者工具里打开它部署，部署完可删（`git worktree remove E:\paiquan-main`）
+  - 11-12 用户部署了 `evo_mp`、`evo_pc`、`evo_qrpool`（从临时的 `main` 工作目录，用完已删），下载线上的三个函数和 `main`（`7067474`）逐个文件比过，一致。现在线上老版小程序选"只解绑"也会删
   - 合作者上传小程序、提审（「解绑并删除」没反应要等新版上线才算修好）
-  - 以前选"只解绑"留下的数据（11-11 用户说清掉）：`evo_qrpool` 补完码顺带清（派圈 `7067474`，一次最多 5 台、清过的记 `swept_at`），部署后在控制台看 `evo_devices` 里没绑定的有没有都记上 `swept_at`
-  - 隐私政策（11-11 用户确认了新说法）：`PRIVACY.md`、`site/privacy.html` 已改，生效日期 11-11；等云函数部署了再推送 Evo、上传官网（`wrangler pages deploy site --project-name evotracker --branch main`）
+  - 以前选"只解绑"留下的数据（11-11 用户说清掉）：`evo_qrpool` 补完码顺带清（一次最多 5 台、清过的记 `swept_at`）。用户在控制台看 `evo_devices` 里没绑定、有 `unbound_at` 的是不是都记上了 `swept_at`
+  - 隐私政策：Evo 已推送（11-12）；官网隐私页还没上传（Claude 运行时被安全检查拦了，用户自己运行 `wrangler pages deploy site --project-name evotracker --branch main`）
 - [ ] **首页「常用武器」那块**：Evo 的 `cloud_sync.py` 上传 `weapon_holds`（`evo_pc` 加字段）、`evo_mp.crowd` 加武器统计、首页加卡；Evo 要发新版（底座，先问用户）
 - [ ] **「比赛」页加选手页（数据来自 Liquipedia）**（11-02 开始，派圈仓库分支 `feat/pro-player`；用户拿到了 Liquipedia 数据库 API 的授权）：
   - 用户定的：选手页四块全要（基本资料、常用传奇、历届赛事成绩、转会经历），Liquipedia 上没有的项不显示；资料在前；历届成绩默认只看大赛（1、2 级正式比赛），可切全部；收录比赛页上出现的选手；**云函数定时抓**（存集合 `pro_players`，用户打开页面只读数据库）；比赛页可以**当作重构来做**，用户想往 Opta / 懂球帝 / 虎扑那样做（还没想好，先做选手页 + 简单入口，再拿方案给用户看）；ALS 的「选手能力」数据（击杀、伤害… vs 全场平均）以后再加
