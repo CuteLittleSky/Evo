@@ -127,7 +127,7 @@ def _first(got, order):
 
 def settle(conn, match_id, log=print):
     """按这一局各来源的读数（readings 表）定下名次、击杀、助攻、伤害、老板分、RP，并重写备注、待确认。
-    备注里其他来源写的问题（经验值页明细对不上、大厅校准对不上……）保留。"""
+    备注里其他来源写的问题（经验值页明细对不上……）保留。"""
     got, sources = {}, set()  # 项 → {来源: 值}；这一局有哪些来源（没读到的也算，比如总结页上名次没读到）
     for r in storage.readings_of(conn, match_id):
         sources.add(r["source"])

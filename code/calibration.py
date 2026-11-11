@@ -3,23 +3,27 @@
 前后两次大厅读数之间的排位局，RP 加起来应该等于两次总分之差（总分 = 段位换算成的连续分数，见 ranks.score）：
 - 对得上：没问题
 - 只缺一局的 RP（比如没进经验值页、成盒后提前回了大厅）：用差值补上，来源记"大厅校准"
-- 对不上，或者缺两局以上：这几局标"待确认"，备注写出差多少；总分仍以大厅为准
-- 跨了大段（如钻石 → 大师、钻石 → 白金）：升大段可能有奖励分、降大段有保护，前后之差 ≠ 各局 RP 之和，只写日志不标
-- 两次大厅中间换了赛季（config/seasons.json，段位重置）：只写日志不标（重置后还在同一个大段时，前后之差也对不上）
-- 两次之间没有记下任何排位局但总分变了（Evo 没开的时候打过）：只写日志
+- 对不上（某局的 RP 读错了、缺两局以上、跨大段的升段奖励和降段保护、没开 Evo 时打过、别人用这个号打过）：
+  不标待确认，战绩页在那次回大厅的位置显示一行"校准分数"（总分之差 − 中间各局 RP 之和，见 adjustments）。
+  2026-11-11 用户决定：以前对不上就把中间各局全标待确认，打完直接重新匹配的玩家两次大厅之间常隔十几局，
+  一局的 RP 读错（比如右上角的 -38 赛后被免扣）整页都标黄。校准行不存进数据库，打开页面时现算：
+  玩家在战绩页把某局的 RP 改对，校准行就跟着变小或消失。总览页的 RP 合计、场均 RP 不算校准行（用户决定）
+- 两次大厅中间换了赛季（config/seasons.json，段位重置）：只写日志，也不显示校准行
 - 大厅之前最近的那一局没有段位（没进经验值页）：它结束后的段位就是这次大厅读到的，顺便补上（匹配等不算排位的局不补；
   那一局结束一小时以后才读到的大厅、那一局是上个赛季的都不补，见 FILL_WITHIN）
 只看同一个玩家名的局（多账号），还不知道玩家名的局也算进去。
 """
 
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timedelta
 
 import ranks
 import seasons
 import storage
-from post_match import SOURCE_LOBBY, settle
+from post_match import SOURCE_LOBBY, _split_notes, settle
 
 RP_RANGE = (-200, 600)  # 补出来的 RP 不在这个范围里，说明中间还有别的变化（掉线惩罚、赛季重置……），不补
+OLD_NOTE = "大厅校准："  # 以前对不上时写进各局备注的开头（见 clear_old_flags）
 # 一局结束多久以内读到的大厅，才把段位补给那一局。打完回大厅一般只要几分钟；隔得久了中间可能换了赛季（段位重置）、
 # 在别处打过：2026-11-03 第 31 赛季开始时，上一局是 10-27 没有段位的钻石局，会被补成新赛季的白银 I
 FILL_WITHIN = timedelta(hours=1)
@@ -42,49 +46,78 @@ def calibrate(conn, reading, log=print):
         log(f"           大厅校准：这是第一次读到大厅的段位（总分 {reading['score']}），以后从这里开始对账")
         return
     prev = previous[-1]
-    between = [m for m in games if m["ended_at"] > prev["read_at"]]
-    ranked = [m for m in between if m["mode"] == "ranked" or m["rp_delta"] is not None]
+    ranked, known, missing = _window([m for m in games if m["ended_at"] > prev["read_at"]])
     diff = reading["score"] - prev["score"]
-    known = sum(m["rp_delta"] for m in ranked if m["rp_delta"] is not None)
-    missing = [m for m in ranked if m["rp_delta"] is None]
-    ids = "、".join(str(m["match_id"]) for m in ranked)
     head = f"           大厅校准：上次大厅总分 {prev['score']}，这次 {reading['score']}（{diff:+d}）"
     if seasons.of(prev["read_at"]) != seasons.of(reading["read_at"]):
         log(f"{head}，中间换了赛季（段位重置），不核对")
         return
     if not ranked:
         if diff:
-            log(f"{head}，但中间没有记下排位局（可能 Evo 没开的时候打过），不核对")
+            log(f"{head}，但中间没有记下排位局（可能 Evo 没开的时候打过）：战绩页显示校准分数 {diff:+d}")
         return
-    if prev["rank_tier"] != reading["rank_tier"]:
-        log(f"{head}，中间 {len(ranked)} 局（编号 {ids}）RP 加起来 {known:+d}；跨了大段（{prev['rank_tier']} → "
-            f"{reading['rank_tier']}，可能有升段奖励或降段保护），不核对")
-        return
-    if not missing:
-        if known == diff:
-            log(f"{head}，中间 {len(ranked)} 局（编号 {ids}）RP 加起来正好 {known:+d}，对上了")
-        else:
-            _flag(conn, ranked, f"大厅校准：前后两次大厅总分相差 {diff:+d}，中间 {len(ranked)} 局（编号 {ids}）"
-                                f"RP 加起来 {known:+d}，对不上，请核对", log)
-        return
+    ids = "、".join(str(m["match_id"]) for m in ranked)
     rest = diff - known
-    if len(missing) == 1 and RP_RANGE[0] <= rest <= RP_RANGE[1]:
+    cross = prev["rank_tier"] != reading["rank_tier"]
+    if not cross and len(missing) == 1 and RP_RANGE[0] <= rest <= RP_RANGE[1]:
         m = missing[0]
         storage.save_readings(conn, m["match_id"], SOURCE_LOBBY, {"rp_delta": rest}, reading["read_at"])
         settle(conn, m["match_id"], log)
         log(f"{head}，编号 {m['match_id']} 没有 RP，用差值补上 {rest:+d}")
         return
-    _flag(conn, missing, f"大厅校准：前后两次大厅总分相差 {diff:+d}，中间有 {len(missing)} 局没读到 RP，"
-                         f"这几局合计 {rest:+d}，请核对", log)
+    sums = f"中间 {len(ranked)} 局（编号 {ids}）RP 加起来 {known:+d}" + \
+        (f"，其中 {len(missing)} 局没读到 RP" if missing else "")
+    if not rest:
+        log(f"{head}，{sums}，对上了")
+        return
+    why = f"；跨了大段（{prev['rank_tier']} → {reading['rank_tier']}，可能有升段奖励或降段保护）" if cross else ""
+    log(f"{head}，{sums}{why}，对不上：战绩页显示校准分数 {rest:+d}，不标待确认")
 
 
-def _flag(conn, matches, note, log):
-    for m in matches:
-        old = m["review_note"] or ""
-        if note in old:
+def _window(between):
+    """两次大厅之间的局里，算排位的局（模式是排位，或者有 RP）、读到的 RP 之和、没读到 RP 的局。"""
+    ranked = [m for m in between if m["mode"] == "ranked" or m["rp_delta"] is not None]
+    known = sum(m["rp_delta"] for m in ranked if m["rp_delta"] is not None)
+    return ranked, known, [m for m in ranked if m["rp_delta"] is None]
+
+
+def adjustments(lobby, games):
+    """战绩页的"校准分数"行：前后两次大厅的总分之差，减去中间各局读到的 RP 之和，不是 0 的每次回大厅一行。
+    lobby：大厅读数（storage.lobby_readings，所有账号）；games：对局（storage.all_matches，所有账号），都按时间从早到晚。
+    规则和 calibrate 一样（同一个玩家名，还不知道玩家名的局也算；换了赛季的那一次不算）。
+    返回 [{read_at, player_name, before, after（前后两次大厅读数）, games（中间的排位局数）, missing（其中没读到 RP 的）,
+    known（读到的 RP 之和）, delta（校准分数）}]，按时间从早到晚。"""
+    ends = [m["ended_at"] or "" for m in games]
+    out = []
+    for i, now in enumerate(lobby):
+        if now["score"] is None:
             continue
-        storage.update_match(conn, m["match_id"], {"needs_review": 1, "review_note": f"{note}；{old}" if old else note})
-    log(f"           ⚠ {note}（标待确认：编号 {'、'.join(str(m['match_id']) for m in matches)}）")
+        prev = next((lobby[j] for j in range(i - 1, -1, -1)
+                     if lobby[j]["score"] is not None and lobby[j]["read_at"] < now["read_at"]
+                     and _same_player(lobby[j]["player_name"], now["player_name"])), None)
+        if prev is None or seasons.of(prev["read_at"]) != seasons.of(now["read_at"]):
+            continue
+        between = games[bisect_right(ends, prev["read_at"]):bisect_right(ends, now["read_at"])]
+        ranked, known, missing = _window([m for m in between if _same_player(m["player_name"], now["player_name"])])
+        delta = now["score"] - prev["score"] - known
+        if delta:
+            out.append({"read_at": now["read_at"], "player_name": now["player_name"], "before": prev, "after": now,
+                        "games": len(ranked), "missing": len(missing), "known": known, "delta": delta})
+    return out
+
+
+def clear_old_flags(conn):
+    """以前大厅校准对不上时，把中间各局标了待确认、备注开头写"大厅校准："（2026-11-11 起改成显示校准行，见文件开头）。
+    还没确认的局去掉这条备注；没有别的问题了就不再待确认。确认过的局不动（备注留着当初为什么待确认）。
+    每次打开面板、开始记录时调用一次，没有这样的局时什么都不做。返回改了几局。"""
+    rows = conn.execute("SELECT match_id, review_note FROM matches WHERE needs_review = 1 AND review_note LIKE ?",
+                        (f"%{OLD_NOTE}%",)).fetchall()
+    for row in rows:
+        problems, info = _split_notes(row["review_note"])
+        problems = [p for p in problems if not p.startswith(OLD_NOTE)]
+        storage.update_match(conn, row["match_id"], {"review_note": "；".join(problems + info) or None,
+                                                     "needs_review": int(bool(problems))})
+    return len(rows)
 
 
 def _fill_last_rank(conn, reading, games, previous, log):

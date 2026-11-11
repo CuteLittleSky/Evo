@@ -46,6 +46,7 @@ from time import perf_counter, process_time  # 单独导入：测试会把本文
 
 import cv2
 
+import calibration
 import capture
 import game_lang
 import screenshots
@@ -660,6 +661,8 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     run_dir = CAPTURES_DIR / "live" / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     conn = storage.connect(db_path)
+    if calibration.clear_old_flags(conn):  # 以前大厅校准对不上标的待确认（2026-11-11 起改成战绩页显示校准行）
+        log("以前因为大厅校准对不上标成待确认的局，已经取消（现在战绩页单独显示一行校准分数）")
 
     def keep_now():
         return screenshots.keep_all() if keep_all is None else keep_all
