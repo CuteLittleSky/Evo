@@ -330,11 +330,13 @@ def evo_settings(folder):
 
 def game_aspect_guess(evo_dirs, video_path=None):
     """游戏画面的宽高比：(宽高比或 None, 说明)，None = 和截图一样。和 Evo 的 game_aspect.current() 一样的顺序：
-    Evo 设置页手动选的 → Apex 视频设置（全屏时）→ 和截图一样。Evo 的设置直接读 settings.json（不 import app_settings）。"""
+    Evo 设置页手动选的 → Apex 视频设置（全屏时）→ 和截图一样（Evo 的记录程序这时看游戏画面认，测试工具不认）。
+    Evo 的设置直接读 settings.json（不 import app_settings）。"""
     picked = evo_settings(evo_dirs[0][0]).get(SETTING_KEY, AUTO) if evo_dirs else AUTO
     if picked in ASPECTS:
         return ASPECTS[picked], f"Evo 设置页手动选的 {picked}"
-    return from_video_config(video_path)
+    aspect, why = from_video_config(video_path)
+    return aspect, why if aspect else f"{why}，按截图的比例"
 
 
 def copy_evo_logs(dirs, out_dir):

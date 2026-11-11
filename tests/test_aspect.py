@@ -9,13 +9,18 @@
 - 整局重放：假游戏把截图按顺序喂给记录程序，视频设置文件（假的，放在临时文件夹）写着 2560×1600 / 2560×1920 全屏，
   记录程序自己检测出比例，存下的每一局（包括开局画面读到的地图）和经验值页、大厅对得上
 - 开局横幅：这几局是跳伞制（白金），横幅只有"排位赛"、没有"- 空降地点"，也要认得出；选传奇时左上角的小字"排位赛"不算
+- 视频设置文件里没有能用的全屏分辨率（2026-11-11）：记录程序看游戏画面认（game_aspect.AspectGuess）。认的规矩不用截图；
+  再用 16:9 / 16:10 / 4:3 几段截图一张一张认，票都投对；4:3 两局在文件里没有分辨率时整局重放，存下的和知道比例时一样
 
 运行：python tests/test_aspect.py
 """
 
 import glob
+import os
 import random
 import re
+import time
+from collections import Counter
 
 from fake_game import SHOTS, _TEMP, load, report, run_collect  # 要在项目代码之前导入
 
@@ -28,15 +33,21 @@ import panel_app
 import storage
 from eliminated import read_eliminated
 from hud import KP_ROW, Hud
+from legends import LegendDetector
 from lobby import LobbyReader
 from match_start import read_match_start
 from ocr import SMALL_CROP_PARAMS, create_engine, load_config
-from screens import ScreenDetector
+from screens import GameScreens, ScreenDetector
+from season_stats import SeasonPage
 from summary_page import read_summary
 from xp_page import read_xp
 
 ASPECT_16_10 = SHOTS / "aspect" / "16x10_20261020"
 ASPECT_4_3 = SHOTS / "aspect" / "4x3_20261020"
+# 看游戏画面认比例用的几段截图：(文件夹, 正确的比例, 每几张取一张)。测试员的截图见 test_testers_1104.py、test_season_stats.py
+GUESS_FOLDERS = [(SHOTS / "testers" / "20261104_16x9_a", "16:9", 1), (SHOTS / "testers" / "20261104_16x9_b", "16:9", 1),
+                 (ASPECT_16_10, "16:10", 4), (ASPECT_4_3, "4:3", 4), (SHOTS / "testers" / "20261104_4x3", "4:3", 1),
+                 (SHOTS / "testers" / "20261103_seasons_4x3", "4:3", 1)]
 VIDEO_CONFIG = _TEMP / "videoconfig.txt"  # fake_game 把 EVO_VIDEOCONFIG 指到这里
 
 # 关键截图（文件名前 4 位）→ 应该认成的画面和读数
@@ -126,11 +137,11 @@ def detect_checks():
     write_video_config(1, 2560, 1920, encoding="utf-8")
     out["视频设置文件（UTF-8）：全屏 2560×1920 → 4:3"] = game_aspect.name(game_aspect.from_video_config()[0]) == "4:3"
     write_video_config(0, 2560, 1600)
-    out["不是全屏（文件里的分辨率不一定在用）：按截图的比例"] = game_aspect.from_video_config()[0] is None
+    out["不是全屏（文件里的分辨率不一定在用）：文件里没有答案，记录时看游戏画面认"] = game_aspect.from_video_config()[0] is None
     VIDEO_CONFIG.write_text("乱写的内容", encoding="utf-8")
-    out["文件里没有分辨率：按截图的比例"] = game_aspect.from_video_config()[0] is None
+    out["文件里没有分辨率：记录时看游戏画面认"] = game_aspect.from_video_config()[0] is None
     VIDEO_CONFIG.unlink()
-    out["没有这个文件：按截图的比例"] = game_aspect.from_video_config()[0] is None
+    out["没有这个文件：记录时看游戏画面认"] = game_aspect.from_video_config()[0] is None
 
     frame, log = np.zeros((1440, 2560, 3), np.uint8), []
     write_video_config(1, 2560, 1920)
@@ -158,6 +169,71 @@ def detect_checks():
     return out
 
 
+class StubGuess:
+    """代替 AspectGuess：按顺序给出每次投的票，记下认了几次。"""
+
+    def __init__(self, votes):
+        self.votes, self.calls = list(votes), 0
+
+    def vote(self, frame):
+        self.calls += 1
+        return (self.votes.pop(0), "左下角的传奇") if self.votes else (None, "")
+
+
+def guess_watcher_checks():
+    """视频设置文件里没有能用的全屏分辨率：记录程序看游戏画面认（AspectWatcher + AspectGuess，不用截图）。"""
+    out = {}
+    frame, small, log = np.zeros((1080, 1920, 3), np.uint8), np.zeros((720, 1280, 3), np.uint8), []
+    clock = [0.0]
+    VIDEO_CONFIG.write_text('"VideoConfig"\n{\n\t"setting.fullscreen"\t\t"1"\n}\n', encoding="utf-16")  # 1diot 那种：没有分辨率
+    stub = StubGuess([4 / 3, None, 16 / 9, 4 / 3, 4 / 3])
+    watcher = game_aspect.AspectWatcher(log.append, clock=lambda: clock[0], guess=stub)
+    seen = []
+    for _ in range(6):
+        watcher.check(frame)
+        seen.append(layout.game_aspect())
+        clock[0] += 0.3  # 对局中每 0.3 秒一张，每秒才认一次
+    early = stub.calls
+    while stub.votes:
+        clock[0] += game_aspect.GUESS_SECONDS
+        watcher.check(frame)
+        seen.append(layout.game_aspect())
+    out[f"认出来之前按截图的比例，日志说正在看游戏画面认（{log[0]}）"] = (
+        seen[0] is None and log[0].startswith("游戏画面比例：先按截图的 16:9，看游戏画面认") and "没有分辨率" in log[0])
+    out[f"每隔 {game_aspect.GUESS_SECONDS:g} 秒才认一次（每 0.3 秒一张的 6 张里认了 {early} 次）"] = early == 2
+    out[f"同一种比例认出 {game_aspect.GUESS_VOTES} 次才用（中间投了一次 16:9、一次没投出）：最后是 4:3，日志写从哪认出"] = (
+        seen[-2] is None and seen[-1] == 4 / 3 and log[-1].startswith("游戏画面比例：4:3（")
+        and "看游戏画面认出：左下角的传奇" in log[-1])
+    calls = stub.calls
+    clock[0] += game_aspect.CHECK_SECONDS
+    watcher.check(frame)
+    out["认出来以后不再认"] = stub.calls == calls and layout.game_aspect() == 4 / 3
+    VIDEO_CONFIG.write_text('"VideoConfig"\n{\n\t"setting.fullscreen"\t\t"0"\n}\n', encoding="utf-16")
+    os.utime(VIDEO_CONFIG, (time.time() + 10, time.time() + 10))
+    clock[0] += game_aspect.CHECK_SECONDS
+    watcher.check(frame)
+    out["视频设置文件改了、还是没有分辨率：同样大小的截图照用认出来的 4:3，不重新认"] = (
+        stub.calls == calls and layout.game_aspect() == 4 / 3)
+    stub.votes = [16 / 9] * game_aspect.GUESS_VOTES
+    clock[0] += game_aspect.CHECK_SECONDS
+    watcher.check(small)
+    out["截图大小变了：重新认"] = layout.game_aspect() is None and stub.calls == calls + 1
+    write_video_config(1, 2560, 1920)
+    clock[0] += game_aspect.CHECK_SECONDS
+    watcher.check(small)
+    calls = stub.calls
+    clock[0] += game_aspect.GUESS_SECONDS
+    watcher.check(small)
+    out["文件里有了全屏分辨率：用文件里的，不再认"] = layout.game_aspect() == 4 / 3 and stub.calls == calls
+    watcher.reset()
+    plain = game_aspect.AspectWatcher(log.append, clock=lambda: clock[0])
+    VIDEO_CONFIG.unlink()
+    plain.check(frame)
+    out["没给 AspectGuess（测试、工具）：和以前一样按截图的比例"] = layout.game_aspect() is None
+    plain.reset()
+    return out
+
+
 def panel_checks():
     out = {}
     panel_app.app.config["DB"] = str(_TEMP / "panel.db")
@@ -176,6 +252,8 @@ def panel_checks():
     out["没带口令：拒绝"] = client.post("/settings/game-aspect", data={"aspect": "auto"}).status_code != 302
     app_settings.set_value(game_aspect.SETTING_KEY, "auto")
     VIDEO_CONFIG.unlink()
+    page = client.get("/settings").get_data(as_text=True)
+    out["没有视频设置文件：设置页说记录时看游戏画面认"] = "没找到 Apex 的视频设置文件，记录时看游戏画面认" in page
     return out
 
 
@@ -244,12 +322,46 @@ def kp_row_checks(engine):
             counts["错"] == 0 and counts["没显示"] == 0 and counts["对"] >= 0.9 * total}
 
 
-def replay_checks(folder, w, h, want_rows, ratio):
-    write_video_config(1, w, h)
+def guess_checks():
+    """看游戏画面认比例（game_aspect.AspectGuess）：每段截图按时间顺序一张一张认（大的每几张取一张），
+    投出来的票都要是正确的比例，而且够定下来。不用识别引擎。"""
+    out = {}
+    screens = GameScreens(None)
+    season = SeasonPage(None).detector  # 录入模式里的数据页
+    guess = game_aspect.AspectGuess(LegendDetector(), lambda: [*screens.detectors.values(), season])
+    for folder, want, step in GUESS_FOLDERS:
+        if not folder.is_dir():
+            print(f"  ⏭ 跳过 {folder.name}：截图不在这台电脑上")
+            continue
+        files = sorted(p for p in folder.rglob("*") if p.suffix.lower() in (".jpg", ".png"))[::step]
+        votes = Counter()
+        for path in files:
+            img = load(str(path))
+            if img.shape[0] < 500:  # 测试工具存的缩略图
+                continue
+            found, _ = guess.vote(img)
+            if found is not None:
+                votes[game_aspect.name(found)] += 1
+        out[f"{folder.parent.name}/{folder.name}（{want}）：{len(files)} 张投出 {dict(votes)}"] = (
+            set(votes) == {want} and votes[want] >= game_aspect.GUESS_VOTES)
+    out["认完换算回原来的比例"] = layout.game_aspect() is None
+    return out
+
+
+def replay_checks(folder, w, h, want_rows, ratio, guess=False):
+    """guess：视频设置文件里没有分辨率（1diot 那种），要记录程序自己看游戏画面认出来。"""
+    if guess:
+        VIDEO_CONFIG.write_text('"VideoConfig"\n{\n\t"setting.fullscreen"\t\t"1"\n}\n', encoding="utf-16")
+    else:
+        write_video_config(1, w, h)
     rows, _, log = run_collect(sorted(glob.glob(str(folder / "*.jpg"))), load)
     VIDEO_CONFIG.unlink()
-    out = {f"自动检测出 {ratio}（日志：{next((l for l in log if '游戏画面比例' in l), '没有')}）":
-           any(l.startswith(f"游戏画面比例：{ratio}（自动检测") for l in log)}
+    if guess:
+        line = next((l for l in log if "看游戏画面认出" in l), "没有")
+        out = {f"看游戏画面认出 {ratio}（日志：{line}）": line.startswith(f"游戏画面比例：{ratio}（")}
+    else:
+        out = {f"自动检测出 {ratio}（日志：{next((l for l in log if '游戏画面比例' in l), '没有')}）":
+               any(l.startswith(f"游戏画面比例：{ratio}（自动检测") for l in log)}
     out[f"记下 {len(want_rows)} 局（{len(rows)}）"] = len(rows) == len(want_rows)
     for i, (row, want) in enumerate(zip(rows, want_rows), 1):
         got = {k: row[k] for k in want}
@@ -261,16 +373,19 @@ def replay_checks(folder, w, h, want_rows, ratio):
 
 def main():
     print("游戏画面比例（16:9 / 16:10 / 4:3）")
-    checks = {**layout_checks(), **detect_checks(), **panel_checks()}
+    checks = {**layout_checks(), **detect_checks(), **guess_watcher_checks(), **panel_checks()}
     if not (ASPECT_16_10.is_dir() and ASPECT_4_3.is_dir()):
         print(f"  ⏭ 跳过截图部分：找不到 {ASPECT_16_10} 或 {ASPECT_4_3}（截图不在仓库里）")
         return report(checks)
+    checks.update({f"看游戏画面认比例：{k}": v for k, v in guess_checks().items()})
     engine = create_engine(SMALL_CROP_PARAMS)
     for name, folder, aspect, key in (("16:10", ASPECT_16_10, 16 / 10, KEY_16_10), ("4:3", ASPECT_4_3, 4 / 3, KEY_4_3)):
         checks.update({f"{name}：{k}": v for k, v in screenshot_checks(engine, folder, aspect, key).items()})
     checks.update(kp_row_checks(engine))
     checks.update({f"16:10 整局重放：{k}": v for k, v in replay_checks(ASPECT_16_10, 2560, 1600, ROWS_16_10, "16:10").items()})
     checks.update({f"4:3 两局重放：{k}": v for k, v in replay_checks(ASPECT_4_3, 2560, 1920, ROWS_4_3, "4:3").items()})
+    checks.update({f"4:3 两局重放、视频设置文件里没有分辨率：{k}": v
+                   for k, v in replay_checks(ASPECT_4_3, 2560, 1920, ROWS_4_3, "4:3", guess=True).items()})
     return report(checks)
 
 

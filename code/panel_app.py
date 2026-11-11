@@ -1417,7 +1417,7 @@ def settings():
     return render_template(
         "settings.html",
         resolution=f"{size[0]} × {size[1]}" if size else None,
-        aspect=aspect_view(size),
+        aspect=aspect_view(),
         language=language_view(),
         move=move_view(),
         autostart={**autostart.status(), "blocked": autostart.unavailable(),
@@ -1461,11 +1461,12 @@ def settings():
     )
 
 
-def aspect_view(size):
-    """设置页"游戏画面比例"：选了什么、自动检测出什么（见 game_aspect.py）。"""
+def aspect_view():
+    """设置页"游戏画面比例"：选了什么、自动检测出什么（见 game_aspect.py）。文件里没有能用的全屏分辨率时，
+    记录程序看游戏画面认（结果写在日志里，这个页面不知道），这里只说会这样认。"""
     found, why = game_aspect.from_video_config()
-    if found is None and size:
-        found = size[0] / size[1]  # 没读到游戏设置：和屏幕一样
+    if found is None:
+        why = f"{why}，{game_aspect.GUESS_HINT}（对局中左下角的传奇、大厅等画面）"
     return {"choice": game_aspect.choice(), "auto": game_aspect.AUTO, "options": list(game_aspect.ASPECTS),
             "detected": game_aspect.name(found) if found else None, "why": why}
 
