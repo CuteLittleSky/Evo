@@ -282,6 +282,10 @@ def settings_checks():
     def page():
         return client.get("/settings").get_data(as_text=True)
 
+    def shots():
+        """设置页打开后脚本取的那几块（张数、能腾出多少、"删除截图"按钮，_shots.html）。"""
+        return client.get("/settings/shots").get_data(as_text=True)
+
     def post(url, **data):
         return client.post(url, data={"token": token, **data}, follow_redirects=True)
 
@@ -308,14 +312,34 @@ def settings_checks():
         converting = [p for p in finished if screenshots.is_summary(p)]
         size = panel_app.size_text(sum(p.stat().st_size for p in expected)
                                    + round(sum(p.stat().st_size for p in converting) * (1 - screenshots.WEBP_RATIO)))
-        before = page()
+        everything = [p for p in live.rglob("*") if p.is_file()]
+        whole_folder = (len(everything), sum(p.stat().st_size for p in everything))  # 删之前的样子
+        folders = screenshots.finished_folders(skip=screenshots.recording_folder())
+        old_way = (len(screenshots.removable(conn, folders)), len(screenshots.convertible(folders)))  # 真删时用的
+        counted = screenshots.usage(conn)
+        with mock.patch.object(screenshots, "usage", side_effect=AssertionError("打开设置页时不该数截图")):
+            quick = client.get("/settings")
+        before = shots()
         cleaned = post("/settings/clean-shots").get_data(as_text=True)
-        after = page()
+        after = shots()
+    clean_btn = re.search(r'<button[^>]*id="clean-btn"[^>]*>', before)
     return {
         "设置页：开关默认关、能点": keep_switch(off_page) == (False, True),
         "设置页：打开开关存进 settings.json，提示从下一局开始": turned_on is True
         and keep_switch(on_page) == (True, True) and "从下一局开始" in on_page,
         "设置页：关上开关": turned_off is False,
+        "设置页：打开时不数截图，那几块写着正在统计（读屏软件知道在等），删除按钮先不能点（2026-11-11）":
+        quick.status_code == 200 and 'id="shots-usage" data-shots aria-busy="true">正在统计…' in quick.get_data(as_text=True)
+        and 'id="shots-clean" data-shots aria-busy="true">正在统计…' in quick.get_data(as_text=True)
+        and re.search(r'<button[^>]*id="clean-btn"[^>]*disabled', quick.get_data(as_text=True)) is not None,
+        "截图统计：只走一遍，文件数、大小和整个截图文件夹一样；能删几张、转几张和真删时（removable、convertible）一样":
+        counted[:2] == whole_folder
+        and (counted[2].deleted, counted[2].converted) == old_way == (len(expected), len(converting)),
+        "设置页：脚本取的那几块写着共几张、多大，按钮能点，确认框写着删几张、腾出多少":
+        f'共 <span class="num">{len(everything)}</span> 张 · {panel_app.size_text(counted[1])}' in before
+        and "aria-busy" not in before and clean_btn is not None and "disabled" not in clean_btn[0]
+        and f"确定删除 {len(expected)} 张已识别完的截图、把 {len(converting)} 张总结页截图转成 WEBP吗？大约可以腾出 {size}。"
+        in clean_btn[0],
         "设置页：写着大约可以腾出多少、删几张、几张总结页截图转成 WEBP，正在记录时写着这一次不删":
         f"可以腾出约 <span class=\"num\">{size}</span>（删掉 <span class=\"num\">{len(expected)}</span> 张，"
         f"<span class=\"num\">{len(converting)}</span> 张总结页截图转成 WEBP）" in " ".join(before.split())
@@ -396,3 +420,4 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(0 if main() is not False else 1)
+

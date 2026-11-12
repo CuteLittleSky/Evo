@@ -127,7 +127,9 @@ def collect_checks():
     names = sorted(p.name for p in (SHOTS / RANGE).glob("*.png"))[228:248]
     frames = [START, *(RANGE + n for n in names), ELIMINATED, ELIMINATED, LOBBY, LOBBY]
     images = {f: load(shot(f)) for f in frames}
-    rows, sleeps, log = run_collect(frames, images.get)
+    # 比例固定按 16:9（和以前一样）：靶场这段其实是 16:10 拉伸（2026-11-11 看游戏画面认比例时发现的），开局、淘汰、大厅是
+    # 10-16 的 16:9 截图，拼在一起比例不一样。不固定的话记录程序会从靶场这段认出 16:10，后面 16:9 的淘汰画面、大厅就认不出了
+    rows, sleeps, log = run_collect(frames, images.get, game_aspect="16:9")
     conn = storage.connect(fake_game.last_db)
     holds = [tuple(r) for r in conn.execute("SELECT match_id, weapon, start_s, end_s FROM weapon_holds ORDER BY start_s")]
     conn.close()

@@ -36,7 +36,7 @@ import storage
 from hud import Hud
 from lobby import LobbyReader
 from ocr import SMALL_CROP_PARAMS, create_engine, load_config
-from post_match import HUD_ONLY_NOTE, NO_END_NOTE, REQUEUE_NOTE, SOURCE_HUD, SOURCE_SUMMARY, settle
+from post_match import HUD_ONLY_NOTE, NO_END_NOTE, REQUEUE_NOTE, SOURCE_HUD, SOURCE_SUMMARY, XP_ONLY_NOTE, settle
 from screens import ScreenDetector
 from summary_page import is_champion
 
@@ -270,16 +270,16 @@ def rule_checks():
     a, b, c = game(10, -20), game(30), game(50, 35)
     lobby(60, 870)
     out["fill"] = pick(storage.get_match(conn, b), "rp_delta", "rp_source")
-    # 都有 RP 但对不上：标待确认
+    # 都有 RP 但对不上：不标待确认（2026-11-11 起），战绩页显示校准行
     d = game(70, 10)
     lobby(80, 900)
-    out["mismatch"] = pick(storage.get_match(conn, d), "needs_review")
-    out["mismatch_note"] = storage.get_match(conn, d)["review_note"] or ""
+    out["mismatch"] = pick(storage.get_match(conn, d), "needs_review", "review_note")
+    out["mismatch_log"] = log[-1]
     # 对上了：不标
     e = game(90, 5)
     lobby(100, 905)
     out["agree"] = pick(storage.get_match(conn, e), "needs_review")
-    # 跨大段：不核对
+    # 跨大段：不标（升段奖励、降段保护显示成校准行）
     f = game(110, 40)
     lobby(120, 10, "大师", None)
     out["cross_tier"] = pick(storage.get_match(conn, f), "needs_review")
@@ -294,6 +294,21 @@ def rule_checks():
     i = game(170, 5)
     lobby(170 + 7 * 24 * 60, 688, "白银", "I")
     out["fill_rank_late"] = pick(storage.get_match(conn, i), "rank_tier", "rank_progress")
+    # 战绩页的校准行：对得上的（包括补上了的）没有；对不上 +20；跨大段钻石 II 905 → 大师 10 是 1105 − 40；
+    # 中间只有别的账号的局 +20；最后一次（白银 I 688 = 5438）比大师 40（16040）少 10602，再减中间那局的 5
+    out["adjust"] = [(c["read_at"], c["delta"], c["games"]) for c in
+                     calibration.adjustments(storage.lobby_readings(conn), storage.all_matches(conn))]
+    out["adjust_want"] = [(stamp(80), 20, 1), (stamp(120), 1065, 1), (stamp(140), 20, 0),
+                          (stamp(170 + 7 * 24 * 60), -10607, 1)]
+    # 以前对不上标的待确认：没确认过的去掉这条备注，没别的问题就不再待确认；确认过的不动
+    old = "大厅校准：前后两次大厅总分相差 -90，中间 11 局（编号 1、2）RP 加起来 -128，对不上，请核对"
+    only = storage.insert_match(conn, {"ended_at": stamp(300), "needs_review": 1, "review_note": f"{old}；{XP_ONLY_NOTE}"})
+    other = storage.insert_match(conn, {"ended_at": stamp(301), "needs_review": 1,
+                                        "review_note": f"{old}；名次对不上：总结页第 3、经验值页第 4，请核对"})
+    done = storage.insert_match(conn, {"ended_at": stamp(302), "needs_review": 0, "review_note": old})
+    out["cleared"] = calibration.clear_old_flags(conn)
+    out["cleared_rows"] = [pick(storage.get_match(conn, m), "needs_review", "review_note") for m in (only, other, done)]
+    out["cleared_want"] = [(0, XP_ONLY_NOTE), (1, "名次对不上：总结页第 3、经验值页第 4，请核对"), (0, old)]
 
     # 各来源的优先级
     def match_with(readings, note=None):
@@ -346,6 +361,55 @@ def panel_checks():
     }
 
 
+def calibration_panel_checks():
+    """战绩页的校准行（2026-11-11）：放在那次回大厅之前结束的那一局上面；只看匹配、只看待确认时不显示；
+    打开面板时取消以前大厅校准标的待确认；翻页时每行只出现在一页上。"""
+    import panel_app
+    path = fake_game._TEMP / "panel_calibration.db"
+    path.unlink(missing_ok=True)
+    conn = storage.connect(path)
+    from ranks import score
+
+    def lobby(when, progress):
+        storage.save_lobby(conn, {"read_at": when, "player_name": "Me", "rank_tier": "黄金", "rank_division": "III",
+                                  "rank_progress": progress, "score": score("黄金", "III", progress)})
+
+    def game(when, rp, **extra):
+        return storage.insert_match(conn, {"ended_at": when, "rp_delta": rp, "mode": "ranked", "player_name": "Me",
+                                           "placement": 10, **extra})
+
+    lobby("2026-11-10 21:00:00", 296)
+    m1 = game("2026-11-10 21:10:00", -38)
+    m2 = game("2026-11-10 21:20:00", 10, needs_review=1,
+              review_note="大厅校准：前后两次大厅总分相差 -10，中间 2 局（编号 1、2）RP 加起来 -28，对不上，请核对")
+    lobby("2026-11-10 21:30:00", 286)  # 黄金 III 296 → 286（-10），两局合计 -28：校准 +18
+    m3 = game("2026-11-10 21:40:00", 5)
+    conn.close()
+    panel_app.app.config.update(DB=path, TESTING=True)
+    client = panel_app.app.test_client()
+    page = client.get("/matches?range=all").get_data(as_text=True)
+    pubs = client.get("/matches?range=all&mode=pubs").get_data(as_text=True)
+    review = client.get("/matches?range=all&review=1").get_data(as_text=True)
+    conn = storage.connect(path)
+    cleared = pick(storage.get_match(conn, m2), "needs_review", "review_note")
+    conn.close()
+    at = page.find("校准分数")
+    # 翻页：两页各 1 局，校准行（21:30）在 21:20 那局上面，第 1 页最后一局是 21:40（比它晚）：只在第 2 页
+    rows = [{"id": 3}, {"id": 2}, {"id": 1}]
+    raw = [{"ended_at": "2026-11-10 21:40:00"}, {"ended_at": "2026-11-10 21:20:00"}, {"ended_at": "2026-11-10 21:10:00"}]
+    cal = [{"read_at": "2026-11-10 21:30:00", "kind": "calibration"}, {"read_at": "2026-11-10 20:00:00", "kind": "calibration"}]
+    merge = panel_app.merge_calibration
+    pages = [[r.get("id") or r["read_at"][-8:-3] for r in merge(rows[i:i + 1], raw[i:i + 1], cal, above, i == 2)]
+             for i, above in ((0, None), (1, "2026-11-10 21:40:00"), (2, "2026-11-10 21:20:00"))]
+    return {
+        "校准行：写校准分数和差多少（+18），放在 21:20 那局和 21:40 那局中间":
+            page.find(f'id="m{m3}"') < at < page.find(f'id="m{m2}"') < page.find(f'id="m{m1}"') and ">+18<" in page,
+        "校准行：只看匹配、只看待确认时不显示": "校准分数" not in pubs and "校准分数" not in review,
+        f"打开面板：以前大厅校准标的待确认取消了（{cleared}）": cleared == (0, None),
+        f"校准行翻页：每行只在一页上，比所有局都早的在最后一页最后（{pages}）": pages == [[3], ["21:30", 2], [1, "20:00"]],
+    }
+
+
 def main():
     print("0.3.0 新流程：对局中、一局结束、冠军、大厅校准、各来源的优先级")
     try:
@@ -359,10 +423,15 @@ def main():
     checks = {
         **panel_checks(),
         f"大厅校准：只缺一局的 RP，用差值补上（{r['fill']}）": r["fill"] == (-45, "大厅校准"),
-        f"大厅校准：都有 RP 但对不上，标待确认（{r['mismatch_note']}）": r["mismatch"] == (1,) and "大厅校准" in r["mismatch_note"],
+        f"大厅校准：都有 RP 但对不上，不标待确认，日志写校准分数（{r['mismatch_log'].strip()}）":
+            r["mismatch"] == (0, None) and "校准分数 +20，不标待确认" in r["mismatch_log"],
         "大厅校准：对上了，不标": r["agree"] == (0,),
-        "大厅校准：跨了大段（升段奖励、降段保护），不核对": r["cross_tier"] == (0,),
+        "大厅校准：跨了大段（升段奖励、降段保护），不标": r["cross_tier"] == (0,),
         "大厅校准：别的账号的局不算进来": r["other_account"] == (0,),
+        f"校准行：对得上的没有，对不上、跨大段、中间没记下排位局的各一行（{r['adjust']}）": r["adjust"] == r["adjust_want"],
+        f"以前大厅校准标的待确认：没确认的取消、有别的问题的留着、确认过的不动（改了 {r['cleared']} 局）":
+            r["cleared"] == 2 and r["cleared_rows"] == r["cleared_want"],
+        **calibration_panel_checks(),
         f"大厅之前那一局没有段位：补上大厅读到的（{r['fill_rank']}）": r["fill_rank"] == ("大师", 40),
         f"那一局结束一周后才回大厅（中间换了赛季）：不补（{r['fill_rank_late']}）": r["fill_rank_late"] == (None, None),
         f"对局中比总结页少（最后一秒没截到）：用总结页的，不标；老板分、RP 用对局中的（{r['hud_less']}）":

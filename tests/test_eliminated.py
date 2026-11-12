@@ -186,9 +186,10 @@ def main():
     zoom_ok = [detector.detect(z) == "eliminated" and read_eliminated(engine, z, cfg)["placement"] == 17 for z in zoomed]
     zoom_text = "、".join(f"{f} 倍 {'✓' if ok else '✗'}" for f, ok in zip(ZOOMS, zoom_ok))
 
-    # 其他截图只做外观检查（不跑识别）：一张都不该像淘汰画面
+    # 其他截图只做外观检查（不跑识别）：一张都不该像淘汰画面。debug_crops、legends 里是小块，不是整屏；
+    # eliminated 是 Evo 记录时按画面分的文件夹（screenshots.path_for），里面本来就是淘汰画面
     others = [p for p in SHOTS.rglob("*.png") if p.relative_to(SHOTS).as_posix() not in SAMPLES
-              and not {"debug_crops", "legends"} & set(p.relative_to(SHOTS).parts)]  # 这两个文件夹里是小块，不是整屏
+              and not {"debug_crops", "legends", "eliminated"} & set(p.relative_to(SHOTS).parts)]
     alike = [p.name for p in others if detector.looks_like(load(p), "eliminated")]
 
     c, r = collect_checks(images), rule_checks()

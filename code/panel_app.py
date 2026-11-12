@@ -27,6 +27,7 @@ from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_t
 
 import app_settings
 import autostart
+import calibration
 import data_move
 import game_aspect
 import game_lang
@@ -185,9 +186,15 @@ app.register_blueprint(panel_seasons.bp)  # "赛季"页面：录入历史赛季�
 
 # ---------- 数据库连接：每次网页请求打开一次，请求结束时关闭 ----------
 
+_CLEARED = set()  # 已经取消过旧的大厅校准待确认的数据库（每个进程每个数据库只做一次）
+
+
 def db():
     if "db" not in g:
         g.db = storage.connect(app.config["DB"])
+        if app.config["DB"] not in _CLEARED:  # 以前大厅校准对不上标的待确认：取消（现在战绩页显示校准行）
+            calibration.clear_old_flags(g.db)
+            _CLEARED.add(app.config["DB"])
     return g.db
 
 
@@ -1016,6 +1023,40 @@ def overview():
     )
 
 
+# ---------- 战绩页的校准行（2026-11-11 用户决定，见 calibration.py 开头） ----------
+
+def calibration_rows(names=None, between=None):
+    """战绩页要显示的校准行，最新的在前。names：只要这个账号的（None = 不分账号）；between：只要这段时间的（赛季筛选）。
+    用所有账号的大厅读数和对局算（规则和记录时的 calibration.calibrate 一样），再按账号、时间挑出来。"""
+    found = calibration.adjustments(storage.lobby_readings(db()), storage.all_matches(db()))
+    if names is not None:
+        keys = {storage.name_key(n) for n in names}
+        found = [c for c in found if c["player_name"] and storage.name_key(c["player_name"]) in keys]
+    if between is not None:
+        found = [c for c in found if c["read_at"] >= between[0] and (between[1] is None or c["read_at"] < between[1])]
+    return [calibration_view(c) for c in reversed(found)]
+
+
+def calibration_view(c):
+    """校准行只写"校准分数"和差值（2026-11-11 用户要简约：不写前后两次大厅的段位和中间几局的合计）。"""
+    return {"kind": "calibration", "id": None, "read_at": c["read_at"], "time": time_text(c["read_at"]),
+            "rp": signed(c["delta"]), "rp_class": "good" if c["delta"] >= 0 else "bad"}
+
+
+def merge_calibration(rows, raw, cals, above, last_page):
+    """把校准行插进战绩页的这一页（rows：这一页各局的显示内容，raw：对应的数据库行，都是最新的在前；cals：最新的在前）。
+    校准行放在那次回大厅之前结束的第一局上面。比上一页最后一局（above）还晚的在上一页；
+    比这一页所有局都早的在后面的页上，最后一页时放在最后。"""
+    cals = [c for c in cals if above is None or c["read_at"] < above]
+    out, i = [], 0
+    for shown, r in zip(rows, raw):
+        while i < len(cals) and cals[i]["read_at"] >= (r["ended_at"] or ""):
+            out.append(cals[i])
+            i += 1
+        out.append(shown)
+    return out + (cals[i:] if last_page else [])
+
+
 @app.route("/matches")
 def matches():
     mode = request.args.get("mode") if request.args.get("mode") in MODES else None
@@ -1028,9 +1069,9 @@ def matches():
     number = range_season(range_key)
     between = seasons.bounds(number) if number is not None else None
 
-    rows, total = storage.query_matches(db(), mode, only_review, legend, PER_PAGE, (page - 1) * PER_PAGE, names,
-                                        between)
-    rows = [view(r) for r in rows]
+    raw, total = storage.query_matches(db(), mode, only_review, legend, PER_PAGE, (page - 1) * PER_PAGE, names,
+                                       between)
+    rows = [view(r) for r in raw]
     if only_review and open_id is None and rows:
         open_id = rows[0]["id"]  # "只看待确认"时，自动展开第一局
     # 点开一局：先只展开两名队友；识别截图和修改表单要再点"详情与修改"（detail=1）。待确认的局直接全部展开
@@ -1045,6 +1086,13 @@ def matches():
             if not r["needs_review"]:
                 share = {"player": None if r["player_name"] == "—" else r["player_name"],
                          "options": [{**share_options("match", match_id=r["id"]), "label": "单局战绩"}]}
+    pages = max(1, math.ceil(total / PER_PAGE))
+    if mode in (None, "ranked") and not only_review and not legend:  # 校准行只在看全部、排位的时候显示
+        above = None  # 上一页最后一局的结束时间：比它晚的校准行在上一页
+        if page > 1:
+            prev, _ = storage.query_matches(db(), mode, False, None, 1, (page - 1) * PER_PAGE - 1, names, between)
+            above = prev[0]["ended_at"] if prev else None
+        rows = merge_calibration(rows, raw, calibration_rows(names, between), above, page >= pages)
 
     return render_template(
         "matches.html",
@@ -1052,7 +1100,7 @@ def matches():
         keep_shots=screenshots.keep_all(),  # 保留全部截图时，确认、删除一局不删截图，也不用提示
         total=total,
         page=page,
-        pages=max(1, math.ceil(total / PER_PAGE)),
+        pages=pages,
         first=(page - 1) * PER_PAGE + 1 if total else 0,
         last=min(page * PER_PAGE, total),
         mode=mode,
@@ -1297,12 +1345,6 @@ def screen_size():
         return None
 
 
-def folder_usage(path):
-    """文件夹里有几个文件、一共多大。"""
-    files = [p for p in path.rglob("*") if p.is_file()] if path.is_dir() else []
-    return len(files), sum(p.stat().st_size for p in files)
-
-
 def size_text(n):
     if n >= 1024 ** 3:
         return f"{n / 1024 ** 3:.1f} GB"
@@ -1317,14 +1359,12 @@ def db_path():
 
 @app.route("/settings")
 def settings():
-    shot_count, shot_bytes = folder_usage(CAPTURES_DIR / "live")
-    recording = screenshots.recording_folder()
-    clean = screenshots.cleanable(db())
+    # 截图有几张、能删几张这里不数（截图多时要好几秒，整页都等着），页面打开后脚本再取 /settings/shots（_shots.html）
     size = screen_size()
     return render_template(
         "settings.html",
         resolution=f"{size[0]} × {size[1]}" if size else None,
-        aspect=aspect_view(size),
+        aspect=aspect_view(),
         language=language_view(),
         move=move_view(),
         autostart={**autostart.status(), "blocked": autostart.unavailable(),
@@ -1337,15 +1377,8 @@ def settings():
         total=storage.query_matches(db(), limit=1)[1],
         review_count=storage.count_review(db()),
         captures_dir=CAPTURES_DIR / "live",
-        shot_count=shot_count,
-        shot_size=size_text(shot_bytes),
         keep_shots=app_settings.get(screenshots.KEEP_ALL_KEY, False) is True,
         shots_locked=screenshots.in_project(),  # 用源码运行：永远保留全部，开关和删除按钮都不能用
-        recording=recording is not None,
-        organize_count=screenshots.organizable_count(skip=recording),
-        clean_count=clean.deleted,
-        clean_convert=clean.converted,
-        clean_size=size_text(clean.freed),
         version=storage.APP_VERSION,
         source_url=SOURCE_URL,
         feedback_url=FEEDBACK_URL,
@@ -1361,11 +1394,12 @@ def settings():
     )
 
 
-def aspect_view(size):
-    """设置页"游戏画面比例"：选了什么、自动检测出什么（见 game_aspect.py）。"""
+def aspect_view():
+    """设置页"游戏画面比例"：选了什么、自动检测出什么（见 game_aspect.py）。文件里没有能用的全屏分辨率时，
+    记录程序看游戏画面认（结果写在日志里，这个页面不知道），这里只说会这样认。"""
     found, why = game_aspect.from_video_config()
-    if found is None and size:
-        found = size[0] / size[1]  # 没读到游戏设置：和屏幕一样
+    if found is None:
+        why = f"{why}，{game_aspect.GUESS_HINT}（对局中左下角的传奇、大厅等画面）"
     return {"choice": game_aspect.choice(), "auto": game_aspect.AUTO, "options": list(game_aspect.ASPECTS),
             "detected": game_aspect.name(found) if found else None, "why": why}
 
@@ -1576,6 +1610,16 @@ def open_folder():
     os.startfile(target)
     flash(f"已在资源管理器中打开 {target}", "ok")
     return redirect(url_for("settings"))
+
+
+@app.get("/settings/shots")
+def shots_usage():
+    """设置页"截图""删除已识别完的截图"两行的数字（_shots.html）：设置页先打开、写着"正在统计…"，页面上的脚本再来取，
+    按 id 换掉。截图多时数一遍要一会儿（2026-11-11 群友反映：几万张截图时设置页要等十几秒才打开，像是点不进去）。"""
+    count, size, clean = screenshots.usage(db())
+    return render_template("_shots.html", shots_locked=screenshots.in_project(), shots={
+        "count": count, "size": size_text(size), "recording": screenshots.recording_folder() is not None,
+        "clean_count": clean.deleted, "clean_convert": clean.converted, "clean_size": size_text(clean.freed)})
 
 
 @app.post("/settings/keep-shots")

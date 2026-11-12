@@ -1,0 +1,41 @@
+{# 设置页"截图""删除已识别完的截图"两行里要数截图的几块（screenshots.usage）：张数和大小、能腾出多少、"删除截图"按钮。
+   打开设置页时先不数（截图多时要好几秒，2026-11-11 群友反映设置页像是点不进去），这几块写"正在统计…"（shots 是 None）；
+   页面打开后脚本取 /settings/shots（直接渲染这个文件，shots 有数字），按 id 换掉（settings.html 的脚本）。
+   常见的情况（识别完就删）换上去也是一行字，下面的内容不会挪；读屏软件：等的时候 aria-busy，换好不播报。
+   locked：用源码运行（不删截图，不用等数字） #}
+{% macro usage_desc(shots) -%}
+<div class="setting-desc" id="shots-usage" data-shots{% if not shots %} aria-busy="true"{% endif %}>
+  {%- if shots %}共 <span class="num">{{ shots.count }}</span> 张 · {{ shots.size }}{% else %}正在统计…{% endif -%}
+</div>
+{%- endmacro %}
+
+{% macro clean_desc(shots, locked) -%}
+<div class="setting-desc" id="shots-clean" data-shots{% if not (shots or locked) %} aria-busy="true"{% endif %}>
+  {%- if locked %}用源码运行时不删截图
+  {%- elif not shots %}正在统计…
+  {%- elif shots.clean_count or shots.clean_convert %}可以腾出约 <span class="num">{{ shots.clean_size }}</span>（
+    {%- if shots.clean_count %}删掉 <span class="num">{{ shots.clean_count }}</span> 张{% endif %}
+    {%- if shots.clean_count and shots.clean_convert %}，{% endif %}
+    {%- if shots.clean_convert %}<span class="num">{{ shots.clean_convert }}</span> 张总结页截图转成 WEBP{% endif %}）。
+    {%- if shots.clean_convert %}总结页截图转成 WEBP 留着，{% else %}总结页截图、{% endif %}待确认的局要用的截图{% if shots.recording %}、正在记录的这一次{% endif %}不删
+  {%- else %}没有可以删的截图{% if shots.count %}：剩下的是总结页截图、待确认的局要用的{% if shots.recording %}，或者正在记录{% endif %}{% endif %}
+  {%- endif -%}
+</div>
+{%- endmacro %}
+
+{# 确认框的话写在 data-confirm 里（settings.html 的表单 onsubmit 读它）；还没数完、没有可以删的时候按钮不能点 #}
+{% macro clean_button(shots, locked) -%}
+{%- set s = shots or {} %}
+{%- set what = ('删除 %d 张已识别完的截图' % s.clean_count if s.clean_count else '')
+               ~ ('、' if s.clean_count and s.clean_convert else '')
+               ~ ('把 %d 张总结页截图转成 WEBP' % s.clean_convert if s.clean_convert else '') %}
+<button type="submit" class="btn btn-danger" id="clean-btn" data-shots
+        data-confirm="确定{{ what }}吗？大约可以腾出 {{ s.clean_size }}。&#10;总结页截图会留着（转成 WEBP），战绩页照样能看；待确认的局要用的截图也留着。&#10;删除后无法恢复。"
+        {{ 'disabled' if locked or not (s.clean_count or s.clean_convert) }}>删除截图</button>
+{%- endmacro %}
+
+{%- if shots is defined and shots %}
+{{ usage_desc(shots) }}
+{{ clean_desc(shots, shots_locked) }}
+{{ clean_button(shots, shots_locked) }}
+{%- endif %}

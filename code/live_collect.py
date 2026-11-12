@@ -46,6 +46,7 @@ from time import perf_counter, process_time  # 单独导入：测试会把本文
 
 import cv2
 
+import calibration
 import capture
 import game_lang
 import screenshots
@@ -53,7 +54,7 @@ import season_import
 import sounds
 import storage
 from eliminated import read_eliminated
-from game_aspect import AspectWatcher
+from game_aspect import AspectGuess, AspectWatcher
 from hud import Hud
 from in_match import InMatchWatcher
 from lobby import LobbyReader, LobbyWatcher
@@ -650,8 +651,8 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     status：字典，记下的局数会实时写进 status["saved"]（托盘图标显示用）
     keep_all：保留全部截图。None = 按设置页的开关（screenshots.keep_all()），每局结束时再看一眼，
     改了从下一局开始生效；True / False = 整次记录都这样（测试时直接指定）
-    game_aspect：游戏画面比例。None = 按设置页（默认自动检测，读 Apex 的视频设置文件，见 game_aspect.py），
-    每隔几秒看一眼；"16:10" 等 = 整次记录都这样（测试时直接指定）
+    game_aspect：游戏画面比例。None = 按设置页（默认自动检测，读 Apex 的视频设置文件；文件里没有能用的全屏分辨率时
+    看游戏画面认，见 game_aspect.py），每隔几秒看一眼；"16:10" 等 = 整次记录都这样（测试时直接指定）
     返回这次一共记下了几局。"""
     set_low_priority()
     # 先建截屏对象：建不起来（或要新开进程才生效，capture.NeedRestart）就不建这次的截图文件夹
@@ -660,6 +661,8 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     run_dir = CAPTURES_DIR / "live" / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     conn = storage.connect(db_path)
+    if calibration.clear_old_flags(conn):  # 以前大厅校准对不上标的待确认（2026-11-11 起改成战绩页显示校准行）
+        log("以前因为大厅校准对不上标成待确认的局，已经取消（现在战绩页单独显示一行校准分数）")
 
     def keep_now():
         return screenshots.keep_all() if keep_all is None else keep_all
@@ -714,7 +717,17 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                               keep_all=lambda: other.keep_all, before_hand_over=summary.catch_up)
     lobby = LobbyWatcher(LobbyReader(engine, load_config("lobby.json", lang)), post, conn, log)
     seasons = SeasonWatcher(engine, conn, post, log)  # 录入历史赛季数据（设置页的按钮）
-    aspect = AspectWatcher(log, clock=lambda: time.monotonic(), fixed=game_aspect)
+
+    def aspect_sources():
+        """看游戏画面认比例时比哪些画面：认定了游戏语言就只比这种语言的；录入模式里加上数据页。"""
+        found = [detector.detectors[detector.lang]] if detector.locked else list(detector.detectors.values())
+        if seasons.on and seasons.page is not None:
+            found.append(seasons.page.detector)
+        return found
+
+    # 游戏画面比例：视频设置文件里没有能用的全屏分辨率时看游戏画面认（左下角的传奇、各种画面，见 game_aspect.py）
+    aspect = AspectWatcher(log, clock=lambda: time.monotonic(), fixed=game_aspect,
+                           guess=AspectGuess(hud.legends, aspect_sources))
 
     def use_language(lang):
         """认定了游戏语言（或认出画面的语言变了，见 screens.GameScreens）：各部分换成这种语言的识别规则。"""

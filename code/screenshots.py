@@ -237,24 +237,57 @@ def clean_up(conn):
     return result
 
 
-def cleanable(conn):
-    """设置页显示用：按 clean_up() 的规则，能删几张、几张总结页截图要转成 WEBP、大约能腾出多少字节（不真的删、不真的转；
-    转 WEBP 省下的按 WEBP_RATIO 估算）。返回 Cleaned。"""
+def usage(conn):
+    """设置页"截图""删除已识别完的截图"两行要的数：captures/live/ 里一共几个文件、多大；按 clean_up() 的规则
+    （removable、convertible）能删几张、几张总结页截图要转成 WEBP、大约能腾出多少字节（不真的删、不真的转；
+    转 WEBP 省下的按 WEBP_RATIO 估算）。返回 (文件数, 字节数, Cleaned)。
+    整个文件夹只走一遍（_files），不一张张问大小、不一张张 resolve：以前设置页要走三遍，
+    几万张截图时要等十几秒才打开（2026-11-11 群友反映）。"""
+    live = (CAPTURES_DIR / "live").resolve()
+    files = _files(live)
+    count, size = len(files), sum(n for _, n in files)
     if in_project():
-        return Cleaned(0, 0, 0)
-    folders = finished_folders(skip=recording_folder())
+        return count, size, Cleaned(0, 0, 0)
+    finished = {os.path.normcase(p.name) for p in finished_folders(skip=recording_folder())}
+    needed = {os.path.normcase(data_absolute(row[0]).resolve()) for row in conn.execute(
+        "SELECT evidence_path FROM matches WHERE needs_review AND evidence_path IS NOT NULL")}
+    deleted = converted = deleting = converting = 0
+    start = len(os.fspath(live)) + 1  # 路径里 live\ 后面那一段的开头
+    for path, n in files:
+        key = os.path.normcase(path)
+        folder, inside, _ = key[start:].partition(os.sep)
+        if not inside or folder not in finished or not key.endswith(".png"):
+            continue  # 直接放在 live\ 里的、正在记录的文件夹里的、不是 PNG 的：不删也不转
+        if is_summary(path):
+            converted, converting = converted + 1, converting + n
+        elif key not in needed:
+            deleted, deleting = deleted + 1, deleting + n
+    return count, size, Cleaned(deleted, converted, deleting + round(converting * (1 - WEBP_RATIO)))
 
-    def sizes(paths):
-        out = []
-        for path in paths:
-            try:
-                out.append(path.stat().st_size)
-            except OSError:  # 刚好被删了
-                pass
-        return out
 
-    deleting, converting = sizes(removable(conn, folders)), sizes(convertible(folders))
-    return Cleaned(len(deleting), len(converting), sum(deleting) + round(sum(converting) * (1 - WEBP_RATIO)))
+def cleanable(conn):
+    """按 clean_up() 的规则，能删几张、几张总结页截图要转成 WEBP、大约能腾出多少字节（usage 的后一半）。返回 Cleaned。"""
+    return usage(conn)[2]
+
+
+def _files(folder):
+    """folder 里（含子文件夹）所有的文件：[(路径, 字节数), ...]，路径是字符串。用 os.scandir 只走一遍：
+    Windows 列目录时就带着每个文件的大小，不用再一个个去问。读不了的文件夹、刚好被删掉的文件跳过。"""
+    found, todo = [], [os.fspath(folder)]
+    while todo:
+        try:
+            with os.scandir(todo.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            todo.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            found.append((entry.path, entry.stat(follow_symlinks=False).st_size))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return found
 
 
 def recorded(evidence_path):

@@ -81,6 +81,16 @@
   </thead>
   <tbody>
   {% for r in rows %}
+    {% if r.kind == 'calibration' %}
+    {# 校准行（见 calibration.adjustments）：两次回大厅之间，段位分数的变化和这期间记下的各局 RP 之和差多少。
+       不是一局：不能点开、不算局数、不算进 RP 合计。用"校准"两个字和绿色底区分，不只靠颜色 #}
+    <tr class="cal-row" title="两次回大厅之间，段位分数的实际变化和 Evo 记下的各局 RP 加起来差的分数（可能是某局 RP 读错、没开 Evo 时打过、升段奖励或降段保护）。不算进 RP 合计">
+      <td class="first"><span class="badge cal">校准</span></td>
+      <td class="muted">{{ r.time }}</td>
+      <td colspan="6"><span class="cal-title">校准分数</span></td>
+      <td class="right num last rp-{{ r.rp_class }}">{{ r.rp }}</td>
+    </tr>
+    {% else %}
     {% set is_open = (r.id == open_id) %}
     <tr id="m{{ r.id }}" class="row {{ 'review' if r.needs_review }} {{ 'open' if is_open }}"
         data-href="{{ url_with(open=None if is_open else r.id) }}">
@@ -200,6 +210,7 @@
         </div>
       </td>
     </tr>
+    {% endif %}
     {% endif %}
   {% else %}
     <tr><td colspan="9" class="empty">
