@@ -137,6 +137,12 @@ def install():
         _log(f"总结页读数注入失败（Evo 本身不受影响）：{exc!r}")
 
     try:
+        from cloud.matchdedup import inject as matchdedup_inject
+        matchdedup_inject.install()
+    except Exception as exc:
+        _log(f"同一局去重注入失败（Evo 本身不受影响）：{exc!r}")
+
+    try:
         from cloud import season_align
         season_align.install()
     except Exception as exc:

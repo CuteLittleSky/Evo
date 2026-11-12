@@ -16,6 +16,9 @@ release / start / stop。这样识别链路一行都不用改。
   菜单都切走了还显示旧界面。所以打开后先连读几帧丢掉（FLUSH_FRAMES），再返回最新帧。
 - 设备可能被别的程序占用（会议软件 / 预览），open 失败当作「这帧没有」返回 None，
   上游循环写了 `if frame is not None:` 会跳过，不会污染识别。
+- 2026-11-11：采集卡第一次打开时若恰好读到黑帧，会被当成「这个分辨率不支持」，从 1080p
+  永久降成 1280×720 —— 结果队友名字太小 OCR 读不出、传奇被丢弃。现在按**协商到的分辨率**
+  判断格式，黑屏只当没信号（不降级），真降级了也会定期升回 1080p（见 _open_card_best）。
 """
 from __future__ import annotations
 
@@ -35,6 +38,18 @@ BLACK_MEAN = 10.0
 BLACK_STD = 6.0
 BLACK_REOPEN_SECONDS = 3.0
 
+# 采集卡优先用 1080p。只有驱动确实协商不到 1080p 时才退到 720p；而且退到 720p 后每隔
+# UPGRADE_RETRY_SECONDS 秒会再试着升回 1080p（2026-11-11：一张能出 1080p 的卡，第一次打开
+# 恰好碰上黑帧就被永久降成 1280×720，队友名字太小 OCR 读不出、传奇跟着丢；见 _open_card_best）。
+CARD_FORMATS = (
+    ("MJPG", 1920, 1080, 30),
+    ("MJPG", 1920, 1080, 60),
+    ("YUY2", 1920, 1080, 30),
+    ("MJPG", 1280, 720, 30),
+    (None, 1280, 720, 30),
+)
+UPGRADE_RETRY_SECONDS = 60.0
+
 
 class DirectShowCamera:
     """伪装成 dxcam 的相机，实际从 DirectShow 设备取帧（OBS 虚拟摄像头）。"""
@@ -53,6 +68,8 @@ class DirectShowCamera:
         self._last_reopen = 0.0
         self._seen_signal = False
         self._preferred = None
+        self._preferred_low = False       # 当前记住的格式是不是低分辨率（<1080）；是的话定期试升 1080p
+        self._low_since = 0.0             # 退到低分辨率的时间点，用来算下次升分辨率的时机
         self._card_down = False           # 采集卡是否处于「没信号」状态：只在状态变化时记日志
         self._paimiao_obs_camera = True   # 和 ProjectorCamera 同一标记：探测时别被误 release
         self._open()
@@ -86,11 +103,7 @@ class DirectShowCamera:
             self._next_try = time.monotonic() + REOPEN_SECONDS
             return None
         # 连续纯黑 → 隔一会儿自动重开设备试一次（采集卡偶发掉黑/被二次占用时能自愈）
-        try:
-            small = frame[::8, ::8]
-            near_black = float(small.mean()) < BLACK_MEAN and float(small.std()) < BLACK_STD
-        except Exception:
-            near_black = False
+        near_black = self._frame_black(frame)
         now = time.monotonic()
         # 只对采集卡（mjpg=True）做「全黑就重开设备」：OBS 虚拟摄像头场景本身就是黑场/黑屏加载时会
         # 被反复重开，且日志会误标成「[采集卡]」。虚拟摄像头不走这条，交给正常的掉线重连。
@@ -108,6 +121,15 @@ class DirectShowCamera:
         else:
             self._seen_signal = True
             self._black_since = None
+        # 当前是低分辨率（720p）：每隔 UPGRADE_RETRY_SECONDS 再试着升回 1080p，
+        # 不要因为打开瞬间的一帧黑就永久卡在 720p（那会让队友名字 OCR 读不出、传奇丢掉）
+        if self._mjpg and self._preferred_low and not near_black and now - self._low_since >= UPGRADE_RETRY_SECONDS:
+            self._low_since = now
+            self._drop()
+            try:
+                self._open_card_best(force_full=True)
+            except Exception:
+                pass
         return frame
 
     def release(self):
@@ -173,10 +195,15 @@ class DirectShowCamera:
             self._width = self._height = 0
         self._log(f"[OBS 虚拟摄像头] 已打开「{self._name}」（设备 {self._index}，{self._width}×{self._height}）")
 
-    def _open_card_best(self):
-        """采集卡：默认 1920×1080@30fps；若该格式拿不到非黑画面/分辨率不对，再依次降级试。
+    def _open_card_best(self, force_full=False):
+        """采集卡：优先 1920×1080；只有驱动确实协商不到 1080p 时才退到 720p。
 
-        第一次逐个试并记住可用的组合（含帧率），之后重开直接用记住的，避免没信号时空转。
+        关键（2026-11-11 修）：判断「这个格式行不行」看的是**协商到的分辨率**，不是「这一帧是不是黑的」。
+        打开瞬间画面是黑（游戏加载、切屏）只说明「暂时没信号」，不代表这个分辨率不支持——以前把
+        一帧黑就当成格式不可用、直接降到 720p 并记住，结果整段会话都卡在 720p。现在：
+        - 1080p 协商成功但当前黑 → 记住 1080p 这个格式，当没信号处理，下轮还试 1080p（不降级）；
+        - 只有请求 1080p 却只协商到 720p（驱动不给）时，才用 720p，并标记为「低分辨率」，之后定期再试升。
+        force_full=True：忽略记住的格式，从最高分辨率重新逐个试（用于定期把 720p 升回 1080p）。
         """
         try:
             import cv2  # noqa: PLC0415
@@ -188,12 +215,18 @@ class DirectShowCamera:
             self._once("no_device", "[采集卡] 没有可用的设备")
             self._next_try = time.monotonic() + REOPEN_SECONDS
             return
-        if self._preferred is not None:
-            variants = [self._preferred]
-        else:
-            variants = [("MJPG", 1920, 1080, 30), ("YUY2", 1920, 1080, 30),
-                        ("MJPG", 1280, 720, 30), (None, 1280, 720, 30)]
 
+        now = time.monotonic()
+        if force_full:
+            variants = list(CARD_FORMATS)
+        elif self._preferred is not None and not self._preferred_low:
+            variants = [self._preferred]                      # 已经锁定 1080p：直接用
+        elif self._preferred is not None and self._preferred_low and now - self._low_since < UPGRADE_RETRY_SECONDS:
+            variants = [self._preferred]                      # 低分辨率、还没到重试时间：先用着
+        else:
+            variants = list(CARD_FORMATS)                     # 首次 / 到点了：从 1080p 开始试
+
+        blocked = None  # 协商成功但当前黑屏的格式：记住它，绝不因此降分辨率
         for fourcc, w, h, fps in variants:
             try:
                 cap = cv2.VideoCapture(self._index, cv2.CAP_DSHOW)
@@ -219,8 +252,7 @@ class DirectShowCamera:
                     cap.read()
                 except Exception:
                     break
-            frame = None
-            all_black = True
+            frame, nonblack = None, False
             for _ in range(12):   # 读约半秒，等格式/信号稳定
                 try:
                     ok, f = cap.read()
@@ -228,51 +260,83 @@ class DirectShowCamera:
                     f = None
                 if f is not None:
                     frame = f
-                    try:
-                        sm = f[::8, ::8]
-                        if not (float(sm.mean()) < BLACK_MEAN and float(sm.std()) < BLACK_STD):
-                            all_black = False
-                            break
-                    except Exception:
-                        all_black = False
+                    if not self._frame_black(f):
+                        nonblack = True
                         break
-            # 校验分辨率：请求 1080 时必须真拿到 ~1080，否则换下一个（避免分辨率不对）
             try:
                 aw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or w
                 ah = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or h
             except Exception:
                 aw, ah = w, h
-            bad_size = (w >= 1900 and (aw < 1900 or ah < 1000))
-            if frame is None or all_black or bad_size:
+            if not self._size_ok(w, h, aw, ah):
                 try:
                     cap.release()
                 except Exception:
                     pass
-                continue
-            self._cap = cap
-            self._seen_signal = True
-            self._card_down = False       # 有信号了：解除「没信号」状态，下次掉线才会再记一行
-            self._preferred = (fourcc, w, h, fps)
-            self._width, self._height = aw, ah
-            afps = 0
+                continue   # 驱动没给到请求的分辨率：这个格式真的不行，试下一个
+            is_low = aw < 1900 or ah < 1000
+            if nonblack:
+                self._accept_card(cap, fourcc, w, h, fps, aw, ah, is_low)
+                return
+            # 协商成功、只是当前黑屏（没信号）：记住这个格式，别再往下试更低分辨率（更低也救不了信号）
+            blocked = (fourcc, w, h, fps, aw, ah, is_low)
             try:
-                afps = round(float(cap.get(cv2.CAP_PROP_FPS)) or (fps or 0))
+                cap.release()
             except Exception:
-                afps = fps or 0
-            self._notify(f"[采集卡] 已连接「{self._name}」（设备 {self._index}）"
-                         f" {aw}×{ah}@{afps} 格式 {fourcc or '默认'}")
-            return
+                pass
+            break
 
         self._cap = None
-        # 记住的组合可能已失效（重插 / 重新协商后不再支持该格式）：复位，下一轮重新逐个变体探测，
-        # 否则会一直只试那一个组合、永远失败，自动恢复形同失效（只能重启 Evo）。
-        self._preferred = None
+        if blocked is not None:
+            fourcc, w, h, fps, aw, ah, is_low = blocked
+            self._preferred, self._preferred_low = (fourcc, w, h, fps), is_low
+            if is_low and not self._low_since:
+                self._low_since = now
+        else:
+            # 所有格式都协商失败（重插 / 重新协商后不再支持）：复位，下一轮重新逐个探测
+            self._preferred, self._preferred_low, self._low_since = None, False, 0.0
         # 只在「有信号 → 没信号」这一刻记一行；没信号期间每次 2 秒的重试不再刷日志
         if not self._card_down:
             self._card_down = True
             self._notify(f"[采集卡] 未拿到画面「{self._name}」（没信号/被占用？）"
                          f"{REOPEN_SECONDS:.0f} 秒后重试")
         self._next_try = time.monotonic() + REOPEN_SECONDS
+
+    def _accept_card(self, cap, fourcc, w, h, fps, aw, ah, is_low):
+        """接受这个格式作为当前采集格式，并记下分辨率高低，供「定期升 1080p」判断。"""
+        self._cap = cap
+        self._seen_signal = True
+        self._card_down = False       # 有信号了：解除「没信号」状态，下次掉线才会再记一行
+        self._preferred = (fourcc, w, h, fps)
+        self._preferred_low = is_low
+        if is_low:
+            if not self._low_since:
+                self._low_since = time.monotonic()
+        else:
+            self._low_since = 0.0
+        self._width, self._height = aw, ah
+        try:
+            afps = round(float(cap.get(cv2.CAP_PROP_FPS)) or (fps or 0))
+        except Exception:
+            afps = fps or 0
+        self._notify(f"[采集卡] 已连接「{self._name}」（设备 {self._index}）"
+                     f" {aw}×{ah}@{afps} 格式 {fourcc or '默认'}")
+
+    @staticmethod
+    def _size_ok(w, h, aw, ah):
+        """协商到的分辨率是否达到请求：请求 1080 时必须≥~1080，请求 720 时必须≥~720。"""
+        if w >= 1900:
+            return aw >= 1900 and ah >= 1000
+        return aw >= 1200 and ah >= 680
+
+    @staticmethod
+    def _frame_black(frame):
+        """这一帧是不是「纯黑」：亮度均值很低且几乎没变化（没信号/加载黑屏）。"""
+        try:
+            small = frame[::8, ::8]
+            return float(small.mean()) < BLACK_MEAN and float(small.std()) < BLACK_STD
+        except Exception:
+            return False
 
     def _drop(self):
         cap, self._cap = self._cap, None
