@@ -42,6 +42,13 @@ def _safe_view() -> dict:
 
 @bp.get("")
 def page():
+    # 页面第一次打开、还没有数据时，立刻同步拉一次（最多 3 秒）：启动时若碰上一次偶发的 TLS
+    # 抖动，后台线程要等 5 分钟才重试，这一下让人打开页面就能拿到（拿不到也只是快一点报错）。
+    try:
+        if not map_rotation.has_data():
+            map_rotation.refresh_blocking(3.0)
+    except Exception:  # noqa: BLE001 —— 取数失败不影响把页面打开
+        pass
     return render_template("map_rotation.html", title="地图轮换")
 
 

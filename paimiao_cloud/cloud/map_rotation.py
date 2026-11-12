@@ -34,6 +34,7 @@ from email.utils import parsedate_to_datetime
 API_URL = "https://tools.skycraft.cn/apex/api/maprotation"
 ASSET_BASE = "https://tools.skycraft.cn"        # 图片 asset 的域名
 POLL_SECS = 300                                  # 5 分钟拉一次（轮换 90 分钟一轮，足够了）
+RETRY_SECS = 30                                  # 一次失败后多久再试：偶发的 TLS 抖动 30 秒内能自己好，不必干等 5 分钟
 TIMEOUT_SECS = 8
 # 一个请求只用一次、5 分钟一次、不带自动化 UA：相当于一个人开着页面看，不是「抓取」。
 # 如果以后要更保守，把 POLL_SECS 调大就行（页面打开时会自己补一次，见 map_rotation_ui）。
@@ -215,10 +216,12 @@ def _loop() -> None:
                 _refreshed_at = time.monotonic()
                 _skew = float(data.get("skew") or 0.0)
                 _last_error = ""
+            delay = POLL_SECS
         except Exception as exc:  # noqa: BLE001 —— 任何失败只记账，线程继续活着
             with _lock:
                 _last_error = f"{type(exc).__name__}: {exc}"[:200]
-        time.sleep(POLL_SECS)
+            delay = RETRY_SECS  # 失败了早点重试，别让页面卡 5 分钟
+        time.sleep(delay)
 
 
 def start() -> None:
@@ -228,6 +231,31 @@ def start() -> None:
         return
     _thread = threading.Thread(target=_loop, name="map-rotation", daemon=True)
     _thread.start()
+
+
+def has_data() -> bool:
+    """内存里有没有一份拿到过的表。"""
+    with _lock:
+        return _snapshot is not None
+
+
+def refresh_blocking(timeout: float = 3.0) -> bool:
+    """同步拉一次，成功返回 True，最多等 timeout 秒。给页面第一次打开（还没有数据）时用：
+    启动时偶发的 TLS 抖动会让后台线程 5 分钟才重试，这一下让用户打开页面就能拿到（或快速失败）。
+    后台线程照常跑，这里多拉一次互不影响（都只在写回时拿 _lock）。"""
+    global _snapshot, _last_error, _refreshed_at, _skew
+    try:
+        data = fetch_once(timeout=timeout)
+    except Exception as exc:  # noqa: BLE001
+        with _lock:
+            _last_error = f"{type(exc).__name__}: {exc}"[:200]
+        return False
+    with _lock:
+        _snapshot = data
+        _refreshed_at = time.monotonic()
+        _skew = float(data.get("skew") or 0.0)
+        _last_error = ""
+    return True
 
 
 # ---------------------------------------------------------------------------

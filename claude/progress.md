@@ -337,3 +337,13 @@
 - **主机模式的托盘提示**（用户 2026-11-06 要求）：上游 `evo_app.py:612` 写死 `tips = {"waiting": "等待 Apex 启动", ...}`，主机没有 Apex 进程、等的是 OBS 投影，字面会让人以为是等 PC 游戏。新增 `paimiao_cloud/cloud/obs/tray.py`（纯注入）：沿 MRO 找到 `pystray.Icon` 的 `title` property 包一层 setter，主机模式下把「等待 Apex 启动」改成「等待投影窗口」，并在投影**没置顶**时给标题追加「 · 投影未置顶」。`Recorder._loop` 每 5 秒 `_set_state` → `on_change` → `refresh()` 重赋 title，所以最多 5 秒内跟手；`trigger.projector_running()` 顺带缓存最近一次探测结果（`last_projector()`），托盘不再额外枚举窗口。整屏模式下一字不改。`_after_import` 里装、失败只写日志
   - 验证：`captures/mode_probe/verify_obs_topmost.py` 加 9 项：标题改写、非置顶提醒、已暂停不提醒、整屏模式原样、`tray.install` 幂等；另用真 `pystray.Icon` 实例确认 setter 生效（`等待 Apex 启动` → `等待投影窗口`、`正在记录` → 末尾带 `投影未置顶`）
 
+## 2026-11-12
+
+- **合并上游 0.5.5→0.5.6，改用真 merge 保留上游提交历史**（用户 2026-11-12 决定：这次不再无历史 squash）：上次真同步停在 upstream 提交 `80ea52a`，而且历史都是 squash，`merge-base` 一直卡在 0.4.0。这次临时用 `git replace --graft`（私有 `refs/replace-mine` 命名空间，避免干扰并行的会话）把「上次同步提交」`e0192ee` 标成已合并 upstream v0.5.5（`ce411c4`），于是 `git merge upstream/main` 只算 v0.5.5→0.5.6 的增量（冲突从直接 merge 的 53 个降到 17 个）。合并提交 `93427e3`（父：`12614bc` + upstream `3481a1d`），242 个上游提交进入历史；graft 合完即删，之后 `merge-base` 稳定在 `3481a1d`，以后 merge 干净、不再有「N commits behind」的假象。
+  - 合进来：0.5.6 读不到视频设置时按游戏画面认 16:9/16:10/4:3（`game_aspect.py`、`live_collect.py`）；大厅校准对不上改显示「校准分数」行（`calibration.py`、`panel_app.py`、`matches.html`）；设置页打开更快（`/settings/shots` 路由 + `screenshots.usage()` 单趟扫描 + `_shots.html` 宏 + `settings.html` 脚本，上游的 JPG 估算/文案改成本分支的 WEBP）；跟随的 `config/season_stats.json`、赛季截图样本、`test_aspect` 等测试。
+  - 冲突按「保留本分支」：`PRIVACY.md`、`claude/*`、`docs/*`（`代码地图.md` 用 `tools/code_map.py` 重新生成）、`release/更新内容.txt`、`code/storage.py`（版本号仍 0.5.8）、`tests/test_teammates.py`；`tests/test_screenshots.py` 对齐 WEBP 文案。
+  - 没带回来：`update_patch.py` / `tools/cos.py` / mirrorchyan / cloud_sync 仍不存在；`paimiao_cloud/` 未被本次 merge 改动。
+  - 上游 0.5.5 自身的界面改动（设置页鸣谢卡片、全体玩家颁奖台、设置页更简洁）按用户「0.5.5 之后」的范围这次没合；需要再单独补。
+  - 验证：`tests/run_all.py` 在真实 main 目录全绿（31 组，含「源码运行」「截图留不留」「按赛季看」）；设置页模板注入锚点仍在、匿名统计区块照常隐藏；注入路线冒烟（`ScreenDetector` → `ScreenWithLobby`，真实 2560×1440 帧 detect 返回 `summary`）通过。留备份分支 `backup/before-merge-0.5.6-20261112-185947`。
+- **地图轮换页取数失败不再干等 5 分钟**（用户 2026-11-12 截图反馈「地图轮换暂时取不到 … SSL: UNEXPECTED_EOF_WHILE_READING」）：本机复测接口 20/20 正常，属偶发 TLS 抖动；原实现后台每 5 分钟才拉一次、页面打开也不会立刻补拉，所以一次抖动就卡在错误上最多 5 分钟。改 `paimiao_cloud/cloud/map_rotation.py`：失败后 30 秒重试（`RETRY_SECS`），新增 `has_data()` / `refresh_blocking()`；`paimiao_cloud/cloud/map_rotation_ui.py` 的 `/maprotation` 页在还没有数据时同步拉一次（最多 3 秒）。验证：`refresh_blocking()` 返回 True、`view()` available=True（3 个模式）。与本次上游合并无关（`paimiao_cloud/` 合并未动）。
+
