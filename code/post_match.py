@@ -75,6 +75,23 @@ def xp_score(reading, problems):
     return (not problems, filled)
 
 
+RANK_FIELDS = ("rank_tier", "rank_division", "rank_progress")
+
+
+def _rank_retry(previous, reading, problems):
+    """只补同一张已核对经验值页缺失的完整段位；不把另一局或不一致的读数合进来。"""
+    if problems or ranks.score(*(reading.get(k) for k in RANK_FIELDS)) is None:
+        return False
+    if ranks.score(*(previous.get(k) for k in RANK_FIELDS)) is not None:
+        return False
+    if any(previous.get(k) is None or previous.get(k) != reading.get(k) for k in ("rp_delta", "placement")):
+        return False
+    if any(previous.get(k) is not None and reading.get(k) is not None and previous[k] != reading[k]
+           for k in ("kills", "assists", *RANK_FIELDS)):
+        return False
+    return True
+
+
 def xp_conflicts(reading, xp_time, summary, summary_time):
     """经验值页和总结页对不上的地方。空列表 = 对得上，是同一局。"""
     out = []
@@ -256,6 +273,7 @@ class PostMatch:
         self.summary = None  # 这一局总结页的读数和时间
         self.xp = None  # 这一局读得最好的一次经验值页：(读数, 问题, 截图路径, 时间)
         self.xp_done = False  # 核对通过的经验值页已经用过了（补进这一局，或单独记成一局）
+        self.xp_match_id = None  # 经验值页实际写进的局；与总结页冲突时可能不是 self.match_id
         self.elim = None  # 这一局淘汰画面读到的名次：(名次, 置信度, 时间)
         self.champion = None  # 认出"捍卫者"（冠军）的时间
         self.hud = None  # 这一局对局中最后的读数（见 in_match.py 的 InMatchWatcher._hand_over）
@@ -441,13 +459,26 @@ class PostMatch:
         """识别了一张经验值页之后调用：数字停下来的那一张，或者离开时的最后一帧（见 live_collect.ScreenWatcher）。
         返回 True：这一局第一次读全（"经验值页"那一声在这时响，2026-11-04 用户决定）。"""
         if self.xp_done:
+            self._upgrade_xp_rank(reading, problems, when)
             return False
-        if self._reopened_xp(reading):
+        if self._reopened_xp(reading, problems):
             self.log(f"[{when:%H:%M:%S}] 回到了上一局的经验值页（在大厅里打开的），不重复记")
             return False
+        if (self.xp is not None and not self.xp[1] and not problems
+                and ranks.score(*(self.xp[0].get(k) for k in RANK_FIELDS)) is None):
+            previous = self.xp[0]
+            if any(previous.get(k) is None or previous.get(k) != reading.get(k) for k in ("rp_delta", "placement")):
+                return False  # 不能用不一致的读数覆盖已核对的 RP 和名次
+            if (ranks.score(*(reading.get(k) for k in RANK_FIELDS)) is not None
+                    and not _rank_retry(previous, reading, problems)):
+                return False  # 段位完整，但其他已读字段不一致
         first_full = not problems and (self.xp is None or bool(self.xp[1]))
         if self.xp is None or xp_score(reading, problems) > xp_score(*self.xp[:2]):
             self.xp = (reading, problems, path, when)
+        elif not self.xp[1] and _rank_retry(self.xp[0], reading, problems):
+            previous, notes, old_path, old_when = self.xp
+            self.xp = ({**previous, **{k: reading[k] for k in RANK_FIELDS}, "raw": reading.get("raw")},
+                       notes, old_path, old_when)
         if self.xp[1]:  # 到目前为止还没有一次读全
             self.log(f"[{when:%H:%M:%S}] 经验值页没读全（{problems[0]}）。下次等数字停下再离开")
         self._use_xp()
@@ -485,12 +516,15 @@ class PostMatch:
         return h is not None and (h["saw_start"] or h["end"] in ("eliminated", "champion", "summary", "xp", "squad_out")) \
             and (any(h["values"].get(k) is not None for k in HUD_FIELDS) or h["mates"])
 
-    def _reopened_xp(self, reading):
+    def _reopened_xp(self, reading, problems):
         """是不是在大厅里重新打开了上一局的经验值页：这一轮还没有别的数据（真正只有经验值页的局前面有对局中的数据，
         读数还没交来时至少看到了结束），读到的项（至少一项）都和上一次用过的一样。"""
         if self.last_xp is None or any(x is not None for x in (self.match_id, self.hud, self.hud_end, self.elim,
                                                                 self.champion)):
             return False
+        if not self.info and all(self.last_xp.get(k) is not None and self.last_xp[k] == reading.get(k)
+                                 for k in ("kills", "assists")) and _rank_retry(self.last_xp, reading, problems):
+            return True  # 上次只缺段位；重新打开时读全也不是新的一局
         read = {k: reading[k] for k in XP_FIELDS if reading[k] is not None}
         return bool(read) and all(self.last_xp[k] == v for k, v in read.items())
 
@@ -507,10 +541,40 @@ class PostMatch:
         conflicts = xp_conflicts(reading, when, *self.summary)
         if conflicts:
             note = "经验值页和这段时间的总结页对不上（" + "；".join(conflicts) + "），可能是另一局，请核对"
-            self._insert_xp_only(reading, True, [note], path, when, with_others=False)  # 其他来源属于总结页那一局
+            self.xp_match_id = self._insert_xp_only(reading, True, [note], path, when, with_others=False)
         else:
             self._apply(reading)
+            self.xp_match_id = self.match_id
         self.xp_done = True
+
+    def _upgrade_xp_rank(self, reading, problems, when):
+        """已有经验值页只补段位：保留 RP、名次、用户修改及原先匹配的那一局。"""
+        if self.xp is None or self.xp_match_id is None or not _rank_retry(self.xp[0], reading, problems):
+            return
+        previous, notes, path, old_when = self.xp
+        row = storage.get_match(self.conn, self.xp_match_id)
+        edited = set((row["edited"] or "").split(",")) if row else set()
+        if row is None or edited.intersection(RANK_FIELDS) or any(row[k] != previous.get(k) for k in RANK_FIELDS):
+            return
+        values = {k: reading[k] for k in RANK_FIELDS}
+        cur = self.conn.execute("UPDATE matches SET rank_tier=?, rank_division=?, rank_progress=? "
+                                "WHERE match_id=? AND rank_tier IS ? AND rank_division IS ? AND rank_progress IS ? "
+                                "AND COALESCE(edited, '')=?",
+                                [*(values[k] for k in RANK_FIELDS), self.xp_match_id,
+                                 *(previous.get(k) for k in RANK_FIELDS), row["edited"] or ""])
+        if not cur.rowcount:
+            self.conn.rollback()
+            return
+        try:
+            # save_readings 一次提交段位和来源读数，异常时一起回滚。
+            storage.save_readings(self.conn, self.xp_match_id, SOURCE_XP, values, f"{when:%Y-%m-%d %H:%M:%S}")
+        except Exception:
+            self.conn.rollback()
+            raise
+        merged = {**previous, **values, "raw": reading.get("raw")}
+        self.xp = (merged, notes, path, old_when)
+        self.last_xp = merged
+        self.log(f"           经验值页：补上段位 {rank_text(merged)}（编号 {self.xp_match_id}）")
 
     def _apply(self, reading):
         """把核对通过的经验值页补进这一局：段位、段内进度；RP、名次交给 settle 按优先级定。"""
@@ -670,3 +734,4 @@ class PostMatch:
                  f"RP {signed(row['rp_delta'])}，段位 {rank_text(reading) if verified else '-'}")
         for n in notes:
             self.log(f"           ⚠ {n}")
+        return match_id

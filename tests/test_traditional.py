@@ -17,6 +17,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 from fake_game import BLACK, MissingShots, SHOTS, load, report, run_collect  # 要在项目代码之前导入
@@ -26,6 +27,7 @@ import layout
 import panel_app
 import ranks
 import storage
+import xp_page
 from eliminated import read_eliminated
 from hud import Hud
 from lobby import LobbyReader, LobbyWatcher
@@ -104,12 +106,162 @@ def status_checks():
                           ({"规则": True}, {"新截图": True}),
                           ({"规则": True}, {"新截图": False}),
                           ({"规则": False}, MissingShots("新截图"))):
-        with mock.patch.dict(globals(), {"rule_checks": lambda: dict(rules), "status_checks": lambda: {},
+        with mock.patch.dict(globals(), {"rule_checks": lambda: dict(rules), "status_checks": lambda: {}, "retry_checks": lambda: {},
                                         "season31_checks": mock.Mock(side_effect=season) if isinstance(season, Exception)
                                         else lambda: dict(season),
                                         "frames": mock.Mock(side_effect=MissingShots("旧截图"))}), redirect_stdout(StringIO()):
             out.append(main())
     return {"截图缺失报告跳过，检查失败不被跳过掩盖": out == [None, None, False, False]}
+
+
+def retry_checks():
+    """假时钟、模拟 OCR 和临时数据库：先保存 RP，再在同一次停留补全段位。"""
+    cfg = load_config("xp.json", "zh-TW")
+    known = {"rp_shown": "74", "combat_total": "70 RP", "bonus_total": "0 RP", "placement_total": "4 RP",
+             "kills": "1 70 RP", "assists": "0 0 RP", "placement": "#9 24 RP", "entry_fee": "-20 RP",
+             "next_rank": "白銀Ⅱ"}
+    incomplete, problems = read_xp(None, None, cfg, known)
+    full = {**incomplete, "rank_progress": 436, "raw": {**incomplete["raw"], "next_rank": "64 RP 白銀Ⅱ", "progress": "436 RP"}}
+    when = datetime(2026, 11, 13, 21, 22)
+
+    def make_post(with_summary=True):
+        conn = storage.connect(":memory:")
+        post = PostMatch(conn, log=lambda message: None)
+        if with_summary:
+            post.match_id = storage.insert_match(conn, {"ended_at": "2026-11-13 21:22:00"})
+            post.summary = ({"placement": 9, "kda": (1, 0, 0)}, when)
+        return conn, post
+
+    def rows(conn):
+        return [tuple(row) for row in conn.execute("SELECT rank_tier, rank_division, rank_progress, rp_delta, placement FROM matches")]
+
+    conn, post = make_post()
+    with TemporaryDirectory() as folder:
+        watcher = fake_game.live_collect.ScreenWatcher(None, load_config("screens.json", "zh-TW"), cfg, {}, {}, post,
+                                                       Path(folder), lambda message: None, keep_all=False)
+        ticks = iter([0, .31, 1.0, 2.0])
+        with mock.patch.object(fake_game.live_collect, "time", mock.Mock(monotonic=lambda: next(ticks))), \
+             mock.patch.object(fake_game.live_collect, "numbers_snapshot", return_value=None), \
+             mock.patch.object(fake_game.live_collect, "numbers_moved", return_value=False), \
+             mock.patch.object(fake_game.live_collect, "read_rp", return_value=(74, {})), \
+             mock.patch.object(fake_game.live_collect, "read_xp", side_effect=[(incomplete, problems), (full, [])]) as reads, \
+             mock.patch.object(fake_game.live_collect, "save_png"):
+            watcher._watch_xp(BLACK, when)
+            watcher._watch_xp(BLACK, when)
+            before = rows(conn)
+            pending = not watcher.xp_full
+            watcher._watch_xp(BLACK, when + timedelta(seconds=1))
+            after = rows(conn)
+            watcher._watch_xp(BLACK, when + timedelta(seconds=2))
+        bounded_after_success = watcher.xp_full and reads.call_count == 2
+    sources = [(r["field"], r["value"]) for r in storage.readings_of(conn, post.match_id) if r["field"] == "rank_progress"]
+    post.finish()
+    post.on_xp(full, [], Path("xp.png"), when + timedelta(minutes=1))
+    post.finish()
+    no_duplicate = len(rows(conn)) == 1
+    conn.close()
+
+    conn, post = make_post(False)
+    post.on_xp(incomplete, [], Path("xp.png"), when)
+    post.on_xp(full, [], Path("xp.png"), when + timedelta(seconds=1))
+    post.finish()
+    no_summary = rows(conn)
+    conn.close()
+
+    unconfirmed_other = []
+    for later in (full, incomplete):
+        conn, post = make_post(False)
+        post.on_xp({**incomplete, "kills": None}, [], Path("xp.png"), when)
+        post.on_xp({**later, "rp_delta": 75}, [], Path("xp2.png"), when + timedelta(seconds=1))
+        post.finish()
+        unconfirmed_other.append(rows(conn))
+        conn.close()
+
+    rejected = []
+    for candidate, bad_problems, edit in (({**full, "rp_delta": 75}, [], None),
+                                          ({**full, "placement": 8}, [], None),
+                                          ({**full, "rank_tier": "黄金"}, [], None),
+                                          (full, ["RP 对不上"], None),
+                                          (full, [], {"rank_progress": 123, "edited": "rank_progress"}),
+                                          (full, [], {"rank_progress": 456})):
+        conn, post = make_post()
+        post.on_xp(incomplete, [], Path("xp.png"), when)
+        if edit:
+            storage.update_match(conn, post.match_id, edit)
+        post.on_xp(candidate, bad_problems, Path("xp2.png"), when + timedelta(seconds=1))
+        rejected.append(rows(conn)[0][2])
+        conn.close()
+
+    conn, post = make_post(False)
+    post.on_xp(incomplete, [], Path("xp.png"), when)
+    post.finish()
+    post.on_xp(full, [], Path("xp2.png"), when + timedelta(minutes=1))
+    post.finish()
+    reopened = rows(conn)
+    conn.close()
+
+    conn, post = make_post(False)
+    post.on_xp(incomplete, [], Path("xp.png"), when)
+    post.finish()
+    post.on_match_start({"mode": "ranked", "map": "残月", "raw_map": "残月"}, when + timedelta(minutes=3))
+    post.on_xp(full, [], Path("xp2.png"), when + timedelta(minutes=4))
+    post.finish()
+    new_round = rows(conn)
+    conn.close()
+
+    conn, post = make_post()
+    original_id = post.match_id
+    storage.update_match(conn, original_id, {"rank_tier": "黄金", "rank_division": "I", "rank_progress": 100})
+    post.summary = ({"placement": 3, "kda": (1, 0, 0)}, when)
+    post.on_xp(incomplete, [], Path("xp.png"), when)
+    xp_id = post.xp_match_id
+    post.on_xp(full, [], Path("xp2.png"), when + timedelta(seconds=1))
+    conflict_rows = rows(conn)
+    conn.close()
+
+    conn, post = make_post()
+    post.on_xp(incomplete, [], Path("xp.png"), when)
+    with TemporaryDirectory() as folder:
+        watcher = fake_game.live_collect.ScreenWatcher(None, load_config("screens.json", "zh-TW"), cfg, {}, {}, post,
+                                                       Path(folder), lambda message: None, keep_all=False)
+        watcher.current, watcher.last, watcher.frames = "xp", (BLACK, when + timedelta(seconds=1)), 1
+        with mock.patch.object(fake_game.live_collect, "read_xp", return_value=(full, [])), \
+             mock.patch.object(fake_game.live_collect, "save_png"):
+            watcher.leave()
+        last_frame = rows(conn)
+    conn.close()
+
+    conn, post = make_post()
+    with TemporaryDirectory() as folder:
+        watcher = fake_game.live_collect.ScreenWatcher(None, load_config("screens.json", "zh-TW"), cfg, {}, {}, post,
+                                                       Path(folder), lambda message: None, keep_all=False)
+        ticks = iter(range(20))
+        with mock.patch.object(fake_game.live_collect, "time", mock.Mock(monotonic=lambda: next(ticks))), \
+             mock.patch.object(fake_game.live_collect, "numbers_snapshot", return_value=None), \
+             mock.patch.object(fake_game.live_collect, "numbers_moved", return_value=False), \
+             mock.patch.object(fake_game.live_collect, "read_rp", return_value=(74, {})), \
+             mock.patch.object(fake_game.live_collect, "read_xp", return_value=(incomplete, [])) as reads, \
+             mock.patch.object(fake_game.live_collect, "save_png"):
+            for second in range(10):
+                watcher._watch_xp(BLACK, when + timedelta(seconds=second))
+        limited = reads.call_count == cfg["still"]["max_reads"] and rows(conn) == [("白银", "III", None, 74, 9)]
+    conn.close()
+    return {
+        "先保存已核对 RP、名次，缺少分数时继续重试": before == [("白银", "III", None, 74, 9)] and pending,
+        "重试只更新同一局的缺失段位，成功后停止且不重复记局":
+            after == [("白银", "III", 436, 74, 9)] and bounded_after_success and no_duplicate and len(sources) == 1,
+        "没有总结页时保留更完整的读数，收尾只记一局": no_summary == [("白银", "III", 436, 74, 9)],
+        "没有总结页时即使后一次字段更多，RP 不一致也不覆盖原读数":
+            unconfirmed_other == [[("白银", "III", None, 74, 9)]] * 2,
+        "RP、名次、段位不一致或核对失败不合并；不覆盖用户修改或其他已有数据":
+            rejected == [None, None, None, None, 123, 456],
+        "和总结页冲突时只补经验值页单独记下的那局":
+            xp_id != original_id and conflict_rows == [("黄金", "I", 100, None, None), ("白银", "III", 436, 74, 9)],
+        "离开经验值页时最后一帧读全也补进原局": last_frame == [("白银", "III", 436, 74, 9)],
+        "在大厅重新打开先前缺段位的经验值页不重复记局": len(reopened) == 1,
+        "已经出现下一局开局画面时不误当作重开上一局": len(new_round) == 2,
+        "一直读不到段位时按配置限制重试次数，保留 RP 和名次": limited,
+    }
 
 
 def season31_checks():
@@ -138,6 +290,30 @@ def season31_checks():
     card = panel_app.rank_card([], lobbies)
     values = [(r["rank_tier"], r["rank_division"], r["rank_progress"]) for r in lobbies]
     conn.close()
+    conn = storage.connect(":memory:")
+    post = PostMatch(conn, log=lambda message: None)
+    cfg = load_config("xp.json", "zh-TW")
+    original_read = xp_page.read_text
+    next_reads = []
+    def transient(engine_arg, img, spec, config):
+        if spec["roi"] == cfg["fields"]["next_rank"]["roi"]:
+            next_reads.append(1)
+            if len(next_reads) == 1:
+                return "白銀Ⅱ", 0.99  # 真截图 + 模拟首次 OCR 漏掉布局特征
+        return original_read(engine_arg, img, spec, config)
+    with TemporaryDirectory() as folder:
+        screen = fake_game.live_collect.ScreenWatcher(engine, load_config("screens.json", "zh-TW"), cfg, {}, {}, post,
+                                                      Path(folder), lambda message: None, keep_all=False)
+        ticks = iter([0, .31, 1.0])
+        with mock.patch.object(fake_game.live_collect, "time", mock.Mock(monotonic=lambda: next(ticks))), \
+             mock.patch.object(fake_game.live_collect, "save_png"), mock.patch.object(xp_page, "read_text", side_effect=transient):
+            screen._watch_xp(xp_frame, t0)
+            screen._watch_xp(xp_frame, t0)
+            first = post.xp[0]["rank_progress"]
+            screen._watch_xp(xp_frame, t0 + timedelta(seconds=1))
+        post.finish()
+        replay = [tuple(row) for row in conn.execute("SELECT rank_tier, rank_division, rank_progress, rp_delta, placement FROM matches")]
+    conn.close()
     return {
         "繁体新大厅和经验值页识别正确，黑屏不是大厅": detector.detect(before) == "lobby"
             and detector.detect(after) == "lobby" and detector.detect(xp_frame) == "xp" and detector.detect(BLACK) is None,
@@ -148,6 +324,8 @@ def season31_checks():
             and values == [("白银", "III", 377), ("白银", "III", 436)],
         "段位卡片使用最新大厅读数": card is not None and card["name"] == "白银 III"
             and card["progress"] == 436 and "大厅" in card["as_of"],
+        "真截图模拟首次 OCR 漏字，重试实际 OCR 后同一局补全段位":
+            first is None and len(next_reads) == 2 and replay == [("白银", "III", 436, 74, 9)],
     }
 
 
@@ -197,7 +375,7 @@ def collect_checks(files):
 
 def main():
     print("繁体中文游戏画面（三局整段重放 + 单张）")
-    checks = {**rule_checks(), **status_checks()}
+    checks = {**rule_checks(), **status_checks(), **retry_checks()}
     skipped = False
     try:
         checks.update(season31_checks())
