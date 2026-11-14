@@ -49,6 +49,7 @@ import cv2
 import calibration
 import capture
 import game_lang
+import ranks
 import screenshots
 import season_import
 import sounds
@@ -475,8 +476,12 @@ class ScreenWatcher:
         path.parent.mkdir(parents=True, exist_ok=True)
         save_png(path, frame)
         reading, problems = read_xp(self.engine, frame, self.xp_cfg, known=known)
+        first_full = self.post.on_xp(reading, problems, path, now)
         self.xp_full = not problems
-        if self.post.on_xp(reading, problems, path, now) and self.on_read is not None:
+        if self.xp_full and self.xp_cfg["fields"]["progress"].get("layout_from_next_rank"):
+            best = self.post.xp[0] if self.post.xp is not None else reading
+            self.xp_full = ranks.score(best.get("rank_tier"), best.get("rank_division"), best.get("rank_progress")) is not None
+        if first_full and self.on_read is not None:
             self.on_read(now)  # 这一局第一次读全（上面没响过的话，比如在大厅里打开的、只有经验值页的局）
 
     def _read_held(self):
