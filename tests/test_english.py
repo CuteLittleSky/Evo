@@ -122,7 +122,7 @@ def main():
             and not any("经验值页没读全" in x for x in said),
         f"每局 2 名队友（{c['mates']}）": c["mates"] == [2, 2],
         f"大厅：排位时读出白金 II 326（{c['lobbies']}）": bool(c["lobbies"]) and set(c["lobbies"]) == {("白金", "II", 326)},
-        "匹配大厅：左下角没有段位，写一行就不读": said.count("大厅：左下角没有段位（选的不是排位），这次不读") == 1,
+        "匹配大厅：未读到段位，写一行就不读": said.count("大厅：未读到段位，可能为非排位模式或识别失败，这次不读") == 1,
         "排位局的 RP 和对局中最后读到的一致": "RP 核对：经验值页、对局中都是 -20（编号 1）" in [x.strip() for x in said],
     })
 

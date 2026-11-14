@@ -99,7 +99,12 @@ def rank_text(reading):
         raw = reading.get("raw") or {}
         seen = [f"{label}'{raw[k]}'" for k, label in (("next_rank", "下一段位"), ("progress", "段内进度")) if raw.get(k)]
         return f"-（没读到：{'、'.join(seen) or '两行都没读到'}）" if raw else "-"
-    return f"{ranks.rank_name(reading['rank_tier'], reading['rank_division'])} {reading['rank_progress']}"
+    name = ranks.rank_name(reading['rank_tier'], reading['rank_division'])
+    if reading.get("rank_progress") is None:
+        raw = reading.get("raw") or {}
+        seen = [f"{label}'{raw[k]}'" for k, label in (("next_rank", "下一段位"), ("progress", "段内进度")) if raw.get(k)]
+        return f"{name}（段内进度没读到；{'、'.join(seen) or '两行都没读到'}）"
+    return f"{name} {reading['rank_progress']}"
 
 
 def signed(n):

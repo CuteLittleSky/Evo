@@ -122,6 +122,19 @@ def read_field(engine, img, name, spec, cfg):
     return ""
 
 
+def _read_progress_by_layout(engine, img, spec, cfg, next_text):
+    """繁体新旧界面都写 RP：先看下一段位行确定布局，分不出时不把旧界面的起点 0 当作进度。"""
+    text = next_text.replace(" ", "")
+    if re.search(r"下[個个]排名", text):
+        spot = {**spec, **spec["also"][0]}
+    elif re.match(r"\d+RP", text, re.IGNORECASE):
+        spot = spec
+    else:
+        return ""
+    # 布局已经确定，不能在另一种布局的位置回退。
+    return read_field(engine, img, "progress", {**spot, "also": []}, cfg)
+
+
 RP_FIELDS = ("rp_shown", "combat_total", "bonus_total", "placement_total")  # 顶部的数字和三个合计
 
 
@@ -142,8 +155,12 @@ def read_xp(engine, img, cfg, known=None):
     """识别一张经验值页。返回 (结果, 问题列表)。结果里读不出的项为 None。
     known：已经读过的几格的原文（read_rp 读的那四格），不再读一遍。"""
     known = known or {}
+    fields = cfg["fields"]
     raw = {name: known[name] if name in known else read_field(engine, img, name, spec, cfg)
-           for name, spec in cfg["fields"].items()}
+           for name, spec in fields.items() if name != "progress" or not spec.get("layout_from_next_rank")}
+    if fields["progress"].get("layout_from_next_rank"):
+        raw["progress"] = (known["progress"] if "progress" in known else
+                           _read_progress_by_layout(engine, img, fields["progress"], cfg, raw["next_rank"]))
     patterns = cfg["patterns"]
     glued = cfg.get("split_glued", True)  # 次数和分数连在一起时（"00排位点数"）去拆；英文中间隔得远，不会连在一起，不拆
 

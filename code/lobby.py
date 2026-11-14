@@ -189,7 +189,7 @@ class LobbyWatcher:
         give_up = self.reader.cfg.get("give_up_blank_reads")
         if give_up and self.blank >= give_up:
             self.done = True
-            self.log(f"[{now:%H:%M:%S}] 大厅：左下角没有段位（选的不是排位），这次不读")
+            self.log(f"[{now:%H:%M:%S}] 大厅：未读到段位，可能为非排位模式或识别失败，这次不读")
             return
         key = (r["tier"], r["division"], r["progress"]) if r["score"] is not None else None
         if key is not None and self.last is not None and key == self.last[0]:
