@@ -1,7 +1,8 @@
 """对局中右下角手上那把武器（规则在 config/weapons.json，参照图在 config/templates/weapons/）：数据页"最常用武器"用。
 
 只比外观、不用识别引擎（交火时不用引擎）：
-- icon_mask：右下角手上那把的大图标那块，缩放成基准尺寸，挑出白色的像素（图标是白色的，武器栏的底色是各种弹药颜色）
+- icon_mask：右下角手上那把的大图标那块，缩放成基准尺寸，挑出白色的像素（图标是白色的，武器栏的底色是各种弹药颜色；
+  第 31 赛季有时是金色的，金色也算）
 - WeaponDetector.identify：每把武器的参照图（白色像素，裁到边）在这块里滑动，找最像的位置；最像的够像、又比第二像的
   （另一把武器）高出一截才算认出。参照图是滑着比的，所以这块里多出来的东西（上面的提示文字、下面的弹药小图标）不影响
 - 一把武器可以有几张参照图（<编号>.png、<编号>-2.png……）：比如莫桑比克、P2020 单拿和双持的样子不一样
@@ -33,15 +34,20 @@ def template_key(path):
 
 
 def icon_mask(frame, cfg):
-    """右下角手上那把的大图标那块：缩放成基准尺寸，白色的像素为 255，其余为 0。"""
+    """右下角手上那把的大图标那块：缩放成基准尺寸，图标的像素（白色，或第 31 赛季有时出现的金色）为 255，其余为 0。"""
     box = cfg["icon_box"]
     w, h = box[2], box[3]
     piece = cut(frame, box, cfg["base_resolution"], cfg.get("anchor"))
     if piece.size == 0:
         return np.zeros((h, w), np.uint8)
-    piece = cv2.resize(piece, (w, h), interpolation=cv2.INTER_AREA).astype(np.int16)
-    lo, hi = piece.min(axis=2), piece.max(axis=2)
-    mask = (((lo >= cfg["white_min"]) & (hi - lo < cfg["white_spread"])) * 255).astype(np.uint8)
+    piece = cv2.resize(piece, (w, h), interpolation=cv2.INTER_AREA)
+    wide = piece.astype(np.int16)
+    lo, hi = wide.min(axis=2), wide.max(axis=2)
+    icon = (lo >= cfg["white_min"]) & (hi - lo < cfg["white_spread"])
+    if "gold_hsv_min" in cfg:  # 金色的图标（截图是 BGR）
+        hsv = cv2.cvtColor(piece, cv2.COLOR_BGR2HSV)
+        icon |= cv2.inRange(hsv, np.array(cfg["gold_hsv_min"]), np.array(cfg["gold_hsv_max"])) > 0
+    mask = (icon * 255).astype(np.uint8)
     for x, y, bw, bh in cfg.get("ignore_boxes", []):  # 配件格、弹药小图标：挖掉不看
         x0, y0 = max(0, x - box[0]), max(0, y - box[1])
         mask[y0:y0 + bh, x0:x0 + bw] = 0
