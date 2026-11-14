@@ -15,6 +15,7 @@
   git fetch origin pull/<N>/head:pr-<N>
   git worktree add E:\Evo-pr<N> pr-<N>
   ```
+- Python 用项目的虚拟环境 `E:\Evo\.venv\Scripts\python.exe`：依赖都装在那里，系统自带的 `python` 里只有 pip。worktree 里没有 `.venv`，所以测试和程序都用这个完整路径来跑。PR 加了新依赖时，另建一个虚拟环境，不往 `E:\Evo\.venv` 里装
 - 测试要用的本机文件：`captures/` 用目录联接（PowerShell：`New-Item -ItemType Junction -Path E:\Evo-pr<N>\captures -Target E:\Evo\captures`），`tests/replay_20261016_teammates.csv`、`tests/in_match_teammates.json` 复制过去
 - 运行他的 `evo_app.py`、`panel_app.py` 前，**先把 `EVO_DATA_DIR` 设成复制出来的数据文件夹**，绝不用 `E:\Evo Tracker Data`（11-07 测 0.5.5b 的时候，真实数据库被升到了版本 10，退不回去）
 - 审完 `git worktree remove E:\Evo-pr<N>`，删掉 `pr-<N>` 分支
