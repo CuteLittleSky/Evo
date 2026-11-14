@@ -57,7 +57,7 @@ Evo：一个轻量、开源的 Apex Legends 战绩记录器，面向 PC 玩家�
 
 ## 技术栈
 
-- Python 3.13（Windows）：新版 numpy 要求 3.12+，onnxruntime 暂不支持 3.15
+- Python 3.13（Windows）：新版 numpy 要求 3.12+，onnxruntime 暂不支持 3.15。依赖都装在项目的虚拟环境 `E:\Evo\.venv` 里，系统自带的 `python` 只有 pip：下面写的 `python` 都指 `E:\Evo\.venv\Scripts\python.exe`（Claude 运行命令时写完整路径）。报 `No module named 'cv2'` 一般是用错了 Python，不是包丢了
 - 文件布局：程序代码在 `code/`（互相 import 时直接写模块名，如 `import storage`）；只在开发时用的脚本（打包、安装、发布、伪数据、探测工具、`evo.spec`）在 `tools/`（先 `import code_path` 才能 import 程序代码）；测试在 `tests/`；根目录只放文档和文件夹；素材放 `assets/`。运行命令都带上文件夹，如 `python code/evo_app.py`、`python tools/build.py`
 - 截屏 `dxcam`（备选 `mss`）；图像 `opencv-python-headless` + `numpy`（不要装 `opencv-python`，会冲突）；引擎 RapidOCR + onnxruntime（模型内置、单线程）；存储 SQLite；面板 Flask + 纯 HTML/CSS；窗口 `pywebview` + WebView2；托盘 `pystray`；打包 PyInstaller（一个文件夹）。细节见 docs/底座.md
 - 小程序：微信原生写法（JavaScript + WXML / WXSS）+ 微信云开发（云函数用 Node.js），用微信开发者工具调试。细节见 docs/小程序.md
