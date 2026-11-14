@@ -18,7 +18,7 @@
 - Python 用项目的虚拟环境 `E:\Evo\.venv\Scripts\python.exe`：依赖都装在那里，系统自带的 `python` 里只有 pip。worktree 里没有 `.venv`，所以测试和程序都用这个完整路径来跑。PR 加了新依赖时，另建一个虚拟环境，不往 `E:\Evo\.venv` 里装
 - 测试要用的本机文件：`captures/` 用目录联接（PowerShell：`New-Item -ItemType Junction -Path E:\Evo-pr<N>\captures -Target E:\Evo\captures`），`tests/replay_20261016_teammates.csv`、`tests/in_match_teammates.json` 复制过去
 - 运行他的 `evo_app.py`、`panel_app.py` 前，**先把 `EVO_DATA_DIR` 设成复制出来的数据文件夹**，绝不用 `E:\Evo Tracker Data`（11-07 测 0.5.5b 的时候，真实数据库被升到了版本 10，退不回去）
-- 审完 `git worktree remove E:\Evo-pr<N>`，删掉 `pr-<N>` 分支
+- 审完收拾：先 `cmd /c rmdir E:\Evo-pr<N>\captures` 只删掉链接（**不要用 `Remove-Item -Recurse`**，可能连真截图一起删），删之前和删之后各数一次 `E:\Evo\captures` 里的文件，数量要一样；再删掉复制过去的两个文件，`git worktree remove E:\Evo-pr<N>`，删掉 `pr-<N>` 分支
 
 ## 3. 逐条对照
 
@@ -46,6 +46,7 @@
 
 - 照[测试SOP](测试SOP.md)挑。作者那里没有截图，所以改了模型、`storage.py` 的，在本机跑全部 `python tests/run_all.py`（放在后台跑）
 - "⏭ 跳过"不算通过；作者说他跑过的测试，我们也自己再跑一次
+- 在 worktree 里跑，"源码运行"那一组的"截图在项目的 captures/"一项一定不过：链接被解析成了 `E:\Evo\captures`，和 PR 无关。在 `E:\Evo` 的 `main` 上跑一次 `tests/test_source_run.py`，通过就行
 - 发现的问题要用真实截图或本机数据复现出来，结论里写清楚是怎么复现的
 
 ## 5. 先在对话里给用户结论
