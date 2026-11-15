@@ -287,7 +287,9 @@ def template_globals():
         # 多账号：认出了新的玩家名 → 弹窗问"是不是同一个人"；有 2 个以上账号时，右上角切换账号
         "name_question": name_question(),
         "account_view": account_view(),
-        # 右上角"Evo 官方合作小程序：派圈助手"（每一页都有）：没有小程序码图片时是 None，不显示
+        # 右上角的「Evo 占用」（_usage.html，每一页都有）：用到时才量（一次约 5 毫秒），局部重画的片段不量
+        "usage_card": usage_card,
+        # "Evo 官方合作小程序：派圈助手"（总览页"关注我"那一栏、设置页鸣谢卡片）：没有小程序码图片时是 None，不显示
         "partner": partner_qr(),
         "partner_icon": PARTNER_ICON,
     }
@@ -1085,7 +1087,6 @@ def overview():
         share=share,
         follow=FOLLOW_LINKS,
         maps=map_rotation.card(),
-        usage=evo_usage.card(app.config["DB"]),
     )
 
 
@@ -1305,9 +1306,14 @@ def refresh_everyone():
     return jsonify(global_stats.fetch())
 
 
+def usage_card():
+    """右上角「Evo 占用」要的东西（evo_usage.card）：现在的，和最近几局对局中的平均。"""
+    return evo_usage.card(app.config["DB"])
+
+
 @app.get("/usage")
 def usage_now():
-    """总览页「Evo 占用」的"现在"那一格（evo_usage.py）：页面开着时每 2 秒问一次，回格式化好的文字 {"cpu", "memory", "parts"}。"""
+    """右上角「Evo 占用」（evo_usage.py）：页面开着时每 2 秒问一次，回格式化好的文字 {"cpu", "memory", "parts"}。"""
     return jsonify(evo_usage.now_view(evo_usage.live().read()))
 
 

@@ -58,6 +58,7 @@
     </a>
     {% endfor %}
   </nav>
+  {% include "_usage.html" %}
   {% if is_demo %}
   <div class="pill pill-warn" title="当前读取的是 {{ db_name }}，不是正式数据库">
     <span class="dot"></span><span>演示数据</span>
@@ -222,6 +223,40 @@
 
 {% block content %}{% endblock %}
 </main>
+<script>
+  // 右上角的「Evo 占用」（_usage.html）：点了在下面展开（再点、点外面、Esc 收起）；每 2 秒问一次 /usage 换上新的数字，
+  // 窗口最小化、切到别的程序时不问。第一次打开时 CPU 要和一秒前比才有，所以一秒后先问一次
+  (function () {
+    var box = document.getElementById("usage-top");
+    if (!box) return;
+    var btn = document.getElementById("usage-open"), panel = document.getElementById("usage-panel");
+    function setOpen(open) {
+      panel.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    btn.addEventListener("click", function () { setOpen(panel.hidden); });
+    document.addEventListener("click", function (e) { if (!panel.hidden && !box.contains(e.target)) setOpen(false); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !panel.hidden) { setOpen(false); btn.focus(); }
+    });
+    var busy = false;
+    function update() {
+      if (busy || document.visibilityState !== "visible") return;
+      busy = true;
+      fetch("{{ url_for('usage_now') }}")
+        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          ["cpu", "memory", "parts"].forEach(function (key) {
+            box.querySelectorAll('[data-usage="' + key + '"]').forEach(function (el) { if (r[key]) el.textContent = r[key]; });
+          });
+        })
+        .catch(function () {})
+        .finally(function () { busy = false; });
+    }
+    setTimeout(update, 1000);
+    setInterval(update, 2000);
+  })();
+</script>
 {% if partner %}
 {# 派圈助手的小程序码：总览页"关注我"那一栏、设置页鸣谢卡片里的"派圈助手"按钮（data-partner-open）打开。
    2026-10-28 起按钮在右上角、每一页都有，2026-11-15 用户要求挪到总览页"关注我"那一栏。
