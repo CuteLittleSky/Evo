@@ -245,9 +245,9 @@ def panel_checks(folder):
     storage.insert_match(conn, {"ended_at": "2026-11-15 20:00:00", "mode": "ranked", "placement": 3})
     conn.close()
     box, html = top("/")
-    out["有局：最近 3 局对局中的平均 CPU、内存，最高、同时整台电脑"] = (
-        "最近 3 局对局中（平均）" in box and "0.9%" in box and "210 MB" in box and "最高 232 MB" in box
-        and "同时整台电脑 CPU 51%" in box)
+    out["有局：最近 3 局对局中的平均 CPU、内存，内存最高"] = (
+        "最近 3 局对局中（平均）" in box and "0.9%" in box and "210 MB" in box and "内存最高 232 MB" in box)
+    out["不显示整台电脑的 CPU（2026-11-15 用户删掉）"] = "整台电脑" not in box
     out["现在那一格：页面所在的进程（托盘）有内存"] = "托盘" in box and "没在记录" in box
     others = [top(url)[0] for url in ("/matches", "/stats", "/seasons", "/settings")]
     out["每一页都有（战绩、数据、赛季、设置）"] = all('id="usage-open"' in b and "最近 3 局对局中" in b for b in others)

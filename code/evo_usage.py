@@ -289,12 +289,12 @@ def now_view(reading):
 
 
 def card(db_path=storage.DB_PATH, meter=None):
-    """总览页「Evo 占用」卡片要的东西：现在的（第一次打开时 CPU 是 "—"，页面一秒后再问）和最近几局的平均（没有局时 None）。"""
+    """右上角「Evo 占用」要的东西：现在的（第一次打开时 CPU 是 "—"，页面一秒后再问）和最近几局的平均（没有局时 None）。
+    整台电脑的 CPU 照样记在 usage.json 和日志里，页面上不显示（2026-11-15 用户觉得看不懂，删掉了）。"""
     avg = average(recent(usage_path(db_path)))
     return {"now": now_view((meter or live()).read()), "recent": None if avg is None else {
         "n": avg["n"], "cpu": cpu_text(avg["cpu"]), "memory": mb_text(avg["memory"]),
-        "peak": mb_text(avg["memory_peak"]),
-        "system": None if avg["system_cpu"] is None else f"{avg['system_cpu']:.0f}%"}}
+        "peak": mb_text(avg["memory_peak"])}}
 
 
 if __name__ == "__main__":

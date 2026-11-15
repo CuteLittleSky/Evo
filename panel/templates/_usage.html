@@ -5,7 +5,7 @@
    - 点了在按钮下面展开一块（不是弹窗，不挡页面；再点、点外面、Esc 收起）：
      现在：合计，下面分开写托盘、窗口（含 WebView2）、记录；
      最近 N 局对局中：每局从认出自己的界面到这一局结束，Evo 平均占多少（最多 10 局，记录子进程记的），
-     下面写这几局里内存最高到多少、同时整台电脑的 CPU（让玩家知道游戏占了多少、Evo 占了多少）
+     下面写这几局里内存最高到多少（原来还写着"同时整台电脑 CPU 58%"，11-15 用户觉得看不懂，删掉了）
    数字会变的地方用等宽数字并留出宽度，按钮不跟着数字变宽变窄。数字每 2 秒变一次，不用 aria-live（读屏软件会一直念）。
    usage：panel_app.usage_card()（用到时才量，一次约 5 毫秒） #}
 {% set usage = usage_card() %}
@@ -35,7 +35,7 @@
         <div><span class="usage-key">CPU</span><span class="usage-value num">{{ usage.recent.cpu }}</span></div>
         <div><span class="usage-key">内存</span><span class="usage-value num">{{ usage.recent.memory }}</span></div>
       </div>
-      <div class="usage-foot">最高 {{ usage.recent.peak }}{% if usage.recent.system %} · 同时整台电脑 CPU {{ usage.recent.system }}{% endif %}</div>
+      <div class="usage-foot">内存最高 {{ usage.recent.peak }}</div>
       {% else %}
       <div class="label">最近 10 局对局中（平均）</div>
       <div class="usage-metrics">
