@@ -1,12 +1,14 @@
 """总览页"关注我"：开发者的 B 站、小黑盒主页和 Evo 官网（panel_app.FOLLOW_LINKS、overview.html、panel/static/brands/）。
 不用截图，不开浏览器（用 Flask 自带的测试客户端）。
 
-- 总览页有"关注我"和三个按钮，地址是正式地址（不带分享追踪参数），交给系统浏览器打开（target="_blank"、rel="noopener noreferrer"）
+- 总览页"关注我"那一栏有三个按钮，地址是正式地址（不带分享追踪参数），交给系统浏览器打开（target="_blank"、rel="noopener noreferrer"）；
+  没有"关注我"三个字（2026-11-15 用户要求去掉），读屏软件照样念得出这一块是什么
 - 有对局时在左边一列"最近对局"下面（2026-10-28 用户要求）；没有对局时也显示
 - 三个图标是写对了的 SVG、单色（颜色跟随文字）、不引用别的文件，面板能取到
 - 设置页"关于 Evo"最下面的"支持我"（2026-10-28）：连着三个弹窗（文字是用户写的原文），最后一个是开发者的微信收款码
-- 右上角"Evo 官方合作小程序：派圈助手"（2026-10-28，每一页都有）：前面是派圈助手的图标，点了弹出小程序码（弹窗、码、扫码说明、关闭）；
-  每一页都有；没有小程序码图片时不显示；有图片时两张都是真的 PNG、面板能取到，文件夹里有许可说明
+- "Evo 官方合作小程序：派圈助手"（2026-10-28 起在右上角、每一页都有；2026-11-15 用户要求挪到总览页"关注我"那一栏，和三个按钮并列）：
+  前面是派圈助手的图标，样子和另外三个按钮一样，点了弹出小程序码（弹窗、码、扫码说明、关闭）；右上角不再有；
+  没有小程序码图片时不显示；有图片时两张都是真的 PNG、面板能取到，文件夹里有许可说明
 - 设置页"关于 Evo"下面的鸣谢卡片（2026-11-07）：开发者（链到 GitHub）→ 官方合作（派圈助手，弹同一个小程序码）→ 特别鸣谢
 
 运行：python tests/test_follow.py
@@ -31,17 +33,20 @@ EXPECTED = {"哔哩哔哩": "https://space.bilibili.com/26649278",
             "Evo 官网": "https://evotracker.cn/"}
 
 
-def follow_links(page):
-    """总览页"关注我"那一块里的按钮：[(名字, 地址, 整个 <a> 标签)]。"""
+def follow_section(page):
+    """总览页"关注我"那一块（整个 <section>），没有时是空字符串。"""
     found = re.search(r'<section class="card follow-card".*?</section>', page, re.S)
-    if not found:
-        return []
+    return found.group(0) if found else ""
+
+
+def follow_links(page):
+    """总览页"关注我"那一块里的链接按钮：[(名字, 地址, 整个 <a> 标签)]（派圈助手是 <button>，不在里面）。"""
     return [(" ".join(re.sub(r"<[^>]+>", " ", body).split()).removesuffix(" ↗"), href, tag)
-            for tag, href, body in re.findall(r'(<a [^>]*href="([^"]+)"[^>]*>)(.*?)</a>', found.group(0), re.S)]
+            for tag, href, body in re.findall(r'(<a [^>]*href="([^"]+)"[^>]*>)(.*?)</a>', follow_section(page), re.S)]
 
 
 def main():
-    print("总览页\"关注我\"：B 站、小黑盒、Evo 官网；右上角派圈助手；设置页支持我、鸣谢卡片")
+    print("总览页\"关注我\"：B 站、小黑盒、Evo 官网、派圈助手；设置页支持我、鸣谢卡片")
     path = FOLDER / "follow.db"
     conn = storage.connect(path)
     storage.insert_match(conn, {"ended_at": "2026-10-22 20:00:00", "placement": 3, "legend": "恶灵"})
@@ -70,7 +75,10 @@ def main():
             icons[f["name"]] = {}
 
     checks = {
-        "总览页有\"关注我\"，三个按钮：哔哩哔哩、小黑盒、Evo 官网": [name for name, _, _ in links] == list(EXPECTED),
+        "总览页\"关注我\"那一栏，三个链接按钮：哔哩哔哩、小黑盒、Evo 官网": [name for name, _, _ in links] == list(EXPECTED),
+        "去掉了\"关注我\"三个字（没有标题），读屏软件照样念得出这一块是什么": bool(follow_section(page)) and (
+            "<h2" not in follow_section(page) and ">关注我<" not in follow_section(page)
+            and 'aria-label="关注我、官方合作小程序"' in follow_section(page)),
         "地址是正式地址（不带分享追踪参数）": {name: href for name, href, _ in links} == EXPECTED,
         "交给系统浏览器打开（target=_blank、rel=noopener noreferrer）":
             bool(links) and all('target="_blank"' in tag and 'rel="noopener noreferrer"' in tag for _, _, tag in links),
@@ -109,7 +117,7 @@ def credits_checks(client):
             -1 < credits.find(">开发者<") < credits.find(">官方合作<") < credits.find(">特别鸣谢<"),
         "开发者：显示的名字是各自取的，点了用浏览器打开 GitHub 主页": [(n, u) for u, n in devs]
             == [(d["name"], d["url"]) for d in panel_app.DEVELOPERS] and all("github.com/" in u for u, _ in devs),
-        "官方合作：派圈助手按钮，点了弹出右上角那个小程序码": "data-partner-open" in credits and ">派圈助手<" in credits,
+        "官方合作：派圈助手按钮，点了弹出同一个小程序码": "data-partner-open" in credits and ">派圈助手<" in credits,
         "没有小程序码图片时不显示\"官方合作\"": ">官方合作<" not in no_partner and ">开发者<" in no_partner,
         "特别鸣谢：名单里的名字都在、按顺序，一样大（不带字号档位）": thanks == list(panel_app.THANKS) and bool(thanks),
         "名单空了不显示\"特别鸣谢\"": ">特别鸣谢<" not in no_thanks and ">开发者<" in no_thanks,
@@ -117,24 +125,32 @@ def credits_checks(client):
 
 
 def partner_checks(client):
-    """右上角"Evo 官方合作小程序：派圈助手"。小程序码图片在不在都要能测：用 mock 换掉"有没有这张图"。"""
+    """总览页"关注我"那一栏里的"Evo 官方合作小程序：派圈助手"（2026-11-15 从右上角挪过来）。
+    小程序码图片在不在都要能测：用 mock 换掉"有没有这张图"。"""
     with mock.patch.object(panel_app, "partner_qr", return_value=panel_app.PARTNER_QR):
         overview = client.get("/").get_data(as_text=True)
         others = [client.get(url).get_data(as_text=True) for url in ("/matches", "/stats", "/stats?view=all", "/settings")]
     with mock.patch.object(panel_app, "partner_qr", return_value=None):
         without = client.get("/").get_data(as_text=True)
-    header = overview.split("</header>")[0]
+    section = follow_section(overview)
+    button = re.search(r'<button [^>]*data-partner-open[^>]*>.*?</button>', section, re.S)
+    button = button.group(0) if button else ""
     dialog = re.search(r'<dialog class="dialog partner-dialog".*?</dialog>', overview, re.S)
     dialog = dialog.group(0) if dialog else ""
     out = {
-        "总览页右上角有按钮\"Evo 官方合作小程序：派圈助手\"（在顶部那一行里）":
-            'id="partner-open"' in header and "Evo 官方合作小程序：</span><span class=\"partner-name\">派圈助手" in header,
+        "总览页\"关注我\"那一栏有按钮\"Evo 官方合作小程序：派圈助手\"，放在三个按钮后面":
+            "Evo 官方合作小程序：</span><span class=\"partner-name\">派圈助手" in button
+            and section.find("Evo 官网") < section.find("data-partner-open"),
+        "样子和另外三个按钮一样（.btn），会弹窗（aria-haspopup）": 'class="btn follow-partner"' in button
+            and 'aria-haspopup="dialog"' in button,
         "点了弹出小程序码：弹窗里有码（读屏写着是什么）、扫码说明、关闭按钮":
             f'src="/static/{panel_app.PARTNER_QR}"' in dialog and 'alt="派圈助手的小程序码"' in dialog and "扫一扫" in dialog
-            and "data-partner-close" in dialog and 'querySelectorAll("#partner-open, [data-partner-open]")' in overview,
-        "每一页都有（战绩、数据、全体玩家、设置页也有按钮和弹窗）": all(
-            'id="partner-open"' in page.split("</header>")[0] and 'id="partner-dialog"' in page for page in others),
-        "没有小程序码图片时不显示按钮和弹窗": "partner-open" not in without and "partner-dialog" not in without,
+            and "data-partner-close" in dialog and 'querySelectorAll("[data-partner-open]")' in overview,
+        "右上角不再有这个按钮（总览、战绩、数据、全体玩家、设置页）": all(
+            "partner" not in page.split("</header>")[0] for page in [overview, *others]),
+        "设置页鸣谢卡片里的派圈助手照样能弹出小程序码": 'id="partner-dialog"' in others[-1]
+            and "data-partner-open" in others[-1],
+        "没有小程序码图片时不显示按钮和弹窗": "data-partner-open" not in without and "partner-dialog" not in without,
     }
     image = PANEL_DIR / "static" / panel_app.PARTNER_QR
     if image.is_file():
@@ -142,7 +158,7 @@ def partner_checks(client):
         icon = PANEL_DIR / "static" / panel_app.PARTNER_ICON
         out["按钮前面是派圈助手的图标（PNG、面板能取到，读屏软件跳过）"] = (
             icon.read_bytes()[:8] == PNG_HEADER and client.get(f"/static/{panel_app.PARTNER_ICON}").status_code == 200
-            and f'<img class="partner-icon" src="/static/{panel_app.PARTNER_ICON}" alt=""' in header)
+            and f'<img class="partner-icon" src="/static/{panel_app.PARTNER_ICON}" alt=""' in button)
         out["两张图都写明了不适用 AGPL（同一个文件夹里的 LICENSE.txt）"] = (image.parent / "LICENSE.txt").is_file()
         out["小程序码图片是 PNG、面板能取到"] = (image.read_bytes()[:8] == PNG_HEADER and reply.status_code == 200
                                        and panel_app.partner_qr() == panel_app.PARTNER_QR)

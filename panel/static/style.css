@@ -154,9 +154,9 @@ a { color: inherit; text-decoration: none; }
 /* 切换账号（有 2 个以上账号时才有）：和主题按钮一起靠右 */
 .account-switch { margin-left: auto; display: flex; align-items: center; gap: 8px; margin-top: 0; margin-bottom: 0; }
 .pill ~ .account-switch, .account-switch ~ .icon-btn { margin-left: 0; }
-/* 右上角"Evo 官方合作小程序：派圈助手"（base.html，2026-10-28，每一页都有）：描边的圆角按钮，把右边的东西推到最右；
-   窗口窄时只留"派圈助手"。弹窗里的小程序码总是白底（扫码要），深色主题也一样 */
-.partner-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px;
+/* 派圈助手（2026-10-28 起在右上角，2026-11-15 挪到总览页"关注我"那一栏，按钮样子和那里的另外三个一样，见 .follow-partner）。
+   .partner-btn 是设置页鸣谢卡片里那个描边的圆角按钮。窗口窄时只留"派圈助手"。弹窗里的小程序码总是白底（扫码要），深色主题也一样 */
+.partner-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--text); font: inherit; font-size: 13px;
   cursor: pointer; transition: border-color 0.15s; }
 .partner-btn:hover { border-color: var(--muted); }
@@ -164,7 +164,6 @@ a { color: inherit; text-decoration: none; }
 .partner-icon { flex: none; width: 20px; height: 20px; margin-left: -4px; border-radius: 5px; }  /* 图标自带深色底，圆角像小程序图标 */
 .partner-label { color: var(--muted); }
 .partner-name { font-weight: 500; }
-.partner-btn ~ .pill, .partner-btn ~ .account-switch, .partner-btn ~ .icon-btn { margin-left: 0; }
 .dialog.partner-dialog { width: min(360px, calc(100vw - 32px)); }
 .partner-body { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 24px 20px; text-align: center; }
 .partner-kicker { margin: 0; color: var(--muted); font-size: 13px; }
@@ -449,11 +448,12 @@ code { font-family: Consolas, monospace; font-size: 13px; padding: 1px 6px; bord
 .legend-key span { display: flex; align-items: center; gap: 6px; }
 .legend-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 
-/* 总览页最下面"关注我"：一条窄卡片，左边标题、右边两个按钮；图标单色、颜色跟随文字（做法同传奇小头像） */
-.follow-card { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; padding: 16px 24px; }
-.follow-card h2 { margin: 0; font-size: 16px; font-weight: 600; }
+/* 总览页"关注我"：一条窄卡片，没有标题（2026-11-15 用户要求去掉），B 站、小黑盒、Evo 官网和派圈助手四个按钮并列，
+   一起撑满一行（窄的时候折到下一行，每个照样撑满）；图标单色、颜色跟随文字（做法同传奇小头像），派圈助手的图标是原色的 */
+.follow-card { padding: 16px 24px; }
 .follow-links { display: flex; flex-wrap: wrap; gap: 10px; }
-.follow-links .btn { min-height: 40px; }
+.follow-links .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+.follow-partner .partner-icon { margin-left: 0; }
 .follow-icon { flex: none; width: 18px; height: 18px; background: currentColor;
   -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
 @media (forced-colors: active) { .follow-icon { forced-color-adjust: none; background: CanvasText; } }
@@ -652,7 +652,6 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .thanks-list li { overflow-wrap: anywhere; }
 .dev-list a { display: inline-block; padding: 2px 0; }
 .dev-list a:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; border-radius: 2px; }
-.credit-partner { margin-left: 0; }
 .settings-card h2, .about-card h2 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .setting + .setting { border-top: 1px solid var(--row-border); }

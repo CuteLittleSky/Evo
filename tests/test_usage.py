@@ -222,7 +222,7 @@ def panel_checks(folder):
     html = client.get("/").get_data(as_text=True)
     card = html[html.find('id="usage-card"'):]
     out["没有对局：也有「Evo 占用」，在关注我上面"] = (
-        "Evo 占用" in html and "算法和任务管理器一样" in html and html.find("usage-card") < html.find("h-follow"))
+        "Evo 占用" in html and "算法和任务管理器一样" in html and html.find("usage-card") < html.find("follow-card"))
     out["还没有局：写'打完一局以后显示'"] = "打完一局以后显示" in card and "最近 10 局对局中（平均）" in card
     rows = [{"at": f"2026-11-1{i} 20:00:00", "version": "0.5.8", "minutes": 15, "cpu": 0.8 + i * 0.1, "cpu_core": 13,
              "memory": 200 + i * 10, "memory_peak": 230 + i, "system_cpu": 50 + i} for i in range(3)]
@@ -236,7 +236,7 @@ def panel_checks(folder):
         "最近 3 局对局中（平均）" in card and "0.9%" in card and "210 MB" in card and "最高 232 MB" in card
         and "同时整台电脑 CPU 51%" in card)
     out["现在那一格：页面所在的进程（托盘）有内存"] = "托盘" in card and "没在记录" in card
-    out["有对局时也在左边一列、关注我上面"] = html.find('id="usage-card"') < html.find("h-follow")
+    out["有对局时也在左边一列、关注我上面"] = html.find('id="usage-card"') < html.find("follow-card")
     out["数字每 2 秒变：不用 aria-live"] = "aria-live" not in card
     first = client.get("/usage").get_json()
     time.sleep(0.6)

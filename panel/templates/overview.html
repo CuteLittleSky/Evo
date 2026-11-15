@@ -9,15 +9,22 @@
 
 {% macro follow_card() %}
 {# 关注我：开发者的 B 站、小黑盒主页和 Evo 官网（有对局时在左边一列"最近对局"下面，2026-10-28 用户要求：放在下面全宽会凸出来；没有对局时在提示下面）。target="_blank" 交给系统浏览器打开（和设置页"意见反馈"一样），Evo 自己不联网。
-   没有对局时也显示。图标只是装饰，名字就在旁边 #}
-<section class="card follow-card" aria-labelledby="h-follow">
-  <h2 id="h-follow">关注我</h2>
+   没有对局时也显示。图标只是装饰，名字就在旁边。
+   2026-11-15 用户要求：去掉"关注我"三个字（读屏软件照样念得出这一块是什么）；Evo 官方合作小程序「派圈助手」从右上角挪到这里，
+   和三个按钮并列（放最后，样子一样），点了弹出小程序码（base.html 的弹窗）。没有小程序码图片时没有这个按钮 #}
+<section class="card follow-card" aria-label="关注我、官方合作小程序">
   <div class="follow-links">
     {% for f in follow %}
     <a class="btn" href="{{ f.url }}" target="_blank" rel="noopener noreferrer">
       <span class="follow-icon" style="--icon: url('{{ url_for('static', filename=f.icon) }}')" aria-hidden="true"></span>{{ f.name }} ↗
     </a>
     {% endfor %}
+    {% if partner %}
+    <button type="button" class="btn follow-partner" data-partner-open aria-haspopup="dialog">
+      <img class="partner-icon" src="{{ url_for('static', filename=partner_icon) }}" alt="" width="20" height="20">
+      <span class="partner-label">Evo 官方合作小程序：</span><span class="partner-name">派圈助手</span>
+    </button>
+    {% endif %}
   </div>
 </section>
 {% endmacro %}
