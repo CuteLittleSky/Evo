@@ -1,0 +1,41 @@
+{# 总览页的「Evo 占用」（evo_usage.py，2026-11-15 用户要求）：Evo 自己占多少 CPU、内存，算法和任务管理器一样
+   （CPU 按整台电脑算，内存是专用工作集）。左边一列"最近对局"下面（没有对局时在提示下面），两格：
+   - 现在：Evo 全部进程（托盘、窗口和它下面的 WebView2、记录子进程）合计，下面分开写。页面开着时每 2 秒问一次 /usage
+     换上新的数字（overview.html 的脚本；窗口最小化时不问）。第一次打开时 CPU 要等一秒才有，先写"—"
+   - 最近 N 局对局中：每局从认出自己的界面到这一局结束，Evo 平均占多少（最多 10 局，记录子进程记的）；
+     下面写这几局里内存最高到多少、同时整台电脑的 CPU（让玩家知道游戏占了多少、Evo 占了多少）
+   数字会变的地方用等宽数字，两格的高度固定（.usage-slot 的 min-height），数字晚到、没有局时都不让页面跳。
+   数字每 2 秒变一次，不用 aria-live（读屏软件会一直念） #}
+<section class="card usage-card" id="usage-card" aria-labelledby="h-usage">
+  <div class="card-head">
+    <h2 id="h-usage">Evo 占用</h2>
+    <span class="muted small">算法和任务管理器一样</span>
+  </div>
+  <div class="usage-row">
+    <div class="usage-slot">
+      <div class="label">现在</div>
+      <div class="usage-metrics">
+        <div><span class="usage-key">CPU</span><span class="usage-value num" data-usage="cpu">{{ usage.now.cpu }}</span></div>
+        <div><span class="usage-key">内存</span><span class="usage-value num" data-usage="memory">{{ usage.now.memory }}</span></div>
+      </div>
+      <div class="usage-foot" data-usage="parts">{{ usage.now.parts }}</div>
+    </div>
+    <div class="usage-slot">
+      {% if usage.recent %}
+      <div class="label">最近 {{ usage.recent.n }} 局对局中（平均）</div>
+      <div class="usage-metrics">
+        <div><span class="usage-key">CPU</span><span class="usage-value num">{{ usage.recent.cpu }}</span></div>
+        <div><span class="usage-key">内存</span><span class="usage-value num">{{ usage.recent.memory }}</span></div>
+      </div>
+      <div class="usage-foot">最高 {{ usage.recent.peak }}{% if usage.recent.system %} · 同时整台电脑 CPU {{ usage.recent.system }}{% endif %}</div>
+      {% else %}
+      <div class="label">最近 10 局对局中（平均）</div>
+      <div class="usage-metrics">
+        <div><span class="usage-key">CPU</span><span class="usage-value num muted">—</span></div>
+        <div><span class="usage-key">内存</span><span class="usage-value num muted">—</span></div>
+      </div>
+      <div class="usage-foot">打完一局以后显示</div>
+      {% endif %}
+    </div>
+  </div>
+</section>

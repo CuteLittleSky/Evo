@@ -32,6 +32,7 @@
   进入时一张、离开前最后一帧一张；每局结束时还存最后一张自己的界面（hud_时间_last.png，校准对局中的区域用）
 - 设置页的"保留全部截图"开关：每局结束时看一眼，改了从下一局开始生效（见 collect 里的 round_end）
 每 5 分钟和记录结束时，日志里写一行 CPU、内存占用（方便实测对局中每 0.3 秒一张对 CPU 的影响）。
+每局对局中 Evo 全部进程的 CPU、内存记进最近 10 局（总览页的「Evo 占用」、匿名统计用，见 evo_usage.py）。
 
 运行：python code/live_collect.py
 停止：在终端按 Ctrl+C，或到达 --minutes 设定的时长后自动停止
@@ -48,6 +49,7 @@ import cv2
 
 import calibration
 import capture
+import evo_usage
 import game_lang
 import ranks
 import screenshots
@@ -653,7 +655,7 @@ class Usage:
 
 
 def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.0, match_interval=None,
-            stop=None, deadline=None, log=print, status=None, keep_all=None, game_aspect=None):
+            stop=None, deadline=None, log=print, status=None, keep_all=None, game_aspect=None, usage_root=None):
     """采集主循环：一直截屏、识别、记录，直到下面任何一种情况发生，然后安全收尾（没存完的局存下、释放截屏和识别模型）：
     - stop（threading.Event）被设置：托盘程序在游戏关闭、暂停或退出时用它喊停
     - 到达 deadline（time.monotonic() 的时刻）
@@ -665,11 +667,13 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     改了从下一局开始生效；True / False = 整次记录都这样（测试时直接指定）
     game_aspect：游戏画面比例。None = 按设置页（默认自动检测，读 Apex 的视频设置文件；文件里没有能用的全屏分辨率时
     看游戏画面认，见 game_aspect.py），每隔几秒看一眼；"16:10" 等 = 整次记录都这样（测试时直接指定）
+    usage_root：量对局中的占用时从哪个进程算起（托盘程序传它自己的进程号，连同窗口一起算）；None = 只算记录程序自己
     返回这次一共记下了几局。"""
     set_low_priority()
     # 先建截屏对象：建不起来（或要新开进程才生效，capture.NeedRestart）就不建这次的截图文件夹
     camera, how = capture.open_camera(log)
     usage = Usage(log)
+    meter = evo_usage.MatchMeter(usage_root, log, evo_usage.usage_path(db_path))  # 用真的时钟：CPU 占用要按真的时间算
     run_dir = CAPTURES_DIR / "live" / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     conn = storage.connect(db_path)
@@ -826,6 +830,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                     warned = True
             engine.release_if_idle()
             usage.tick(frames, in_match.active)
+            meter.tick(in_match.active, total())
 
             if status is not None:
                 status["saved"] = total()
@@ -845,6 +850,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
         in_match.stop(now)
         other.leave()
         post.finish()
+        meter.finish(total())
         aspect.reset()
         seasons.stop(now)
         speed.stop()

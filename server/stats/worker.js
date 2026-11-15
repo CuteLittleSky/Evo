@@ -1,8 +1,9 @@
 // Evo 匿名统计的接收程序（0.3.7 起，2026-10-22 用户决定）：Cloudflare Worker，数据存在 D1 数据库（表见 schema.sql）。
 // 地址 https://stats.evotracker.cn。只有用户在 Evo 里同意了才会发过来（code/telemetry.py）。
 //
-// - POST /v1/report：{"id": 匿名编号, "version": Evo 版本号, "ping": 日活（每天一份，可以没有）, "matches": [每局，最多 100 个]}
-//   日活按（编号, 日期）存一行，每局按（编号, 对局编号）存一行，再发同一个就覆盖
+// - POST /v1/report：{"id": 匿名编号, "version": Evo 版本号, "ping": 日活（每天一份，可以没有）, "matches": [每局，最多 100 个],
+//   "usage": [每局对局中 Evo 自己的占用，最多 20 个，2026-11-15 以后的 Evo 才发，可以没有]}
+//   日活按（编号, 日期）存一行，每局、每局的占用按（编号, 对局编号）存一行，再发同一个就覆盖
 // - POST /v1/delete：{"id": 匿名编号}：删掉这个编号发过的所有数据（Evo 0.3.7、0.3.8 设置页的"关闭并删除已发送的数据"；
 //   之后的版本去掉了这个按钮，2026-10-24 用户决定。老版本还在用，这里留着）
 // - GET /v1/summary：全体玩家的汇总（Evo 数据页"全体玩家"，2026-10-24 用户决定；格式见 makeSummary）。
@@ -44,6 +45,12 @@ const EDITABLE = new Set(["placement", "kills", "assists", "knockdowns", "partic
                          "mode", "map"]);
 
 const MATE_COLUMNS = [1, 2].flatMap((i) => MATE_NUMBERS.map((f) => `mate${i}_${f}`));
+// 对局中 Evo 自己的占用（usage，2026-11-15 用户决定）：每局从认出自己的界面到结束，Evo 全部进程平均占一个核的百分之几、
+// 内存（专用工作集）的平均和最高。不含电脑的配置
+const MAX_USAGE = 20;
+const USAGE_MINUTES = [0, 600];
+const USAGE_CPU_CORE = [0, 6400];  // 占一个核的 %：64 个核全占满是 6400
+const USAGE_MEMORY = [1, 65536];  // MB
 
 class Bad extends Error {}
 
@@ -83,6 +90,20 @@ function weaponSeconds(value) {
     if (!WEAPON.test(key) || number(seconds, WEAPON_SECONDS) === null) throw new Bad();
   }
   return JSON.stringify(Object.fromEntries(entries.sort(([a], [b]) => (a < b ? -1 : 1))));
+}
+
+// 可以带小数的数字（对局中的占用）
+function decimal(value, [low, high]) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < low || value > high) throw new Bad();
+  return value;
+}
+
+function usage(u) {
+  if (typeof u !== "object" || u === null || typeof u.k !== "string" || !KEY.test(u.k)) throw new Bad();
+  return { k: u.k, day: pattern(u.day, DAY), version: text(u.version, 20), minutes: decimal(u.minutes, USAGE_MINUTES),
+           cpu_core: decimal(u.cpu_core, USAGE_CPU_CORE), memory: number(u.memory, USAGE_MEMORY),
+           memory_peak: number(u.memory_peak, USAGE_MEMORY) };
 }
 
 function ping(p) {
@@ -168,14 +189,34 @@ async function report(body, env) {
            m.assists, m.knockdowns, m.damage, m.rp_delta, m.tier, m.rp_source, m.review, m.edited, now,
            ...MATE_COLUMNS.map((c) => m[c]), m.weapons));
   }
+  const usages = body.usage ?? [];
+  if (!Array.isArray(usages) || usages.length > MAX_USAGE) throw new Bad();
+  for (const raw of usages) {
+    let u;
+    try {
+      u = usage(raw);
+    } catch (e) {
+      if (!(e instanceof Bad)) throw e;
+      rejected += 1;
+      continue;
+    }
+    statements.push(env.DB.prepare(
+      `INSERT INTO usage (id, k, day, version, minutes, cpu_core, memory, memory_peak, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id, k) DO UPDATE SET day = excluded.day, version = excluded.version, minutes = excluded.minutes,
+         cpu_core = excluded.cpu_core, memory = excluded.memory, memory_peak = excluded.memory_peak,
+         received_at = excluded.received_at`,
+    ).bind(body.id, u.k, u.day, u.version, u.minutes, u.cpu_core, u.memory, u.memory_peak, now));
+  }
   if (statements.length) await env.DB.batch(statements);
-  return reply({ ok: true, stored: matches.length - rejected, rejected });
+  return reply({ ok: true, stored: matches.length + usages.length - rejected, rejected });
 }
 
 async function remove(body, env) {
   const results = await env.DB.batch([
     env.DB.prepare("DELETE FROM pings WHERE id = ?").bind(body.id),
     env.DB.prepare("DELETE FROM matches WHERE id = ?").bind(body.id),
+    env.DB.prepare("DELETE FROM usage WHERE id = ?").bind(body.id),
   ]);
   return reply({ ok: true, deleted: results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0) });
 }

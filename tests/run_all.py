@@ -50,6 +50,7 @@ import test_telemetry
 import test_testers_1104
 import test_traditional
 import test_updater
+import test_usage
 import test_weapons
 import test_webview2
 
@@ -79,7 +80,8 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "总览页的地图轮换（下载、中文名、倒计时、过了点、连不上、设置页的开关）": test_map_rotation,
          "开发者公告（和检查新版本共用开关、读公告、显示规则、托盘提醒、提示条）": test_notice,
          "最常用武器（认武器、计时、记进数据库、数据页）": test_weapons,
-         "匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、连不上、面板）": test_telemetry,
+         "匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、Evo 的占用、连不上、面板）": test_telemetry,
+         "Evo 占用（读进程、现在的、对局中最近 10 局、总览页）": test_usage,
          "测试工具（截屏、找 Evo、诊断信息、打包、看压缩包）": test_tester,
          "截屏（dxcam 建不起来时：双显卡的笔记本设成节能、改用 mss）": test_capture,
          "按赛季看（本赛季 / 上赛季：总览页、数据页、战绩页）": test_season_ranges,

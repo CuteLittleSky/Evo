@@ -5,7 +5,7 @@
 {% from "_range.html" import range_seg, range_empty_text with context %}
 {% block title %}总览 · Evo{% endblock %}
 
-{# 总览页（/）：段位卡片和 RP 走势、统计数字、地图轮换、最近对局、六维图、传奇表现、关注我 #}
+{# 总览页（/）：段位卡片和 RP 走势、统计数字、地图轮换、最近对局、Evo 占用、六维图、传奇表现、关注我 #}
 
 {% macro follow_card() %}
 {# 关注我：开发者的 B 站、小黑盒主页和 Evo 官网（有对局时在左边一列"最近对局"下面，2026-10-28 用户要求：放在下面全宽会凸出来；没有对局时在提示下面）。target="_blank" 交给系统浏览器打开（和设置页"意见反馈"一样），Evo 自己不联网。
@@ -37,6 +37,7 @@
   Evo 当前还没有任何对局记录。
 </div>
 {% if maps %}{% with error=None %}{% include "_maps.html" %}{% endwith %}{% endif %}
+{% include "_usage.html" %}
 {{ follow_card() }}
 {% else %}
 
@@ -118,7 +119,7 @@
 </div>
 
 <div class="ov-bottom">
-  {# 左边一列：地图轮换（还没问过时只问一句；不要了就没有）、最近对局 #}
+  {# 左边一列：地图轮换（还没问过时只问一句；不要了就没有）、最近对局、Evo 占用、关注我 #}
   <div class="ov-main">
   {% if maps %}{% with error=None %}{% include "_maps.html" %}{% endwith %}{% endif %}
 
@@ -149,6 +150,7 @@
     </ul>
     {% endif %}
   </section>
+  {% include "_usage.html" %}
   {{ follow_card() }}
   </div>
 
@@ -187,6 +189,31 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+  // Evo 占用（_usage.html）："现在"那一格每 2 秒问一次 /usage 换上新的数字；窗口最小化、切到别的页面时不问。
+  // 第一次打开时 CPU 要和一秒前比才有，所以一秒后先问一次
+  (function () {
+    var card = document.getElementById("usage-card");
+    if (!card) return;
+    var busy = false;
+    function update() {
+      if (busy || document.visibilityState !== "visible") return;
+      busy = true;
+      fetch("{{ url_for('usage_now') }}")
+        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          ["cpu", "memory", "parts"].forEach(function (key) {
+            var el = card.querySelector('[data-usage="' + key + '"]');
+            if (el && r[key]) el.textContent = r[key];
+          });
+        })
+        .catch(function () {})
+        .finally(function () { busy = false; });
+    }
+    setTimeout(update, 1000);
+    setInterval(update, 2000);
+  })();
+</script>
 {% if maps and not maps.ask %}
 <script>
   // 地图轮换（_maps.html）：倒计时每秒走。到点了先把下一张挪上来，再下载一次（POST /maps/refresh），用服务器重画的卡片换掉；

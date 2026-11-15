@@ -53,6 +53,21 @@ CREATE TABLE IF NOT EXISTS matches (
   PRIMARY KEY (id, k)
 );
 
+-- 每局对局中 Evo 自己的占用（2026-11-15 用户决定，这以后的 Evo 才发）：每局从认出自己的界面到结束，Evo 全部进程
+-- 平均占一个核的百分之几、内存（专用工作集）的平均和最高。k 是 Evo 算出来的编号（同一局再发就覆盖）
+CREATE TABLE IF NOT EXISTS usage (
+  id TEXT NOT NULL,
+  k TEXT NOT NULL,
+  day TEXT,  -- 用户电脑上的日期
+  version TEXT,  -- 记这一局的 Evo 版本号
+  minutes REAL,  -- 这一段多少分钟
+  cpu_core REAL,  -- Evo 平均占一个核的百分之几（和电脑有几个核无关）
+  memory INTEGER,  -- 内存平均（MB）
+  memory_peak INTEGER,  -- 内存最高（MB）
+  received_at TEXT NOT NULL,
+  PRIMARY KEY (id, k)
+);
+
 CREATE INDEX IF NOT EXISTS pings_day ON pings (day);
 CREATE INDEX IF NOT EXISTS matches_day ON matches (day);
 CREATE INDEX IF NOT EXISTS matches_received ON matches (received_at);  -- 汇总前看有没有新数据（只读一行）

@@ -29,6 +29,7 @@ import app_settings
 import autostart
 import calibration
 import data_move
+import evo_usage
 import game_aspect
 import game_lang
 import global_stats
@@ -1084,6 +1085,7 @@ def overview():
         share=share,
         follow=FOLLOW_LINKS,
         maps=map_rotation.card(),
+        usage=evo_usage.card(app.config["DB"]),
     )
 
 
@@ -1301,6 +1303,12 @@ def stats_everyone(part=None):
 def refresh_everyone():
     """"全体玩家"右上角的刷新按钮（和页面打开时的自动下载）：现在下载一次汇总。回 {"ok", "error"}。"""
     return jsonify(global_stats.fetch())
+
+
+@app.get("/usage")
+def usage_now():
+    """总览页「Evo 占用」的"现在"那一格（evo_usage.py）：页面开着时每 2 秒问一次，回格式化好的文字 {"cpu", "memory", "parts"}。"""
+    return jsonify(evo_usage.now_view(evo_usage.live().read()))
 
 
 @app.post("/maps/refresh")

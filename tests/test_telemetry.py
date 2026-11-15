@@ -6,6 +6,8 @@
 - 日活一天只发一次，没发出去的日子下次连上时补发（最多 30 天）；发过的局不重发，改过（战绩页修正）的局再发一次，
   带上改了哪几项
 - 一次最多 100 局，多的分几次；连不上、服务器拒绝时不算发过，下次再发
+- 对局中 Evo 自己的占用（2026-11-15）：只发同意以后的、没发过的，只有说好的几项（没有整台电脑的 CPU、核数），
+  放在第一个请求里；没有局和日活要发时也单独发；连不上不算发过
 - 面板：前两个提问回答了才问这一个，两个按钮一样的样式；设置页只有开关和一句说明（2026-10-24 起不显示发送状态、
   发送内容的原样，没有"关闭并删除已发送的数据"）
 
@@ -24,6 +26,7 @@ from unittest import mock
 from fake_game import report  # 要在项目代码之前导入（设置临时数据文件夹）
 
 import app_settings
+import evo_usage
 import game_aspect
 import panel_app
 import storage
@@ -36,6 +39,7 @@ BODY_KEYS = {"id", "version", "matches", "ping"}
 PING_KEYS = {"day", "screen", "game_res", "game_mode", "aspect"}
 MATCH_KEYS = {"k", "day", "version", "mode", "map", "legend", "mates", "mate_stats", "placement", "kills", "assists",
               "knockdowns", "damage", "rp_delta", "tier", "rp_source", "review", "edited", "weapons"}
+USAGE_KEYS = {"k", "day", "version", "minutes", "cpu_core", "memory", "memory_peak"}
 SECRETS = ("测试玩家甲", "队友名字乙", "0123456789", "秘密备注", "captures/live")  # 这些一个字都不能发出去
 SINCE = "2026-10-20 12:00:00"
 NOW = datetime(2026, 10, 21, 10, 0)
@@ -215,6 +219,50 @@ def send_checks(conn):
     return out
 
 
+def usage_checks():
+    """对局中 Evo 自己的占用（evo_usage.py 记的最近 10 局）。"""
+    out = {}
+    telemetry.set_consent(True)
+    app_settings.set_value(telemetry.SINCE_KEY, SINCE)
+    app_settings.set_value(telemetry.PING_KEY, "2026-11-15")  # 今天的日活发过了，只剩占用要发
+    app_settings.set_value(telemetry.MISSED_KEY, None)
+    now = datetime(2026, 11, 15, 22, 0)
+    rows = [{"at": at, "version": "0.5.8", "minutes": 18.5, "cpu": 0.9, "cpu_core": 14.4, "memory": 212,
+             "memory_peak": 236, "system_cpu": 58} for at in ("2026-10-19 20:00:00", "2026-11-15 20:00:00",
+                                                                "2026-11-15 20:30:00")]
+    path = evo_usage.usage_path(storage.DB_PATH)
+    path.write_text(json.dumps({"matches": rows}), encoding="utf-8")
+    try:
+        url = telemetry.STATS_URL
+        telemetry.STATS_URL = "http://127.0.0.1:9"  # 连不上
+        result = telemetry.send(now=now)
+        telemetry.STATS_URL = url
+        out["占用：连不上，不算发过"] = not result["ok"] and result["usage"] == 0
+        Handler.requests.clear()
+        result = telemetry.send(now=now)
+        body = Handler.requests[0][1] if Handler.requests else {}
+        usage = body.get("usage", [])
+        out["占用：没有局、日活要发时也单独发一次，同意以前的不发"] = (
+            result["ok"] and result["usage"] == 2 and len(Handler.requests) == 1 and body.get("matches") == []
+            and "ping" not in body)
+        out["占用：只发说好的几项（没有整台电脑的 CPU、核数、按整台电脑算的 CPU）"] = (
+            len(usage) == 2 and all(set(u) == USAGE_KEYS for u in usage)
+            and usage[0]["cpu_core"] == 14.4 and usage[0]["memory"] == 212 and usage[0]["memory_peak"] == 236
+            and usage[0]["minutes"] == 18.5 and usage[0]["day"] == "2026-11-15" and usage[0]["version"] == "0.5.8")
+        out["占用：编号是一串乱码，每局不一样"] = (
+            all(re.fullmatch(r"[0-9a-f]{20}", u["k"]) for u in usage) and len({u["k"] for u in usage}) == 2)
+        Handler.requests.clear()
+        out["占用：发过的不再发，不联网"] = telemetry.send(now=now)["usage"] == 0 and not Handler.requests
+        rows.append({**rows[-1], "at": "2026-11-15 21:00:00"})
+        path.write_text(json.dumps({"matches": rows}), encoding="utf-8")
+        Handler.requests.clear()
+        telemetry.send(now=now)
+        out["占用：新的一局只发它"] = [len(b.get("usage", [])) for _, b, _ in Handler.requests] == [1]
+    finally:
+        path.unlink(missing_ok=True)
+    return out
+
+
 def panel_checks(conn):
     out = {}
     client, token = panel_app.app.test_client(), panel_app.app.config["TOKEN"]
@@ -278,14 +326,14 @@ def panel_checks(conn):
 
 
 def main():
-    print("匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、连不上、面板的提问和设置页）")
+    print("匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、Evo 的占用、连不上、面板的提问和设置页）")
     server, base = start_server()
     url = telemetry.STATS_URL
     telemetry.STATS_URL = base  # 绝不连到真正的统计服务器
     panel_app.app.config["DB"] = storage.DB_PATH
     conn = storage.connect()
     try:
-        checks = {**send_checks(conn), **panel_checks(conn)}
+        checks = {**send_checks(conn), **usage_checks(), **panel_checks(conn)}
     finally:
         conn.close()
         telemetry.STATS_URL = url

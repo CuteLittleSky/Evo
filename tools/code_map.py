@@ -58,7 +58,8 @@ SECTIONS = [
         ("panel/prototype/", "最早的界面设计稿（只作参考，程序不用）")]),
     ("底座", None, [
         "code/evo_app.py", "code/paths.py", "code/source_run.py", "code/storage.py", "code/app_settings.py",
-        "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/icons.py", "code/sounds.py",
+        "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/evo_usage.py", "code/icons.py",
+        "code/sounds.py",
         "code/webview2.py", "code/update_check.py", "code/update_patch.py", "code/updater.py", "code/mirrorchyan.py",
         "code/telemetry.py", "code/notice_check.py",
         ("server/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"

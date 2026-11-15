@@ -956,6 +956,25 @@ table.stats-table { width: 100%; border-collapse: collapse; }
   .maps-row { grid-template-columns: 1fr; }
 }
 
+/* ---------- 总览页：Evo 占用（_usage.html，2026-11-15 用户要求）----------
+   左边一列"最近对局"下面。两格：现在（每 2 秒换数字）、最近 N 局对局中的平均；样子照"当前地图"的格子 */
+.usage-card { padding: 24px; }
+.usage-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+/* min-height：两格一样高；下面那行字折成两行（窗口窄时）也不把卡片撑高 */
+.usage-slot { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; min-width: 0; min-height: 112px;
+  border: 1px solid var(--row-border); border-radius: 6px; background: var(--inset); }
+.usage-metrics { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 2px; }
+.usage-metrics > div { display: flex; align-items: baseline; gap: 8px; }
+.usage-key { color: var(--muted); font-size: 13px; }
+/* 每 2 秒变：等宽数字，留出"100.0%""1234 MB"的宽度，数字变长变短时旁边的不挪 */
+.usage-value { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-value[data-usage="cpu"] { min-width: 4.2em; }
+.usage-value[data-usage="memory"] { min-width: 4.6em; }
+.usage-foot { margin-top: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .usage-row { grid-template-columns: 1fr; }
+}
+
 /* ---------- 赛季页：录入历史赛季数据（panel_seasons.py、seasons.html、_season_import.html） ---------- */
 .season-mode { padding: 8px 24px; }
 .season-live { display: flex; align-items: center; gap: 8px; color: var(--text); }
