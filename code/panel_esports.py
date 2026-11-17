@@ -13,21 +13,28 @@
 - 左边：返回、赛事名、播放器、选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点
 - 页面上先把名单画好，谁在播由脚本问 GET /esports/<赛事>/status：页面开着、看得见时每 60 秒问一次
   （这里 50 秒内不重查，开播、下播后 2 分钟内页面跟着变）。顺便带上平台开关（esports.json 10 分钟内下载过就不重下）
-- 能在窗口里播的平台：配置里有 embed_url 的（现在只有 B站的官方嵌入播放器）；别的平台、平台开关关了的显示退路
-  "去 X 看"。斗鱼、抖音、虎牙的播放后面几步做
+- 能在窗口里播的平台：配置里有 embed_url 的用平台官方的嵌入播放器（现在是 B站）；配置里 player 是 flv 的用 Evo 自己的
+  播放器（mpegts.js，现在是斗鱼）。别的平台、平台开关关了的显示退路"去 X 看"。抖音、虎牙的播放后面几步做
+- Evo 自己的播放器：页面先问 GET /esports/play/<选手>?q=清晰度（有哪些清晰度、实际给的是哪一档、播放地址），
+  再让播放器连 GET /esports/stream/<选手>（本机中转，flv_relay.py：只听 127.0.0.1、要带面板的口令、一次只播一路，
+  开新的一路就停掉上一路；播放器断开就停，不在后台留着）。取地址、连视频服务器都在玩家自己的电脑上
 - Apex 在运行：GET /esports/game（game_detect，只看进程名），页面每 10 秒问一次，正在播时显示黄色提示条
 这个文件不加载识别用的库。规则见 docs/面板.md"赛事页""看直播页"。
 """
 
+import logging
+import re
 import threading
 import time
 from datetime import datetime
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 
 import esports_data
+import flv_relay
 import game_detect
 import live_status
+import watch_douyu
 
 bp = Blueprint("esports", __name__)
 WEEKDAYS = "一二三四五六日"
@@ -35,6 +42,13 @@ STATUS_SECONDS = 60        # 赛事页：这么久以内查过开播状态就不
 WATCH_STATUS_SECONDS = 50  # 看直播页：页面每 60 秒问一次，每次都查新的（留 10 秒给同时开着的另一页）
 WATCH_DATA_SECONDS = 600   # 看直播页开着时，这么久重新下载一次 esports.json（平台开关关了以后最慢这么久生效）
 EMBED = {key: platform["embed_url"] for key, platform in live_status.PLATFORMS.items() if platform.get("embed_url")}
+# 用 Evo 自己的播放器播的平台 → 怎么取地址并连上：(房间号, 清晰度, 能不能用刚取过的地址) → (连接, 取地址的结果)
+PLAYERS = {"douyu": watch_douyu}
+PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFORMS[key].get("player") == "flv"}
+RATE_RE = re.compile(r"-?\d{1,5}")
+_playing = {"relay": None}  # 正在中转的那一路（一次只播一路）
+_playing_lock = threading.Lock()
+log = logging.getLogger("evo")
 _status = {"at": 0.0, "found": {}}  # 上次查到的：{选手 id: live_status 的结果}
 _status_lock = threading.Lock()  # 同时打开两次页面时只查一次
 
@@ -80,7 +94,8 @@ def safe_image(url):
 
 def roster(data, event):
     """看直播页要的名单：[{"name": 队名, "initial": 第一个字, "players": [选手, ...]}, ...]。
-    选手：id、名字、队名、平台、房间号、直播间地址、能在窗口里播时的播放器地址。"""
+    选手：id、名字、队名、平台、房间号、直播间地址；embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时
+    问清晰度和播放地址的接口（都没有就是不能在窗口里播）。"""
     teams = []
     for index, (team, players) in enumerate(esports_data.event_teams(data, event)):
         members = []
@@ -90,7 +105,8 @@ def roster(data, event):
                             "team": team, "platform": player["platform"],
                             "platform_name": live_status.NAMES[player["platform"]], "room": player["room"],
                             "url": live_status.room_url(player["platform"], player["room"]),
-                            "embed": embed.format(room=player["room"]) if embed else None})
+                            "embed": embed.format(room=player["room"]) if embed else None,
+                            "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None})
         teams.append({"key": f"t{index}", "name": team, "initial": team[:1].upper(), "players": members})
     return teams
 
@@ -141,7 +157,8 @@ def watch(event_id):
         total=len(ids), selected=wanted if wanted in ids else None,
         page_data={"players": [player for team in teams for player in team["players"]],
                    "platforms": data["platforms"], "selected": wanted if wanted in ids else None,
-                   "status_url": url_for("esports.status", event_id=event["id"]), "game_url": url_for("esports.game")})
+                   "status_url": url_for("esports.status", event_id=event["id"]), "game_url": url_for("esports.game"),
+                   "mpegts_url": url_for("static", filename="vendor/mpegts.js")})
 
 
 @bp.get("/esports/<event_id>/status")
@@ -163,3 +180,68 @@ def status(event_id):
 def game():
     """Apex 有没有在运行（只看进程名，game_detect.py）：看直播页据此显示"可能让游戏掉帧"的提示条。"""
     return jsonify(running=game_detect.game_running())
+
+
+def _player(player_id):
+    """名单里的这位选手和现在的赛事数据；不能用 Evo 自己的播放器播（不在名单里、平台不支持、平台开关关了）返回 None。"""
+    saved = esports_data.cached()
+    data = saved["data"] if saved else None
+    player = next((p for p in data["players"] if p["id"] == player_id), None) if data else None
+    if player is None or player["platform"] not in PLAYERS or data["platforms"].get(player["platform"]) is False:
+        return None
+    return player
+
+
+def _rate():
+    """网址里的 q（清晰度编号）；没写、写得不对是 None（要最好的）。"""
+    wanted = request.args.get("q", "")
+    return wanted if RATE_RE.fullmatch(wanted) else None
+
+
+@bp.get("/esports/play/<player_id>")
+def play(player_id):
+    """看直播页开播前问的：{"ok": True, "qualities": [{"id", "name"}], "applied": 实际给的那一档, "stream": 播放地址}；
+    取不到是 {"ok": False, "reason": "upstream", "detail": 原因}。不能在窗口里播的选手回 404。"""
+    player = _player(player_id)
+    if player is None:
+        return jsonify(ok=False, reason="unsupported"), 404
+    module = PLAYERS[player["platform"]]
+    try:
+        found = module.resolve(player["room"], _rate())
+    except Exception as e:  # noqa: BLE001  平台那边的各种错：页面显示退路
+        log.info("看直播：%s 房间 %s 没取到地址：%s", player["platform"], player["room"], e)
+        return jsonify(ok=False, reason="upstream", detail=str(e))
+    module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
+    return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"],
+                   stream=url_for("esports.stream", player_id=player_id, q=found["rate"], t=current_app.config["TOKEN"]))
+
+
+@bp.get("/esports/stream/<player_id>")
+def stream(player_id):
+    """本机中转：把平台的 FLV 转给页面里的播放器（flv_relay.py）。要带面板的口令（别的网页不能让 Evo 去连平台）。
+    一次只播一路：开新的一路就停掉上一路。连不上、不是 H.264 回 502 和原因，页面显示退路。"""
+    if request.args.get("t") != current_app.config["TOKEN"]:
+        abort(403)
+    player = _player(player_id)
+    if player is None:
+        abort(404)
+    module, rate, first = PLAYERS[player["platform"]], _rate(), [True]
+
+    def open_segment():
+        body, found = module.open_segment(player["room"], rate, reuse=first[0])
+        first[0] = False
+        return body, found["ttl"]
+
+    relay = flv_relay.Relay(open_segment, lead=live_status.PLATFORMS[player["platform"]].get("renew_lead", 5),
+                            on_event=lambda text: log.info("看直播：%s 房间 %s %s", player["platform"], player["room"], text))
+    with _playing_lock:
+        old, _playing["relay"] = _playing["relay"], relay
+    if old is not None:
+        old.close()
+    try:
+        relay.start()
+    except flv_relay.RelayError as e:
+        log.info("看直播：%s 房间 %s 播不了：%s", player["platform"], player["room"], e)
+        return jsonify(ok=False, reason=e.code, detail=str(e)), 502
+    log.info("看直播：开始中转 %s 房间 %s（清晰度 %s）", player["platform"], player["room"], rate)
+    return Response(relay.stream(), mimetype="video/x-flv", headers={"Cache-Control": "no-store"})

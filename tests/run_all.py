@@ -53,6 +53,7 @@ import test_telemetry
 import test_testers_1104
 import test_traditional
 import test_updater
+import test_watch_play
 import test_usage
 import test_weapons
 import test_webview2
@@ -85,6 +86,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "赛事数据（赛事文件的格式和下载、查开播状态、抖音签名、发赛事数据的脚本）": test_esports,
          "赛事页（导航、三块、没读到、几位选手在播）": test_esports_page,
          "看直播页（页面、名单、给脚本的数据、开播状态接口、Apex 接口）": test_esports_watch,
+         "在 Evo 窗口里播斗鱼（FLV 拆标签和接续、斗鱼取地址、面板的两个接口）": test_watch_play,
          "最常用武器（认武器、计时、记进数据库、数据页）": test_weapons,
          "匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、Evo 的占用、连不上、面板）": test_telemetry,
          "Evo 占用（读进程、现在的、对局中最近 10 局、右上角）": test_usage,

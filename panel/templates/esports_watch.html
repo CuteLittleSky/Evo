@@ -3,7 +3,8 @@
 {# 看直播页（panel_esports.py，2026-11-17 用户定的，样子照用户给的样稿）：占满整个窗口，没有顶部导航，只有"← 赛事"。
    左边：赛事名、播放器、正在看的选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
    名单先由服务器画好（都不能点）；谁在播由下面的脚本每 60 秒问一次 /esports/<赛事>/status，再把在播的点亮。
-   能在窗口里播的只有配置里有嵌入播放器的平台（现在是 B站）；别的显示"去 X 看"的退路 #}
+   能在窗口里播的：配置里有嵌入播放器的平台（B站，放它官方的播放器），和用 Evo 自己的播放器的平台（斗鱼：
+   mpegts.js 连面板的本机中转，控制条是自己的：播放 / 暂停、音量、清晰度、全屏）。别的显示"去 X 看"的退路 #}
 {% block wrap_class %} watch-wrap{% endblock %}
 {% block top %}{% endblock %}
 
@@ -128,11 +129,15 @@
     // status：上次问到的 {选手 id: {state, title, avatar, since}}，还没问到是 null；sel：正在看的选手；
     // closed：点了"关闭直播"；apexOk：点了"继续看"（Apex 关掉以后重新算）
     var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
-              apex: false, apexOk: false, stageKey: null, lastTry: 0};
+              apex: false, apexOk: false, stageKey: null, lastTry: 0,
+              player: null, playSeq: 0, playFailed: {}};  // Evo 自己的播放器：现在的那个、第几次开播、哪些人没播成
+    function saved(key, fallback) { try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; } }
+    function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
 
     function info(id) { return st.status ? st.status[id] : null; }
     function isLive(id) { var s = info(id); return !!s && s.state === "live"; }
-    function canEmbed(p) { return !!p.embed && st.platforms[p.platform] !== false; }  // 能在窗口里播，平台开关也开着
+    function canEmbed(p) { return !!p.embed && st.platforms[p.platform] !== false; }  // 平台官方的嵌入播放器，平台开关也开着
+    function canPlay(p) { return !!p.play && st.platforms[p.platform] !== false && !st.playFailed[p.id]; }  // Evo 自己的播放器
     function minutes(since) { return since ? Math.max(0, Math.floor((Date.now() / 1000 - since) / 60)) : null; }
     function clock(since) {  // "2:14" = 开播 2 小时 14 分
       var m = minutes(since);
@@ -245,9 +250,13 @@
           frame.src = p.embed;
           return frame;
         };
+      } else if (canPlay(p)) {
+        // 清晰度是玩家自己选的（记在这台电脑上，每个平台记一个）；换了清晰度要重新开播
+        key = "play:" + p.id + ":" + saved("evo-watch-q-" + p.platform, "");
+        build = function () { return buildPlayer(p); };
       } else {
-        // 退路：平台开关关了，或者这个平台还不能在窗口里播。按钮用玩家自己的默认浏览器打开直播间（2026-11-17 用户定的）
-        key = "fallback:" + p.id;
+        // 退路：平台开关关了、这个平台还不能在窗口里播，或者刚才没播成。按钮用玩家自己的默认浏览器打开直播间（2026-11-17 用户定的）
+        key = "fallback:" + p.id + ":" + (st.playFailed[p.id] ? "failed" : "");
         build = function () {
           var box = message(p.platform_name + "的直播暂时不能在 Evo 里直接播放", "可以去" + p.platform_name + "看 " + p.name + " 的直播，会用你的浏览器打开。");
           var link = el("a", "watch-primary", "打开" + p.platform_name + "直播间");
@@ -255,11 +264,18 @@
           link.target = "_blank";
           link.rel = "noopener noreferrer";
           box.append(link);
+          if (st.playFailed[p.id]) {  // 刚才试过没播成（没取到地址、连不上视频服务器……）：可以再试一次
+            var retry = el("button", "watch-secondary", "再试一次");
+            retry.type = "button";
+            retry.addEventListener("click", function () { delete st.playFailed[p.id]; render(); });
+            box.append(retry);
+          }
           return box;
         };
       }
       if (key !== st.stageKey) {
         st.stageKey = key;
+        stopPlayer();
         $("watch-screen").replaceChildren(build());
       }
 
@@ -300,8 +316,228 @@
       $("watch-mates-list").replaceChildren.apply($("watch-mates-list"), mates);
     }
 
+    // ---------- Evo 自己的播放器（斗鱼）：mpegts.js 连面板的本机中转 ----------
+    var ICONS = {
+      play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"></path>',
+      pause: '<path d="M9 6v12M15 6v12"></path>',
+      sound: '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"></path><path d="M16 9a4 4 0 0 1 0 6"></path>',
+      muted: '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
+      full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>'
+    };
+    function icon(name) {
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("width", "16");
+      svg.setAttribute("height", "16");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("aria-hidden", "true");
+      svg.innerHTML = ICONS[name];  // 只放上面写死的图形，不放任何外来的字
+      return svg;
+    }
+    function control(label, name) {
+      var btn = el("button", "watch-ctl");
+      btn.type = "button";
+      btn.setAttribute("aria-label", label);
+      btn.title = label;
+      btn.append(icon(name));
+      return btn;
+    }
+    var mpegtsLoading = null;
+    function loadMpegts() {  // 用到的时候才加载（270 KB）
+      if (!mpegtsLoading) {
+        mpegtsLoading = new Promise(function (resolve, reject) {
+          var script = document.createElement("script");
+          script.src = data.mpegts_url;
+          script.onload = resolve;
+          script.onerror = function () { mpegtsLoading = null; reject(new Error("播放器没加载出来")); };
+          document.head.appendChild(script);
+        });
+      }
+      return mpegtsLoading;
+    }
+    function stopPlayer() {
+      st.playSeq++;  // 晚到的回包、事件都不算数了
+      var player = st.player;
+      st.player = null;
+      if (!player) return;
+      try { player.pause(); player.unload(); player.detachMediaElement(); player.destroy(); } catch (e) {}
+    }
+
+    function buildPlayer(p) {
+      var box = el("div", "watch-player");
+      var video = el("video", "watch-video");
+      video.playsInline = true;
+      video.volume = Math.min(1, Math.max(0, parseInt(saved("evo-watch-volume", "70"), 10) / 100 || 0));
+      video.muted = saved("evo-watch-muted", "0") === "1";
+      var wait = el("div", "watch-wait", "正在连接" + p.platform_name + "…");
+      wait.setAttribute("role", "status");
+      var hint = el("button", "watch-hint");  // 一句提示：自动播放没有声音、有点卡
+      hint.type = "button";
+      hint.hidden = true;
+
+      var playBtn = control("暂停", "pause"), muteBtn = control("静音", "sound"), fullBtn = control("全屏", "full");
+      var volume = el("input", "watch-volume");
+      volume.type = "range";
+      volume.min = "0";
+      volume.max = "100";
+      volume.setAttribute("aria-label", "音量");
+      var quality = el("div", "watch-quality");
+      var qualityBtn = el("button", "watch-ctl watch-quality-btn", "清晰度");
+      qualityBtn.type = "button";
+      qualityBtn.setAttribute("aria-haspopup", "true");
+      qualityBtn.setAttribute("aria-expanded", "false");
+      qualityBtn.disabled = true;
+      var menu = el("div", "watch-quality-menu");
+      menu.setAttribute("role", "group");
+      menu.setAttribute("aria-label", "清晰度");
+      menu.hidden = true;
+      quality.append(qualityBtn, menu);
+      var bar = el("div", "watch-controls");
+      bar.append(playBtn, muteBtn, volume, el("span", "grow"), quality, fullBtn);
+      box.append(video, wait, hint, bar);
+
+      function showSound() {
+        var off = video.muted || video.volume === 0;
+        muteBtn.replaceChildren(icon(off ? "muted" : "sound"));
+        muteBtn.setAttribute("aria-label", off ? "打开声音" : "静音");
+        muteBtn.title = off ? "打开声音" : "静音";
+        volume.value = String(Math.round((video.muted ? 0 : video.volume) * 100));
+      }
+      function showPlay() {
+        playBtn.replaceChildren(icon(video.paused ? "play" : "pause"));
+        playBtn.setAttribute("aria-label", video.paused ? "播放" : "暂停");
+        playBtn.title = video.paused ? "播放" : "暂停";
+      }
+      function say(text, onClick) {
+        hint.textContent = text;
+        hint.hidden = !text;
+        hint.onclick = onClick || function () { hint.hidden = true; };
+      }
+      function setMenu(open) {
+        menu.hidden = !open;
+        qualityBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+      // 浏览器不让带声音自动播放时：先静音播，提示点一下打开声音
+      function tryPlay() {
+        var started = video.play();
+        if (started && started.catch) {
+          started.catch(function () {
+            video.muted = true;
+            showSound();
+            var again = video.play();
+            if (again && again.catch) again.catch(function () {});
+            say("点这里打开声音", function () { video.muted = false; save("evo-watch-muted", "0"); showSound(); hint.hidden = true; });
+          });
+        }
+      }
+
+      playBtn.addEventListener("click", function () { if (video.paused) tryPlay(); else video.pause(); });
+      muteBtn.addEventListener("click", function () {
+        video.muted = !(video.muted || video.volume === 0);
+        if (!video.muted && video.volume === 0) video.volume = 0.5;
+        save("evo-watch-muted", video.muted ? "1" : "0");
+        showSound();
+      });
+      volume.addEventListener("input", function () {
+        video.volume = parseInt(volume.value, 10) / 100;
+        video.muted = video.volume === 0;
+        save("evo-watch-volume", volume.value);
+        save("evo-watch-muted", video.muted ? "1" : "0");
+        showSound();
+      });
+      fullBtn.addEventListener("click", function () {
+        var stage = document.querySelector(".watch-stage-box");
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (stage.requestFullscreen) stage.requestFullscreen();
+      });
+      qualityBtn.addEventListener("click", function () { setMenu(menu.hidden); });
+      box.addEventListener("keydown", function (e) { if (e.key === "Escape" && !menu.hidden) { setMenu(false); qualityBtn.focus(); } });
+      document.addEventListener("click", function (e) { if (!menu.hidden && !quality.contains(e.target)) setMenu(false); });
+      video.addEventListener("play", showPlay);
+      video.addEventListener("pause", showPlay);
+      video.addEventListener("playing", function () { wait.hidden = true; });
+      // 连着卡了几次：提示可以换低一档（不替玩家改清晰度）
+      var stalls = [];
+      video.addEventListener("waiting", function () {
+        if (video.currentTime < 3) return;
+        var now = Date.now();
+        stalls = stalls.filter(function (t) { return now - t < 60000; });
+        stalls.push(now);
+        if (stalls.length >= 3 && menu.querySelectorAll("button").length > 1) {
+          stalls = [];
+          say("有点卡？右下角可以换低一档的清晰度");
+          setTimeout(function () { if (hint.textContent.indexOf("有点卡") === 0) hint.hidden = true; }, 10000);
+        }
+      });
+      showSound();
+      showPlay();
+
+      var seq = st.playSeq;  // 这次开播的编号：换了人、换了清晰度以后，晚到的回包和事件都不算数
+      function failed(detail) {
+        if (seq !== st.playSeq) return;
+        st.playFailed[p.id] = detail || "没播成";
+        render();
+      }
+      function fillMenu(info) {
+        var wanted = saved("evo-watch-q-" + p.platform, "");
+        var names = {};
+        info.qualities.forEach(function (q) { names[q.id] = q.name; });
+        qualityBtn.textContent = names[info.applied] || "清晰度";
+        qualityBtn.disabled = info.qualities.length < 2;
+        qualityBtn.title = info.qualities.length < 2 ? "这个直播间只有这一档" : "换清晰度";
+        menu.replaceChildren.apply(menu, info.qualities.map(function (q) {
+          var item = el("button", "watch-quality-item" + (q.id === info.applied ? " on" : ""), q.name);
+          item.type = "button";
+          item.setAttribute("aria-pressed", q.id === info.applied ? "true" : "false");
+          item.addEventListener("click", function () {
+            setMenu(false);
+            if (q.id === info.applied) return;
+            save("evo-watch-q-" + p.platform, q.id);
+            render();  // 清晰度变了 → 播放器那一块重画、重新开播
+          });
+          return item;
+        }));
+        // 选了一档、平台给的却是另一档（斗鱼不登录不给原画）：说明白，不让人以为选了没反应
+        if (wanted && names[wanted] && wanted !== info.applied) {
+          menu.append(el("p", "watch-quality-note", p.platform_name + "没给「" + names[wanted] + "」（多半要登录），现在是「" + (names[info.applied] || "默认") + "」。"));
+        }
+      }
+
+      loadMpegts().then(function () {
+        if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) throw new Error("这个窗口放不了这种视频");
+        var wanted = saved("evo-watch-q-" + p.platform, "");
+        return fetch(p.play + (wanted ? "?q=" + encodeURIComponent(wanted) : ""), { cache: "no-store" }).then(function (r) { return r.json(); });
+      }).then(function (info) {
+        if (seq !== st.playSeq) return;
+        if (!info.ok) throw new Error(info.detail || "没取到播放地址");
+        fillMenu(info);
+        var player = mpegts.createPlayer({ type: "flv", isLive: true, url: info.stream },
+          { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: false, autoCleanupSourceBuffer: true, stashInitialSize: 128 });
+        st.player = player;
+        player.on(mpegts.Events.ERROR, function (type, detail) { failed(detail || type); });
+        // 中转那头结束了（接不上了，或者主播下播）：不自动重连，写明白，给一个按钮
+        player.on(mpegts.Events.LOADING_COMPLETE, function () {
+          if (seq !== st.playSeq) return;
+          wait.hidden = false;
+          wait.textContent = "直播断了。";
+          var again = el("button", "watch-primary", "重新连接");
+          again.type = "button";
+          again.addEventListener("click", function () { st.stageKey = null; render(); });
+          wait.append(again);
+        });
+        player.attachMediaElement(video);
+        player.load();
+        tryPlay();
+      }).catch(function (e) { failed(e && e.message); });
+      return box;
+    }
+
     function renderApex() {
-      var playing = (st.stageKey || "").indexOf("embed:") === 0;
+      var playing = /^(embed|play):/.test(st.stageKey || "");
       $("watch-apex").hidden = !(st.apex && !st.apexOk && playing);
     }
 
@@ -372,6 +608,7 @@
     $("watch-apex-keep").addEventListener("click", function () { st.apexOk = true; renderApex(); });
     $("watch-apex-close").addEventListener("click", function () { st.closed = true; render(); });
     document.addEventListener("visibilitychange", tick);
+    window.addEventListener("pagehide", stopPlayer);  // 离开这一页：播放器停下，中转那头跟着断开
     if (st.sel) {
       var first = document.querySelector('.watch-p[data-player="' + CSS.escape(st.sel) + '"]');
       if (first) first.closest("details").open = true;
