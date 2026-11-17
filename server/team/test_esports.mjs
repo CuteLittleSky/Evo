@@ -66,6 +66,18 @@ check("同一个房间 → 提示是谁的", r.status === 400 && r.text.includes
 r = await add(editor, "新人", "北辰", "douyu", "abc");
 check("房间号不是数字 → 提示", r.status === 400 && r.text.includes("只能是数字"));
 check("出错时留着填的内容、添加框展开", r.text.includes('value="新人"') && /<details class="card fold" open>/.test(r.text));
+r = await add(editor, "抖音号", "临时队", "douyin", "XXFPS");
+const handle = playerList().find((x) => x.name === "抖音号");
+check("抖音可以写抖音号，存成小写", r.location === "/players?ok=added" && handle.room === "xxfps");
+r = await add(editor, "抖音号二", "临时队", "douyin", "xxFps");
+check("大小写不同的同一个抖音号 → 算同一个房间", r.status === 400 && r.text.includes("抖音 房间 xxfps 已经是「抖音号」的了"));
+r = await add(editor, "抖音号二", "临时队", "douyin", "a.b");
+check("抖音号带点 → 提示只能是字母、数字、下划线", r.status === 400 && r.text.includes("只能是字母、数字、下划线"));
+r = await add(editor, "斗鱼字母", "临时队", "douyu", "xxfps");
+check("斗鱼写字母 → 提示只能是数字", r.status === 400 && r.text.includes("只能是数字"));
+r = await editor.get("/players");
+check("房间号输入框不限只填数字（抖音号要能填）、链接是小写", !r.text.includes('pattern="[0-9]{1,24}"') && r.text.includes("https://live.douyin.com/xxfps"));
+await editor.post(`/players/${handle.id}/delete`);
 r = await add(editor, "x".repeat(41), "北辰", "douyu", "5");
 check("名字超过 40 个字 → 提示", r.status === 400 && r.text.includes("最多 40 个字"));
 r = await add(editor, "新人", "北辰", "youtube", "5");

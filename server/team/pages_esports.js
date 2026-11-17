@@ -38,8 +38,8 @@ function playerForm(action, p, teamNames, submit) {
       <input class="input" name="team" value="${escape(p.team)}" maxlength="40" required list="team-names" autocomplete="off"></label>
     <div class="two">
       <label class="field">平台<select class="input" name="platform" required>${platformOptions(p.platform)}</select></label>
-      <label class="field">房间号<span class="help">直播间地址最后那串数字</span>
-        <input class="input" name="room" value="${escape(p.room)}" inputmode="numeric" pattern="[0-9]{1,24}" maxlength="24" required autocomplete="off"></label>
+      <label class="field">房间号<span class="help">直播间地址最后那一段：一般是数字；抖音也可以是主播的抖音号（字母、数字、下划线）</span>
+        <input class="input" name="room" value="${escape(p.room)}" maxlength="24" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     </div>
     <label class="field">Liquipedia 页面名<span class="help">可以空着，比如 Panic_(American_player)</span>
       <input class="input" name="liquipedia" value="${escape(p.liquipedia)}" maxlength="100" autocomplete="off"></label>

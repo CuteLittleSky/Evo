@@ -5,12 +5,13 @@
 
 import { Refuse } from "./store.js";
 
-// 同 config/watch.json 的 platforms（顺序也一样）
+// 同 config/watch.json 的 platforms（顺序也一样）。pattern 同那里的 room_pattern：房间号可以怎么写，没写的只能是数字。
+// 抖音的地址后面也可以是主播的抖音号（字母、数字、下划线，不分大小写；2026-11-18 用户同意、Evo 那边先改的）
 export const PLATFORMS = {
   douyu: { name: "斗鱼", room: "https://www.douyu.com/{room}" },
   huya: { name: "虎牙", room: "https://www.huya.com/{room}" },
   bilibili: { name: "B站", room: "https://live.bilibili.com/{room}" },
-  douyin: { name: "抖音", room: "https://live.douyin.com/{room}" },
+  douyin: { name: "抖音", room: "https://live.douyin.com/{room}", pattern: "[A-Za-z0-9_]{1,24}" },
 };
 export const TYPES = { 联赛: "league", 训练赛: "scrim", 杯赛: "cup" };
 export const TEAM_SIZE = 3;
@@ -18,7 +19,18 @@ export const USUAL_TEAMS = 20;
 export const RECENT_DAYS = 7;
 export const EXAMPLE = "示例";
 export const VERSION = 1;
-const ROOM = /^\d{1,24}$/;
+const DIGITS = "\\d{1,24}";
+const ROOM_RES = Object.fromEntries(Object.entries(PLATFORMS).map(([key, p]) => [key, new RegExp(`^(?:${p.pattern ?? DIGITS})$`)]));
+
+// 这个平台的房间号写得对不对（同 live_status.room_ok；抖音大小写都收）
+export function roomOk(platform, room) {
+  return Object.hasOwn(ROOM_RES, platform) && typeof room === "string" && ROOM_RES[platform].test(room);
+}
+
+// 抖音不分大小写：存的、发布的都转成小写，XXFPS 和 xxfps 才查得出是同一个房间，选手的 id 也不会变（同 tools/esports.py）
+export function normalRoom(platform, room) {
+  return platform === "douyin" ? String(room).toLowerCase() : String(room);
+}
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const MAX_PLAYERS = 2000;   // Evo 读的时候只看前这么多（esports_data.clean）
 const MAX_EVENTS = 200;
@@ -92,8 +104,12 @@ export function cleanPlayerFields(form) {
   const team = required(form.team, "战队", 40);
   const platform = platformKey(form.platform);
   if (!platform) throw new Refuse(`平台「${squash(form.platform)}」不认识，只能是 ${Object.values(PLATFORMS).map((p) => p.name).join(" / ")}`);
-  const room = squash(form.room);
-  if (!ROOM.test(room)) throw new Refuse(`房间号「${room}」只能是数字（直播间地址最后那串数字；虎牙要数字房间号）`);
+  const raw = squash(form.room);
+  if (!roomOk(platform, raw)) {
+    throw new Refuse(platform === "douyin" ? `房间号「${raw}」只能是字母、数字、下划线（直播间地址 live.douyin.com/ 后面那一段）`
+      : `房间号「${raw}」只能是数字（直播间地址最后那串数字；虎牙要数字房间号）`);
+  }
+  const room = normalRoom(platform, raw);
   const liquipedia = squash(form.liquipedia);
   if (length(liquipedia) > 100) throw new Refuse("Liquipedia 页面名最多 100 个字");
   return { name, team, platform, room, liquipedia };
@@ -191,6 +207,7 @@ export function checkEvents(events, knownTeams) {
 
 // players、events 是网页存的样子（按添加的顺序）；switches 是线上现在的平台开关；now 毫秒
 export function build(players, events, switches, now) {
+  players = players.map((p) => ({ ...p, room: normalRoom(p.platform, p.room) }));
   const errors = [];
   const notes = [];
   const roster = checkPlayers(players);
@@ -247,7 +264,7 @@ function cleanPlayer(raw) {
   const name = text(raw.name, 40);
   const team = text(raw.team, 40);
   if (typeof raw.id !== "string" || !ID.test(raw.id) || name === null || team === null) return null;
-  if (!Object.hasOwn(PLATFORMS, raw.platform) || typeof raw.room !== "string" || !ROOM.test(raw.room)) return null;
+  if (!roomOk(raw.platform, raw.room)) return null;
   return { id: raw.id, name, team, platform: raw.platform, room: raw.room, liquipedia: text(raw.liquipedia, 100, false) || "" };
 }
 
