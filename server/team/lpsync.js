@@ -20,6 +20,7 @@
 import { Refuse, readDoc, updateDoc } from "./store.js";
 import { players as manualPlayers, writeLog } from "./data.js";
 import { squash } from "./esports.js";
+import { conflicts, merged, reconcile } from "./overrides.js";
 import {
   fetchPlayers, fetchResults, fetchRoster, fetchSquads, fetchTeams, fetchTournaments, pageFromInput, teamPage,
 } from "./liquipedia.js";
@@ -61,6 +62,14 @@ export async function state(bucket) {
 
 export async function index(bucket) {
   return (await readDoc(bucket, INDEX, emptyIndex)).data;
+}
+
+export async function squadsOf(bucket) {
+  return (await readDoc(bucket, SQUADS, emptyMap)).data;
+}
+
+export async function resultsOf(bucket, page) {
+  return (await readDoc(bucket, resultsKey(page), emptyMap)).data.rows ?? [];
 }
 
 export async function rejects(bucket) {
@@ -163,12 +172,14 @@ async function runStep(bucket, step, deps, now) {
     const r = await (step.kind === "players" ? fetchPlayers : fetchTeams)(step.pages, deps);
     if (!r.ok) return r;
     const field = step.kind === "players" ? "players" : "teams";
-    await updateDoc(bucket, INDEX, emptyIndex, (idx) => {
+    const fresh = await updateDoc(bucket, INDEX, emptyIndex, (idx) => {
       for (const page of step.pages) {
         idx[field][page] = r.found[page] ? { ...r.found[page], results: idx[field][page]?.results, fetchedAt: now }
           : { page, missing: true, fetchedAt: now };
       }
+      return idx;
     });
+    if (step.kind === "players") await reconcile(bucket, fresh, step.pages, now);  // 手动修正对账（overrides.js）
     return { ok: true };
   }
   if (step.kind === "squads") {
@@ -301,12 +312,13 @@ export function nameKey(text) {
   return squash(text).toLowerCase().replace(/[\s_\-.·'"()（）]/g, "");
 }
 
-// 选手库里没填 Liquipedia 页面名的人：名字和抓到的某位选手的 ID 一样（点过"不是"的不算）→ 建议
-// 填了页面名、Liquipedia 上却没有这个页面的 → 也列出来
-export function pending(manual, idx, rejected) {
+// 选手库里没填 Liquipedia 页面名的人：名字和抓到的某位选手的 ID 一样（点过"不是"的不算；ID 有手动修正的按修正的比）→ 建议
+// 填了页面名、Liquipedia 上却没有这个页面的 → 也列出来；手动修正过、Liquipedia 后来又改成别的 → conflicts
+export function pending(manual, idx, rejected, ov = {}) {
   const byKey = new Map();
-  for (const p of Object.values(idx.players)) {
-    if (p.missing) continue;
+  for (const raw of Object.values(idx.players)) {
+    if (raw.missing) continue;
+    const p = merged(raw, ov[raw.page]);
     const key = nameKey(p.id);
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(p);
@@ -322,7 +334,12 @@ export function pending(manual, idx, rejected) {
     const candidates = (byKey.get(nameKey(m.name)) ?? []).filter((p) => !no.has(`${m.id}|${p.page}`));
     if (candidates.length) suggestions.push({ player: m, candidates });
   }
-  return { suggestions, missing };
+  const clashes = conflicts(ov).map((c) => ({ ...c, player: idx.players[c.page] }));
+  return { suggestions, missing, conflicts: clashes };
+}
+
+export function pendingCount(pend) {
+  return pend.suggestions.length + pend.missing.length + (pend.conflicts?.length ?? 0);
 }
 
 // 点"是他"：把页面名填进选手库（手动的那一份，记谁点的）

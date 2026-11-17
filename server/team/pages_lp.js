@@ -3,7 +3,8 @@
 
 import { can } from "./auth.js";
 import { beijingText } from "./esports.js";
-import { HOURLY_CAP } from "./lpsync.js";
+import { HOURLY_CAP, pendingCount } from "./lpsync.js";
+import { FIELDS } from "./overrides.js";
 import { SITE } from "./liquipedia.js";
 import { ago, escape, layout } from "./pages.js";
 
@@ -61,7 +62,7 @@ function trackedCard(me, tracked, idx, now) {
 
 function pendingCard(me, pend) {
   const editable = can(me, "edit");
-  const count = pend.suggestions.length + pend.missing.length;
+  const count = pendingCount(pend);
   const suggestions = pend.suggestions.map(({ player, candidates }) => candidates.map((c) => `<li class="row"><div class="row-main">
       <div class="row-name">选手库的「${escape(player.name)}」（${escape(player.team)}）是不是 Liquipedia 上的 ${escape(c.id)}？</div>
       <div class="row-meta">${lpLink(c.page)}${c.name ? `<span>${escape(c.name)}</span>` : ""}${c.team ? `<span>现在在 ${escape(c.team)}</span>` : ""}
@@ -75,16 +76,27 @@ function pendingCard(me, pend) {
   const missing = pend.missing.map((m) => `<li class="row"><div class="row-main">
       <div class="row-name">选手库的「${escape(m.name)}」填的 Liquipedia 页面名「${escape(m.liquipedia)}」，Liquipedia 上没有这个页面</div>
       <div class="row-meta"><span>大小写、下划线、括号里的说明（比如 Panic_(American_player)）都要一样</span><a href="/players">去选手库改</a></div></div></li>`).join("");
+  const clashes = (pend.conflicts ?? []).map((c) => `<li class="row"><div class="row-main">
+      <div class="row-name">${escape(c.player?.id ?? c.page)} 的${escape(FIELDS[c.field])}：你们改成了「${escape(c.value)}」，Liquipedia 后来改成了「${escape(c.conflict.value || "（空）")}」</div>
+      <div class="row-meta"><a href="/pros/${encodeURIComponent(c.page)}">看选手资料</a><span>${escape(c.by)} 改的${c.reason ? `：${escape(c.reason)}` : ""}</span></div></div>
+      ${editable ? `<div class="row-actions">
+        <form method="post" action="/pros/${encodeURIComponent(c.page)}/resolve"><input type="hidden" name="field" value="${c.field}">
+          <input type="hidden" name="keep" value="theirs"><button class="btn btn-primary" type="submit">用 Liquipedia 的</button></form>
+        <form method="post" action="/pros/${encodeURIComponent(c.page)}/resolve"><input type="hidden" name="field" value="${c.field}">
+          <input type="hidden" name="keep" value="ours"><button class="btn" type="submit">留着我们改的</button></form></div>` : ""}
+    </li>`).join("");
   return `<section class="card stack" id="confirm"><h2>待确认（${count}）</h2>
-    <p class="small muted">选手库里没填 Liquipedia 页面名、名字又和抓到的某位选手一样的，列在这里；点"是他"就把页面名填进选手库。拿不准的点开链接看一眼。</p>
-    ${count ? `<ul class="list">${suggestions}${missing}</ul>` : `<p class="muted">没有要确认的。</p>`}</section>`;
+    <p class="small muted">选手库里没填 Liquipedia 页面名、名字又和抓到的某位选手一样的，列在这里；点"是他"就把页面名填进选手库。拿不准的点开链接看一眼。
+      手动修正过的资料，Liquipedia 后来又改成别的，也列在这里。</p>
+    ${count ? `<ul class="list">${clashes}${suggestions}${missing}</ul>` : `<p class="muted">没有要确认的。</p>`}</section>`;
 }
 
 export function liquipediaPage(me, { tracked, idx, progress, pend, keySet, now, error = "", ok = "" }) {
   const players = Object.values(idx.players).filter((p) => !p.missing).length;
   const teams = Object.values(idx.teams).filter((t) => !t.missing).length;
-  return layout({ title: "Liquipedia", me, current: "liquipedia", body: `
-<div class="stack"><h1>Liquipedia 资料</h1>
+  return layout({ title: "Liquipedia", me, current: "pros", body: `
+<p class="small"><a href="/pros">‹ 资料</a></p>
+<div class="stack"><h1>收录的比赛和抓取</h1>
   <p class="muted">定时从 Liquipedia 抓职业选手的资料、战队经历和比赛成绩，和选手库分开存，谁也不改谁的。
     数据来自 <a href="https://liquipedia.net/apexlegends/" target="_blank" rel="noopener noreferrer">Liquipedia</a>（CC BY-SA 3.0）。</p></div>
 ${notes({ error, ok })}
@@ -92,5 +104,5 @@ ${pendingCard(me, pend)}
 ${statusCard(me, progress, keySet, now)}
 ${trackedCard(me, tracked, idx, now)}
 <section class="card stack"><h2>抓到的</h2>
-  <p>${players} 位选手、${teams} 支战队、${Object.values(idx.events).filter((e) => !e.missing).length} 场比赛。每个人的资料、经历和成绩下一步做成可以搜、可以点开看的页面。</p></section>` });
+  <p>${players} 位选手、${teams} 支战队、${Object.values(idx.events).filter((e) => !e.missing).length} 场比赛。<a href="/pros">去资料页搜、点开看 ›</a></p></section>` });
 }

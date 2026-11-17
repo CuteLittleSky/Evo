@@ -30,8 +30,11 @@ import {
 } from "./data.js";
 import { preview, publish, setPlatform } from "./publish.js";
 import { liquipediaPage } from "./pages_lp.js";
+import { proHref, proPage, prosPage, teamProfilePage } from "./pages_pros.js";
+import { merged, overrides, removeOverride, resolveConflict, setOverride } from "./overrides.js";
 import {
-  addTracked, confirmMatch, index, pending, progress, rejectMatch, rejects, removeTracked, requestRefresh, state, tick, tracked,
+  addTracked, confirmMatch, index, pending, pendingCount, progress, rejectMatch, rejects, removeTracked, requestRefresh, resultsOf,
+  squadsOf, state, tick, tracked,
 } from "./lpsync.js";
 
 const MAX_FORM = 64 * 1024;  // 从 Excel 粘贴一大张表也够
@@ -94,6 +97,7 @@ const OK = {
   platform: "平台开关改好了",
   tracked: "收录了：几分钟内开始抓（每 3 分钟抓一步）", untracked: "不再收录了", refresh: "排上了：几分钟内开始新的一轮",
   matched: "填好了：选手库里记上了 Liquipedia 页面名", rejected: "记下了：以后不再这样建议",
+  fixed: "修正好了：页面上用你们改的", unfixed: "撤掉了：改回用 Liquipedia 的", resolved: "处理好了",
 };
 
 function okText(params) {
@@ -155,12 +159,12 @@ export async function handle(request, env, now = Date.now()) {
     return redirect("/", { "Set-Cookie": clearCookie() });
   }
   if (path === "/" && method === "GET") {
-    const [playerItems, eventItems, recent, last, idx, no] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
-      published(bucket), index(bucket), rejects(bucket)]);
-    const pend = pending(playerItems, idx, no);
+    const [playerItems, eventItems, recent, last, idx, no, ov] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
+      published(bucket), index(bucket), rejects(bucket), overrides(bucket)]);
+    const pend = pending(playerItems, idx, no, ov);
     return respond(homePage(me, { now, recent, stats: { players: playerItems.length, teams: teamsOf(playerItems).size,
       events: eventItems.length, published: last, lpPlayers: Object.values(idx.players).filter((x) => !x.missing).length,
-      pending: pend.suggestions.length + pend.missing.length } }));
+      pending: pendingCount(pend) } }));
   }
   if (path === "/log" && method === "GET") return respond(logPage(me, await recentLog(bucket), now));
   const notFound = () => respond(messagePage("没有这个页面", "地址可能写错了。", me), { status: 404 });
@@ -239,9 +243,9 @@ export async function handle(request, env, now = Date.now()) {
   // ---------- Liquipedia ----------
   if (path === "/liquipedia" || path.startsWith("/liquipedia/")) {
     const show = async (options = {}, status = 200) => {
-      const [trackedItems, idx, s, playerItems, no] = await Promise.all([tracked(bucket), index(bucket), state(bucket), players(bucket),
-        rejects(bucket)]);
-      return respond(liquipediaPage(me, { tracked: trackedItems, idx, progress: progress(s, now), pend: pending(playerItems, idx, no),
+      const [trackedItems, idx, s, playerItems, no, ov] = await Promise.all([tracked(bucket), index(bucket), state(bucket), players(bucket),
+        rejects(bucket), overrides(bucket)]);
+      return respond(liquipediaPage(me, { tracked: trackedItems, idx, progress: progress(s, now), pend: pending(playerItems, idx, no, ov),
         keySet: Boolean(String(env.LIQUIPEDIA_API_KEY ?? "").trim()), now, ...options }), { status });
     };
     if (method === "GET") return path === "/liquipedia" ? show({ ok: okText(url.searchParams) }) : notFound();
@@ -269,6 +273,81 @@ export async function handle(request, env, now = Date.now()) {
     } catch (error) {
       if (!(error instanceof Refuse)) throw error;
       return show({ error: error.message }, 400);
+    }
+  }
+
+  // ---------- 资料：选手、战队（Liquipedia 抓来的 + 手动修正） ----------
+  if (path === "/pros" || path.startsWith("/pros/") || path.startsWith("/teams/")) {
+    const decode = (text) => {
+      try {
+        return decodeURIComponent(text);
+      } catch {
+        return null;
+      }
+    };
+    const load = async () => {
+      const [idx, ov, manual] = await Promise.all([index(bucket), overrides(bucket), players(bucket)]);
+      const linkedBy = new Map();
+      for (const m of manual) {
+        if (!m.liquipedia) continue;
+        if (!linkedBy.has(m.liquipedia)) linkedBy.set(m.liquipedia, []);
+        linkedBy.get(m.liquipedia).push(m);
+      }
+      const teams = Object.values(idx.teams).filter((t) => !t.missing);
+      return { idx, ov, linkedBy, teams, knownTeams: new Set(teams.map((t) => t.page)),
+               all: Object.values(idx.players).filter((p) => !p.missing).map((p) => merged(p, ov[p.page])) };
+    };
+    if (path === "/pros" && method === "GET") {
+      const d = await load();
+      return respond(prosPage(me, { q: url.searchParams.get("q") ?? "", players: d.all, teams: d.teams, linkedBy: d.linkedBy, now }));
+    }
+    const teamMatch = path.match(/^\/teams\/([^/]+)$/);
+    if (teamMatch) {
+      if (method !== "GET") return notFound();
+      const page = decode(teamMatch[1]);
+      const d = await load();
+      const t = d.idx.teams[page];
+      if (!t || t.missing) return respond(messagePage("没有这支战队的资料", "可能还没抓到，或者地址写错了。", me), { status: 404 });
+      const squads = await squadsOf(bucket);
+      const current = d.all.filter((p) => (p.teamPage === page && !p.fixed?.team) || (p.fixed?.team && p.team === t.name));
+      const past = [];
+      for (const p of d.all) {
+        for (const s of squads[p.page] ?? []) {
+          if (s.teamPage === page && (!s.type || s.type === "player") && (s.leave || s.status !== "active")) past.push({ p, s });
+        }
+      }
+      past.sort((a, b) => (b.s.leave || "").localeCompare(a.s.leave || ""));
+      return respond(teamProfilePage(me, { t, current, past, now }));
+    }
+    const pro = path.match(/^\/pros\/([^/]+)(?:\/(fix|unfix|resolve))?$/);
+    const page = pro ? decode(pro[1]) : null;
+    if (!pro || page === null) return notFound();
+    const show = async (options = {}, status = 200) => {
+      const d = await load();
+      const raw = d.idx.players[page];
+      if (!raw || raw.missing) return respond(messagePage("没有这位选手的资料", "可能还没抓到，或者 Liquipedia 上没有这个页面。", me), { status: 404 });
+      const [squads, results] = await Promise.all([squadsOf(bucket), resultsOf(bucket, page)]);
+      return respond(proPage(me, { p: merged(raw, d.ov[page]), squads: squads[page] ?? [], results, linked: d.linkedBy.get(page) ?? [],
+        knownTeams: d.knownTeams, now, ...options }), { status });
+    };
+    if (!pro[2]) return method === "GET" ? show({ ok: okText(url.searchParams) }) : notFound();
+    if (method !== "POST") return notFound();
+    if (!can(me, "edit")) return readOnly();
+    try {
+      const form = await readFields(request);
+      if (pro[2] === "fix") {
+        await setOverride(bucket, me, page, form.field ?? "", form.value ?? "", form.reason ?? "", await index(bucket), now);
+        return redirect(`${proHref(page)}?ok=fixed`);
+      }
+      if (pro[2] === "unfix") {
+        await removeOverride(bucket, me, page, form.field ?? "", now);
+        return redirect(`${proHref(page)}?ok=unfixed`);
+      }
+      await resolveConflict(bucket, me, page, form.field ?? "", form.keep === "ours", now);
+      return redirect("/liquipedia?ok=resolved#confirm");
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      return pro[2] === "resolve" ? redirect("/liquipedia#confirm") : show({ error: error.message }, 400);
     }
   }
 

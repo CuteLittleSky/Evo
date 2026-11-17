@@ -122,6 +122,12 @@ a.tile:hover { border-color: var(--muted); }
 .row-name { font-weight: 600; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 /* 很长又没有空格的名字（Liquipedia 的页面名、链接）在手机上折行，不撑出屏幕 */
 .row-name, .row-meta, .help, .note { overflow-wrap: anywhere; }
+.search-row { display: flex; gap: 8px; }
+.search-row .input { flex: 1; min-width: 0; }
+.place { font-weight: 700; margin-right: 2px; }
+details.more > summary { list-style: none; margin-top: 12px; }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more[open] > summary { display: none; }
 .row-meta { font-size: 14px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 .row-actions form { margin: 0; }
@@ -244,7 +250,7 @@ export function abilities(member) {
 export function layout({ title, me = null, current = "", body, narrow = false }) {
   const link = (href, key, text) => `<a href="${href}"${current === key ? ' aria-current="page"' : ""}>${text}</a>`;
   const nav = me ? `<nav class="nav" aria-label="主导航">
-      ${link("/", "home", "首页")}${link("/players", "players", "选手库")}${link("/events", "events", "赛程")}${link("/publish", "publish", "发布")}${link("/liquipedia", "liquipedia", "Liquipedia")}
+      ${link("/", "home", "首页")}${link("/players", "players", "选手库")}${link("/events", "events", "赛程")}${link("/publish", "publish", "发布")}${link("/pros", "pros", "资料")}
       ${me.role === "admin" ? link("/members", "members", "成员") : ""}
     </nav>
     <div class="me"><span class="me-name" title="${escape(me.name)}">${escape(me.name)}</span>${roleBadge(me.role)}
@@ -324,8 +330,8 @@ export function homePage(me, { stats, recent, now }) {
     tile("/players", "选手库", "职业选手、战队和直播间", `${stats.players} 位选手、${stats.teams} 支队`),
     tile("/events", "赛程", "联赛、训练赛、杯赛", `${stats.events} 场赛事`),
     tile("/publish", "发布", "生成 Evo 赛事页读的文件", last ? `正式文件：${last.by} ${ago(last.at, now)}发的` : "正式文件还没从这里发过"),
-    tile("/liquipedia", "Liquipedia 资料", "自动抓来的选手资料、战队经历和成绩", `抓到 ${stats.lpPlayers ?? 0} 位选手`),
-    tile("/liquipedia#confirm", "待确认", "选手库的人和 Liquipedia 对上", stats.pending ? `${stats.pending} 条要确认` : "没有要确认的"),
+    tile("/pros", "资料", "职业选手和战队：资料、经历、成绩（从 Liquipedia 抓，可以手动修正）", `抓到 ${stats.lpPlayers ?? 0} 位选手`),
+    tile("/liquipedia#confirm", "待确认", "选手库的人和 Liquipedia 对上、修正过的资料 Liquipedia 又改了", stats.pending ? `${stats.pending} 条要确认` : "没有要确认的"),
     me.role === "admin" ? tile("/members", "成员", "邀请人、改身份、移出", "") : "",
     ...SOON.map(([name, text]) => `<div class="tile" aria-disabled="true">
       <div class="tile-head">${escape(name)}<span class="badge badge-soon">还没上线</span></div><p>${escape(text)}</p></div>`),

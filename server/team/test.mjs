@@ -41,5 +41,7 @@ if (args[0] === "--build") {
   await import("./test_esports.mjs");
   console.log("\nLiquipedia 定时抓取");
   await import("./test_lp.mjs");
+  console.log("\n资料页、手动修正");
+  await import("./test_pros.mjs");
   process.exit(summary());
 }
