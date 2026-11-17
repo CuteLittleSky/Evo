@@ -5,6 +5,7 @@
     python tools/team.py invite 名字                  新成员的邀请链接（默认管理员；--role editor / viewer，编辑加 --publish 能发布）
     python tools/team.py link 名字                    已有成员换了手机、电脑：再要一个链接（进去以后还是原来的身份）
     python tools/team.py list                         看有哪些成员、还没用的邀请
+    python tools/team.py remove 名字                  移出一个成员（网页上进不来的时候用；不能移出最后一个管理员）
     加 --local：改 wrangler dev 用的本机数据（cd server/team && wrangler dev 时试用，链接是 http://localhost:8787/…）
 
 链接只打印这一次（存的只是口令的 SHA-256），7 天内有效，打开以后点"进入"就作废。
@@ -111,6 +112,8 @@ def main():
     link = sub.add_parser("link", help="已有成员换设备：再要一个链接")
     link.add_argument("name")
     sub.add_parser("list", help="看成员和还没用的邀请")
+    remove = sub.add_parser("remove", help="移出一个成员")
+    remove.add_argument("name")
     args = parser.parse_args()
 
     now = int(time.time() * 1000)
@@ -128,6 +131,19 @@ def main():
         for i in invites:
             kind = "换设备的新链接" if i.get("memberId") else ROLES.get(i["role"], i["role"])
             print(f"  {i['name']}  {kind}  {i['createdBy']} 发的，{beijing(i['expires'])} 过期")
+        return
+
+    if args.command == "remove":
+        matches = [m for m in data["members"] if m["name"] == args.name.strip()]
+        if len(matches) != 1:
+            sys.exit(f"有 {len(matches)} 个叫「{args.name}」的成员：要正好一个（python tools/team.py list 看有哪些）")
+        member = matches[0]
+        if member["role"] == "admin" and sum(m["role"] == "admin" for m in data["members"]) == 1:
+            sys.exit("至少要留一个管理员：这是最后一个管理员，不能移出")
+        data["members"] = [m for m in data["members"] if m is not member]
+        data["invites"] = [i for i in data["invites"] if i.get("memberId") != member["id"]]
+        write(data, args.local)
+        print(f"移出了「{member['name']}」（{ROLES.get(member['role'], member['role'])}）：马上就进不来了")
         return
 
     if args.command == "invite":
