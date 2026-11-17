@@ -52,7 +52,8 @@ SECTIONS = [
         "code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/radar.py",
         "code/global_stats.py", "code/map_rotation.py"]),
     ("页面", "赛事、看直播", ["code/panel_esports.py", "code/esports_data.py", "code/live_status.py", "code/abogus.py",
-                              "code/watch_douyu.py", "code/flv_relay.py"]),
+                              "code/watch_douyu.py", "code/flv_relay.py", "code/watch_bilibili.py", "code/bili_login.py",
+                              "code/secret_store.py", "code/qr.py"]),
     ("页面", "模板（panel/templates/）", ["panel/templates/*.html", "panel/templates/share/*.svg"]),
     ("页面", "图片、字体", [
         ("panel/static/", "样式表 style.css、字体，图标（legends/ 传奇头像由 tools/legend_icons.py 生成、ranks/ 段位、"
@@ -74,7 +75,7 @@ SECTIONS = [
         "code/tester_projects.py", "code/tester_answers.py"]),
     # 只在本机、不进 git 的文件（.gitignore 里）扫不到，固定写一段
     ("小程序", None, "只在本机、不进 git（见 docs/小程序.md）：`miniprogram/`，和 Evo 里绑定、上传战绩的 "
-                     "`code/cloud_sync.py`、`code/panel_cloud.py`、`code/qr.py`、`panel/templates/_cloud.html`、"
+                     "`code/cloud_sync.py`、`code/panel_cloud.py`、`panel/templates/_cloud.html`、"
                      "`tests/test_cloud_sync.py`、`tools/cloud_ping.py`"),
     ("开发用的脚本（tools/）", "打包、安装、发布", [
         "tools/build.py", "tools/evo.spec", "tools/install.py", "tools/release.py", "tools/publish.py",

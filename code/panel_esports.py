@@ -15,6 +15,9 @@
   （这里 50 秒内不重查，开播、下播后 2 分钟内页面跟着变）。顺便带上平台开关（esports.json 10 分钟内下载过就不重下）
 - 能在窗口里播的平台：配置里有 embed_url 的用平台官方的嵌入播放器（现在是 B站）；配置里 player 是 flv 的用 Evo 自己的
   播放器（mpegts.js，现在是斗鱼）。别的平台、平台开关关了的显示退路"去 X 看"。抖音、虎牙的播放后面几步做
+- B站：没登录的用官方嵌入播放器（最高 720p）；玩家扫码登录了 B站（bili_login.py，登录信息加密存在本机）以后改用
+  Evo 自己的播放器播原画，页面直接连 B站的视频服务器，不经过本机中转（watch_bilibili.py）。
+  登录：POST /esports/login/bilibili/start 要二维码（回画好的 SVG）、…/poll 问扫了没有、…/logout 退出；都要带面板的口令
 - Evo 自己的播放器：页面先问 GET /esports/play/<选手>?q=清晰度（有哪些清晰度、实际给的是哪一档、播放地址），
   再让播放器连 GET /esports/stream/<选手>（本机中转，flv_relay.py：只听 127.0.0.1、要带面板的口令、一次只播一路，
   开新的一路就停掉上一路；播放器断开就停，不在后台留着）。取地址、连视频服务器都在玩家自己的电脑上
@@ -30,10 +33,13 @@ from datetime import datetime
 
 from flask import Blueprint, Response, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 
+import bili_login
 import esports_data
 import flv_relay
 import game_detect
 import live_status
+import qr
+import watch_bilibili
 import watch_douyu
 
 bp = Blueprint("esports", __name__)
@@ -42,9 +48,12 @@ STATUS_SECONDS = 60        # 赛事页：这么久以内查过开播状态就不
 WATCH_STATUS_SECONDS = 50  # 看直播页：页面每 60 秒问一次，每次都查新的（留 10 秒给同时开着的另一页）
 WATCH_DATA_SECONDS = 600   # 看直播页开着时，这么久重新下载一次 esports.json（平台开关关了以后最慢这么久生效）
 EMBED = {key: platform["embed_url"] for key, platform in live_status.PLATFORMS.items() if platform.get("embed_url")}
-# 用 Evo 自己的播放器播的平台 → 怎么取地址并连上：(房间号, 清晰度, 能不能用刚取过的地址) → (连接, 取地址的结果)
-PLAYERS = {"douyu": watch_douyu}
-PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFORMS[key].get("player") == "flv"}
+# 用 Evo 自己的播放器播的平台 → 取地址的模块。模块里 DIRECT 是 True 的（B站）：页面直接连平台的视频服务器；
+# 别的（斗鱼）：经过本机中转（/esports/stream）
+PLAYERS = {"douyu": watch_douyu, "bilibili": watch_bilibili}
+PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFORMS[key].get("player") in ("flv", "direct")}
+# 要玩家登录了才用 Evo 自己的播放器的平台 → 管登录的模块（没登录的用平台官方的嵌入播放器）
+LOGINS = {"bilibili": bili_login}
 RATE_RE = re.compile(r"-?\d{1,5}")
 _playing = {"relay": None}  # 正在中转的那一路（一次只播一路）
 _playing_lock = threading.Lock()
@@ -158,7 +167,11 @@ def watch(event_id):
         page_data={"players": [player for team in teams for player in team["players"]],
                    "platforms": data["platforms"], "selected": wanted if wanted in ids else None,
                    "status_url": url_for("esports.status", event_id=event["id"]), "game_url": url_for("esports.game"),
-                   "mpegts_url": url_for("static", filename="vendor/mpegts.js")})
+                   "mpegts_url": url_for("static", filename="vendor/mpegts.js"), "token": current_app.config["TOKEN"],
+                   # 要登录才能看高画质的平台：现在登录着没有（打开页面时隔 6 小时向平台核对一次）、登录用的三个接口
+                   "accounts": {key: module.account(check=True) for key, module in LOGINS.items()},
+                   "login": {key: {step: url_for(f"esports.login_{step}", platform=key) for step in ("start", "poll", "logout")}
+                             for key in LOGINS}})
 
 
 @bp.get("/esports/<event_id>/status")
@@ -189,6 +202,9 @@ def _player(player_id):
     player = next((p for p in data["players"] if p["id"] == player_id), None) if data else None
     if player is None or player["platform"] not in PLAYERS or data["platforms"].get(player["platform"]) is False:
         return None
+    login = LOGINS.get(player["platform"])
+    if login is not None and not login.account()["logged_in"]:
+        return None  # 没登录：Evo 不碰这个平台的视频地址，页面用官方嵌入播放器
     return player
 
 
@@ -211,6 +227,8 @@ def play(player_id):
     except Exception as e:  # noqa: BLE001  平台那边的各种错：页面显示退路
         log.info("看直播：%s 房间 %s 没取到地址：%s", player["platform"], player["room"], e)
         return jsonify(ok=False, reason="upstream", detail=str(e))
+    if getattr(module, "DIRECT", False):  # 页面直接连平台的视频服务器
+        return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], stream=found["url"])
     module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
     return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"],
                    stream=url_for("esports.stream", player_id=player_id, q=found["rate"], t=current_app.config["TOKEN"]))
@@ -223,7 +241,7 @@ def stream(player_id):
     if request.args.get("t") != current_app.config["TOKEN"]:
         abort(403)
     player = _player(player_id)
-    if player is None:
+    if player is None or getattr(PLAYERS[player["platform"]], "DIRECT", False):
         abort(404)
     module, rate, first = PLAYERS[player["platform"]], _rate(), [True]
 
@@ -245,3 +263,45 @@ def stream(player_id):
         return jsonify(ok=False, reason=e.code, detail=str(e)), 502
     log.info("看直播：开始中转 %s 房间 %s（清晰度 %s）", player["platform"], player["room"], rate)
     return Response(relay.stream(), mimetype="video/x-flv", headers={"Cache-Control": "no-store"})
+
+
+@bp.post("/esports/login/<platform>/start")
+def login_start(platform):
+    """要一个登录二维码：{"ok": True, "key": 问状态用的, "svg": 画好的二维码}；没要到是 {"ok": False, "detail": 原因}。"""
+    module = LOGINS.get(platform)
+    if module is None:
+        abort(404)
+    try:
+        found = module.start()
+        return jsonify(ok=True, key=found["key"], svg=qr.svg(found["url"]))
+    except Exception as e:  # noqa: BLE001  平台那边的各种错、二维码的内容太长画不下：页面说没要到
+        log.info("看直播：%s 没要到登录二维码：%s", platform, e)
+        return jsonify(ok=False, detail=str(e))
+
+
+@bp.post("/esports/login/<platform>/poll")
+def login_poll(platform):
+    """扫了没有：{"state": "waiting" / "scanned" / "expired" / "ok" / "error", "name": 登录好了时的昵称}。
+    登录好了由管登录的模块存下来（加密）；登录信息不回给页面，也不写进日志。"""
+    module = LOGINS.get(platform)
+    if module is None:
+        abort(404)
+    try:
+        found = module.poll(request.form.get("key", ""))
+    except Exception as e:  # noqa: BLE001
+        return jsonify(state="error", name="", detail=str(e))
+    if found["state"] == "ok":
+        log.info("看直播：%s 登录好了", platform)
+    return jsonify(state=found["state"], name=found["name"])
+
+
+@bp.post("/esports/login/<platform>/logout")
+def login_logout(platform):
+    """退出登录：告诉平台让这次登录失效，删掉本机存的。"""
+    module = LOGINS.get(platform)
+    if module is None:
+        abort(404)
+    told = module.logout()
+    log.info("看直播：%s 退出登录（平台那边%s）", platform, "也退出了" if told else "没告诉成，本机的已经删掉")
+    return jsonify(ok=True)
+

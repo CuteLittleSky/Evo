@@ -67,7 +67,6 @@ miniprogram/
 docs/小程序.md
 code/cloud_sync.py
 code/panel_cloud.py
-code/qr.py
 panel/templates/_cloud.html
 tests/test_cloud_sync.py
 tools/cloud_ping.py

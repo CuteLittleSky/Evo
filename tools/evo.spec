@@ -9,10 +9,11 @@ ROOT = os.path.dirname(SPECPATH)  # 项目文件夹（本文件在 tools/ 里）
 CODE = os.path.join(ROOT, "code")  # 程序代码
 # 素材只打包 git 里有的（2026-11-09 用户确认）：assets/ 里还有只在本机的东西（派圈助手的选手照片 2 GB、队标、头像），绝不能进安装包
 ASSETS = subprocess.run(["git", "ls-files", "-z", "assets"], cwd=ROOT, capture_output=True, check=True).stdout.decode("utf-8").split("\0")
-# 微信小程序（绑定、上传战绩：cloud_sync.py、panel_cloud.py、qr.py、_cloud.html）：这些文件只在开发者电脑上，不上传 GitHub
+# 微信小程序（绑定、上传战绩：cloud_sync.py、panel_cloud.py、_cloud.html）：这些文件只在开发者电脑上，不上传 GitHub
+# （画二维码的 qr.py 2026-11-17 起是公开的：看直播页的 B站扫码登录也用它，总是打进安装包）
 # （2026-10-24 用户决定）。小程序上线以前不打进安装包（0.4.0–0.4.3），Evo 找不到它们就不显示那一栏、不同步；2026-10-29 派圈助手过审发布，0.5.0 起打进去（用户确认）
 WITH_CLOUD = True
-CLOUD_MODULES = ["cloud_sync", "panel_cloud", "qr"]
+CLOUD_MODULES = ["cloud_sync", "panel_cloud"]
 
 datas = [
     (os.path.join(ROOT, "config"), "config"),                    # 识别规则

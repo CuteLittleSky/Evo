@@ -4,7 +4,8 @@
    左边：赛事名、播放器、正在看的选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
    名单先由服务器画好（都不能点）；谁在播由下面的脚本每 60 秒问一次 /esports/<赛事>/status，再把在播的点亮。
    能在窗口里播的：配置里有嵌入播放器的平台（B站，放它官方的播放器），和用 Evo 自己的播放器的平台（斗鱼：
-   mpegts.js 连面板的本机中转，控制条是自己的：播放 / 暂停、音量、清晰度、全屏）。别的显示"去 X 看"的退路 #}
+   mpegts.js 连面板的本机中转，控制条是自己的：播放 / 暂停、音量、清晰度、全屏）。别的显示"去 X 看"的退路。
+   B站不登录最高 720p：选手那一行有"登录 B站看原画"，扫码登录以后 B站也改用 Evo 自己的播放器（直接连 B站，不经过中转） #}
 {% block wrap_class %} watch-wrap{% endblock %}
 {% block top %}{% endblock %}
 
@@ -52,6 +53,8 @@
         <span class="watch-live-title es-ell" id="watch-live-title"></span>
       </div>
       {# 三个按钮都是用系统浏览器打开这位主播的直播间：发弹幕、送礼物要登录平台，玩家一般在浏览器里登录过 #}
+      {# 要登录才能看高画质的平台（B站）才显示：没登录写"登录 B站看原画"，登录了写"B站：昵称"（点开能退出登录） #}
+      <button type="button" class="btn watch-link watch-login" id="watch-login" hidden></button>
       <a class="btn watch-link" id="watch-danmu" target="_blank" rel="noopener noreferrer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H10l-4 3.5V16H4z"></path><path d="M8 9.5h8M8 12.5h5"></path></svg>发送弹幕
       </a>
@@ -116,6 +119,21 @@
     <p class="watch-side-foot">开着这一页时每 60 秒刷新一次谁在播。</p>
   </aside>
 </div>
+{# 平台的扫码登录（现在只有 B站；panel_esports.py 的 /esports/login/…）：二维码是 Evo 的后台向平台要来、自己画的，
+   白底（扫码要）。登录信息只存在这台电脑上，不交给这个页面 #}
+<dialog class="dialog watch-login-dialog" id="login-dialog" aria-labelledby="h-login" aria-describedby="login-status">
+  <div class="watch-login-body">
+    <h2 id="h-login" tabindex="-1" autofocus>扫码登录</h2>
+    <div class="watch-login-qr" id="login-qr-box" hidden><img id="login-qr" alt="登录二维码" width="220" height="220"></div>
+    <p class="watch-login-status" id="login-status" role="status"></p>
+    <p class="dialog-desc" id="login-note"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn-text" id="login-logout" hidden>退出登录</button>
+      <button type="button" class="btn" id="login-refresh" hidden>换一个二维码</button>
+      <button type="button" class="btn" id="login-close">关闭</button>
+    </div>
+  </div>
+</dialog>
 <script type="application/json" id="watch-data">{{ page_data|tojson }}</script>
 {% endblock %}
 
@@ -130,14 +148,19 @@
     // closed：点了"关闭直播"；apexOk：点了"继续看"（Apex 关掉以后重新算）
     var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
               apex: false, apexOk: false, stageKey: null, lastTry: 0,
-              player: null, playSeq: 0, playFailed: {}};  // Evo 自己的播放器：现在的那个、第几次开播、哪些人没播成
+              player: null, playSeq: 0, playFailed: {},  // Evo 自己的播放器：现在的那个、第几次开播、哪些人没播成
+              accounts: data.accounts || {}};  // 要登录才能看高画质的平台：{平台: {logged_in, name}}
     function saved(key, fallback) { try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; } }
     function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
 
     function info(id) { return st.status ? st.status[id] : null; }
     function isLive(id) { var s = info(id); return !!s && s.state === "live"; }
     function canEmbed(p) { return !!p.embed && st.platforms[p.platform] !== false; }  // 平台官方的嵌入播放器，平台开关也开着
-    function canPlay(p) { return !!p.play && st.platforms[p.platform] !== false && !st.playFailed[p.id]; }  // Evo 自己的播放器
+    // Evo 自己的播放器：平台开关开着、刚才没播砸；要登录的平台（B站）还得登录了
+    function canPlay(p) {
+      return !!p.play && st.platforms[p.platform] !== false && !st.playFailed[p.id]
+        && (!data.login[p.platform] || !!(st.accounts[p.platform] && st.accounts[p.platform].logged_in));
+    }
     function minutes(since) { return since ? Math.max(0, Math.floor((Date.now() / 1000 - since) / 60)) : null; }
     function clock(since) {  // "2:14" = 开播 2 小时 14 分
       var m = minutes(since);
@@ -240,7 +263,7 @@
           return message(p.name + (s && s.state === "error" ? " 的直播间没查到" : " 现在没有开播"),
                          anyLive ? "在右边选一位在播的选手。" : "有选手开播以后，右边的名单会亮起来，最慢 2 分钟。");
         };
-      } else if (canEmbed(p)) {
+      } else if (!canPlay(p) && canEmbed(p)) {  // 能用 Evo 自己的播放器就不用嵌入的（B站登录了以后）
         key = "embed:" + p.id;
         build = function () {
           var frame = el("iframe", "watch-frame");
@@ -283,7 +306,7 @@
       chips.hidden = !(live && !st.closed);
       if (!chips.hidden) {
         $("watch-chip-dot").className = "es-dot pf-" + p.platform;
-        $("watch-chip-text").textContent = canEmbed(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
+        $("watch-chip-text").textContent = canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
       }
 
       $("watch-info").hidden = !p;
@@ -299,6 +322,12 @@
         link.title = "用浏览器打开 " + p.name + " 的" + p.platform_name + "直播间" + pair[1];
       });
       $("watch-go-text").textContent = "去" + p.platform_name + "看";
+      var loginBtn = $("watch-login"), account = st.accounts[p.platform];
+      loginBtn.hidden = !data.login[p.platform];
+      if (!loginBtn.hidden) {
+        loginBtn.textContent = account && account.logged_in ? p.platform_name + "：" + (account.name || "已登录") : "登录" + p.platform_name + "看原画";
+        loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有 720p，用手机扫码登录以后能看原画";
+      }
 
       var mates = data.players.filter(function (x) { return x.team === p.team; }).map(function (m) {
         if (!isLive(m.id)) {
@@ -535,6 +564,81 @@
       }).catch(function (e) { failed(e && e.message); });
       return box;
     }
+
+    // ---------- 平台的扫码登录（B站：登录了才能看原画）----------
+    function loggedIn(platform) { return !!(st.accounts[platform] && st.accounts[platform].logged_in); }
+    function post(url, fields) {  // 改东西的请求都要带面板的口令
+      return fetch(url, { method: "POST", body: new URLSearchParams(Object.assign({ token: data.token }, fields || {})) })
+        .then(function (r) { return r.json(); });
+    }
+    var login = { platform: null, name: "", key: null, timer: null };
+    var loginDialog = $("login-dialog");
+    function loginShow(text, opts) {
+      opts = opts || {};
+      $("login-status").textContent = text;
+      $("login-qr-box").hidden = !opts.qr;
+      $("login-refresh").hidden = !opts.refresh;
+      $("login-logout").hidden = !opts.logout;
+    }
+    function loginAccount() {
+      loginShow("已登录：" + (st.accounts[login.platform].name || login.name + "用户") + "。播放器右下角可以选原画了。", { logout: true });
+    }
+    function loginPoll() {
+      if (!loginDialog.open || !login.key) return;
+      var key = login.key;
+      post(data.login[login.platform].poll, { key: key }).then(function (r) {
+        if (!loginDialog.open || login.key !== key) return;
+        if (r.state === "ok") {
+          login.key = null;
+          st.accounts[login.platform] = { logged_in: true, name: r.name };
+          delete st.playFailed[st.sel];
+          loginAccount();
+          render();  // 正在看这个平台的选手：马上换成 Evo 自己的播放器
+        } else if (r.state === "waiting" || r.state === "scanned") {
+          if (r.state === "scanned") loginShow("扫到了，请在手机上点确认。", { qr: true });
+          login.timer = setTimeout(loginPoll, 2000);
+        } else {
+          login.key = null;
+          loginShow(r.state === "expired" ? "二维码过期了，换一个再扫。" : "登录没成功，换一个二维码再试。", { refresh: true });
+        }
+      }).catch(function () { login.timer = setTimeout(loginPoll, 3000); });
+    }
+    function loginQr() {
+      clearTimeout(login.timer);
+      login.key = null;
+      loginShow("正在向" + login.name + "要二维码…");
+      post(data.login[login.platform].start).then(function (r) {
+        if (!loginDialog.open) return;
+        if (!r.ok) { loginShow("没要到二维码：" + (r.detail || "连不上"), { refresh: true }); return; }
+        login.key = r.key;
+        $("login-qr").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(r.svg);  // 当图片显示，不当网页的一部分
+        loginShow("请用" + login.name + " App 扫码：打开手机" + login.name + " → 我的 → 扫一扫。", { qr: true });
+        login.timer = setTimeout(loginPoll, 2000);
+      }).catch(function () { loginShow("没要到二维码：连不上 Evo。", { refresh: true }); });
+    }
+    function openLogin(platform, name) {
+      login.platform = platform;
+      login.name = name;
+      $("h-login").textContent = name + "扫码登录";
+      $("login-note").textContent = "登录以后能在 Evo 里看" + name + "的原画。登录信息只存在这台电脑上（加密保存），Evo 只用它向" + name + "要播放地址。";
+      loginDialog.showModal();
+      if (loggedIn(platform)) loginAccount(); else loginQr();
+    }
+    $("login-close").addEventListener("click", function () { loginDialog.close(); });
+    $("login-refresh").addEventListener("click", loginQr);
+    $("login-logout").addEventListener("click", function () {
+      post(data.login[login.platform].logout).catch(function () { return null; }).then(function () {
+        st.accounts[login.platform] = { logged_in: false, name: "" };
+        loginDialog.close();
+        render();  // 回到平台官方的播放器
+      });
+    });
+    loginDialog.addEventListener("close", function () { clearTimeout(login.timer); login.key = null; });
+    loginDialog.addEventListener("click", function (e) { if (e.target === loginDialog) loginDialog.close(); });  // 点弹窗外面
+    $("watch-login").addEventListener("click", function () {
+      var p = st.sel ? byId[st.sel] : null;
+      if (p && data.login[p.platform]) openLogin(p.platform, p.platform_name);
+    });
 
     function renderApex() {
       var playing = /^(embed|play):/.test(st.stageKey || "");

@@ -32,9 +32,15 @@
       "batch_url": "https://api.live.bilibili.com/xlive/web-room/v1/index/getRoomBaseInfo?req_biz=web_room_componet",
       "batch_size": 30,
       "embed_url": "https://www.bilibili.com/blackboard/live/live-activity-player.html?cid={room}&quality=1",
+      "player": "direct",
+      "play_api": "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?protocol=0&format=0&codec=0&platform=web",
+      "qr_generate_url": "https://passport.bilibili.com/x/passport-login/web/qrcode/generate?source=main-fe-header",
+      "qr_poll_url": "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?source=main-fe-header",
+      "nav_url": "https://api.bilibili.com/x/web-interface/nav",
+      "logout_url": "https://passport.bilibili.com/login/exit/v2",
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
       "referer": "https://live.bilibili.com/",
-      "_说明": "batch_url 一次查多个房间（后面接 &room_ids=…）。回的 data.by_room_ids 按真实房间号列，短号在 short_id 里；不存在的房间不在里面。live_status 1 = 在播、2 = 轮播；live_time 是北京时间。embed_url 是 B站官方的嵌入播放器（看直播页放在 iframe 里；有 embed_url 的平台才能在 Evo 窗口里播）。quality=1 是在它的控制条上显示切换画质和线路的按钮（0 是藏起来，不是选哪一档）；不登录 B站 最高只给超清（720p），要更高得登录"
+      "_说明": "batch_url 一次查多个房间（后面接 &room_ids=…）。回的 data.by_room_ids 按真实房间号列，短号在 short_id 里；不存在的房间不在里面。live_status 1 = 在播、2 = 轮播；live_time 是北京时间。embed_url 是 B站官方的嵌入播放器（看直播页放在 iframe 里；有 embed_url 的平台才能在 Evo 窗口里播）。quality=1 是在它的控制条上显示切换画质和线路的按钮（0 是藏起来，不是选哪一档）；不登录 B站 最高只给超清（720p），要更高得登录。player = direct：玩家登录了 B站以后用 Evo 自己的播放器播，页面直接连 B站的视频服务器、不经过本机中转（play_api 取地址，后面接 &room_id=…&qn=…，code/watch_bilibili.py）；没登录的照旧用 embed_url。扫码登录（code/bili_login.py）：qr_generate_url 要二维码、qr_poll_url 问扫了没有（后面接 &qrcode_key=…）、nav_url 问登录着没有和昵称、logout_url 退出登录"
     },
     "douyin": {
       "name": "抖音",
