@@ -1,0 +1,18 @@
+# Evo 赛事数据的协作网页（Cloudflare Worker），说明见 worker.js。部署：cd server/team && wrangler deploy
+name = "evo-team"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+workers_dev = false  # 只用自己的域名（国内连不上 workers.dev）
+preview_urls = false
+
+routes = [
+  { pattern = "team.evotracker.cn", custom_domain = true },
+]
+
+# 成员和以后的赛事数据都存在这个不公开的存储桶里（不是放安装包的 evotracker，那个是公开的）
+[[r2_buckets]]
+binding = "DATA"
+bucket_name = "evo-team"
+
+[observability]
+enabled = false  # 不记请求日志（里面会有 IP 地址）

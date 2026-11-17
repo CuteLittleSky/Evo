@@ -64,8 +64,11 @@ SECTIONS = [
         "code/sounds.py",
         "code/webview2.py", "code/update_check.py", "code/update_patch.py", "code/updater.py", "code/mirrorchyan.py",
         "code/telemetry.py", "code/notice_check.py",
-        ("server/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
-                    "wrangler.toml 部署配置")]),
+        ("server/stats/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
+                          "wrangler.toml 部署配置"),
+        ("server/team/", "赛事数据的协作网页 team.evotracker.cn（Cloudflare Worker + 不公开的 R2）：worker.js 路由，"
+                         "auth.js 成员、邀请链接、登录，pages.js 页面，test.mjs 测试（node server/team/test.mjs），"
+                         "wrangler.toml 部署配置")]),
     ("测试工具（给玩家的 Evo测试工具.exe）", None, [
         "code/evo_tester.py", "code/tester_window.py", "code/tester_capture.py", "code/tester_info.py",
         "code/tester_projects.py", "code/tester_answers.py"]),
@@ -75,7 +78,7 @@ SECTIONS = [
                      "`tests/test_cloud_sync.py`、`tools/cloud_ping.py`"),
     ("开发用的脚本（tools/）", "打包、安装、发布", [
         "tools/build.py", "tools/evo.spec", "tools/install.py", "tools/release.py", "tools/publish.py",
-        "tools/cos.py", "tools/notice.py", "tools/esports.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
+        "tools/cos.py", "tools/notice.py", "tools/esports.py", "tools/team.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
         (".github/workflows/", "GitHub Actions（Mirror酱 提的 PR #4）：发 GitHub Release 时把压缩包和更新日志传给 Mirror酱"
                                "（国内渠道）；读的是 tag 指向的那个提交里的这两个文件")]),
     ("开发用的脚本（tools/）", "做素材", [
