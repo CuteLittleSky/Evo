@@ -2,7 +2,7 @@
 
 - 导航里有"赛事"，在"赛季"和"设置"之间；这一页打开时"赛事"是选中的
 - 三块：正在进行（卡片：进行中、类型、开始时间、名称、阶段和队伍数、"看直播"按钮）、即将开始（先开始的在前，
-  "开始后可以看直播"）、最近结束（"已结束"，超过 7 天的不显示）；最下面一行小字
+  每行有"看名单和直播"按钮：没开始也能点进去）、最近结束（"已结束"，不能点，超过 7 天的不显示）；最下面一行小字
 - 没有正在进行的：写下一场什么时候开始；即将开始、最近结束没有就不显示那一块
 - 没读到：一次都没读到过写"没有读到"；读到过、这次没连上，显示上次的并说明
 - 几位选手在播（GET /esports/live）：只查正在进行的赛事名单里的选手；60 秒内再问不重查；没查到的单独数
@@ -91,10 +91,16 @@ def main():
         and f"{panel_esports.day_text(start, NOW)} {start:%H:%M} 开始" in first
         and 'href="/esports/live1/watch"' in cards[0] and "1 支队伍" in text(cards[1]) and "，1 支队伍" not in text(cards[1]))
     rows = [text(r) for r in re.findall(r"<li.*?</li>", upcoming, re.S)]
-    out["即将开始：一行一场，先开始的在前，写日期、钟点、名称、阶段、队伍数和\"开始后可以看直播\""] = (
+    out["即将开始：一行一场，先开始的在前，写日期、钟点、名称、阶段、队伍数"] = (
         len(rows) == 2 and "两小时后" in rows[0] and "三天后的杯赛" in rows[1] and "杯赛 · 决赛" in rows[1]
-        and all("开始后可以看直播" in r and "2 支队伍" in r for r in rows)
-        and f"{NOW + timedelta(days=3):%m-%d} 周" in rows[1] and "看直播</a>" not in upcoming)
+        and all("2 支队伍" in r for r in rows) and f"{NOW + timedelta(days=3):%m-%d} 周" in rows[1])
+    links = re.findall(r'<a class="btn es-row-btn" href="([^"]+)"\s+aria-label="([^"]+)">([^<]+)</a>', upcoming)
+    soon3 = NOW + timedelta(days=3)
+    out["即将开始的也能点进去看名单和直播（没开始也能看选手赛前的直播）；按钮念出来带赛事名和时间；最近结束的不能点"] = (
+        [(href, word) for href, _, word in links] == [("/esports/soon1/watch", "看名单和直播"), ("/esports/soon2/watch", "看名单和直播")]
+        and links[1][1] == f"看名单和直播：三天后的杯赛，{soon3:%m-%d} {soon3:%H:%M} 开始"
+        and "开始后可以看直播" not in raw and "<a " not in recent
+        and client.get("/esports/soon1/watch").status_code == 200)
     ended = [text(r) for r in re.findall(r"<li.*?</li>", recent, re.S)]
     out["最近结束：灰色，写\"已结束\"；结束超过 7 天的不显示"] = (
         len(ended) == 1 and "昨天的联赛" in ended[0] and "已结束" in ended[0] and "es-ended" in recent

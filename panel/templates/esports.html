@@ -4,8 +4,10 @@
 {# "赛事"页面（panel_esports.py，2026-11-17 用户定的）：正在进行（卡片）、即将开始、最近结束（一行一场）。
    赛程是开发者手动维护的 esports.json；"几位选手在播"晚一点才到（下面的脚本问 /esports/live），位置先留好，不让卡片跳 #}
 
-{# 即将开始、最近结束的一行：日期和钟点、名称和阶段、队伍数、右边一句话 #}
-{% macro row(e, note) %}
+{# 即将开始、最近结束的一行：日期和钟点、名称和阶段、队伍数、右边一句话。
+   即将开始的（watch）右边换成"看名单和直播"按钮（2026-11-17 用户要求：没开始也能点进去，赛前练习、打排位也值得看）；
+   描边的按钮，比正在进行的红色"看直播"低一级。按钮上的字每行一样，所以读屏软件念的名字里带上赛事名和时间 #}
+{% macro row(e, note, watch=false) %}
 <li class="es-row">
   <div>
     <div class="es-row-day">{{ e.day }} {{ e.weekday }}</div>
@@ -16,7 +18,11 @@
     <div class="es-row-sub es-ell">{{ e.type }}{% if e.stage %} · {{ e.stage }}{% endif %}</div>
   </div>
   <div class="es-row-teams"><span class="num">{{ e.teams }}</span> 支队伍</div>
-  <div class="es-row-note">{{ note }}</div>
+  <div class="es-row-note">
+    {%- if watch %}<a class="btn es-row-btn" href="{{ url_for('esports.watch', event_id=e.id) }}"
+       aria-label="看名单和直播：{{ e.name }}，{{ e.day }} {{ e.time }} 开始">{{ note }}</a>
+    {%- else %}{{ note }}{% endif -%}
+  </div>
 </li>
 {% endmacro %}
 
@@ -68,7 +74,7 @@
 <section class="es-section" aria-labelledby="h-es-upcoming">
   <h2 id="h-es-upcoming">即将开始</h2>
   <ul class="card es-list">
-    {% for e in upcoming %}{{ row(e, "开始后可以看直播") }}{% endfor %}
+    {% for e in upcoming %}{{ row(e, "看名单和直播", watch=true) }}{% endfor %}
   </ul>
 </section>
 {% endif %}

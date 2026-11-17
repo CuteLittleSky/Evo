@@ -1113,6 +1113,8 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .es-row-sub, .es-row-teams, .es-row-note { font-size: 13px; color: var(--muted); }
 .es-row-teams .num { color: inherit; }
 .es-row-note { text-align: right; }
+.es-row-btn { padding: 6px 12px; font-size: 13px; }  /* 即将开始的"看名单和直播"：描边按钮，比红色的"看直播"低一级 */
+.es-row-btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
 .es-ended { color: var(--muted); }  /* 最近结束：整行灰色（--muted 在卡片上深色 7:1、浅色 5.9:1） */
 @media (max-width: 760px) {
   .es-row { grid-template-columns: 96px minmax(0, 1fr); }
