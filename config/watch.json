@@ -1,0 +1,47 @@
+{
+  "_说明": "赛事页、看直播（code/live_status.py、code/esports_data.py）：四个直播平台的名字、直播间地址、查房间的接口和请求头。和识别游戏画面无关。平台改了接口先改这里",
+  "timeout": 10,
+  "_说明_timeout": "每个请求最多等几秒",
+  "parallel": 4,
+  "_说明_parallel": "查开播状态时同时最多发几个请求（用户定的：要克制）",
+  "platforms": {
+    "douyu": {
+      "name": "斗鱼",
+      "room_url": "https://www.douyu.com/{room}",
+      "info_url": "https://www.douyu.com/betard/{room}",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      "missing_text": "该房间目前没有开放",
+      "_说明": "info_url 回一份 JSON（约 120 KB），room 里：show_status 1 = 在播，videoLoop / isLoop 1 = 轮播（不算在播），show_time = 开播时刻。房间不存在时回一个网页（missing_text）或 404"
+    },
+    "huya": {
+      "name": "虎牙",
+      "room_url": "https://www.huya.com/{room}",
+      "info_url": "https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid={room}&showSecret=1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+      "referer": "https://www.huya.com/",
+      "origin": "https://www.huya.com",
+      "_说明": "info_url 只认数字房间号。status 200 = 有这个房间（data.liveStatus：ON 在播、REPLAY 轮播、OFF 没开播；liveData.startTime 开播时刻），422 = 该主播不存在"
+    },
+    "bilibili": {
+      "name": "B站",
+      "room_url": "https://live.bilibili.com/{room}",
+      "batch_url": "https://api.live.bilibili.com/xlive/web-room/v1/index/getRoomBaseInfo?req_biz=web_room_componet",
+      "batch_size": 30,
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      "referer": "https://live.bilibili.com/",
+      "_说明": "batch_url 一次查多个房间（后面接 &room_ids=…）。回的 data.by_room_ids 按真实房间号列，短号在 short_id 里；不存在的房间不在里面。live_status 1 = 在播、2 = 轮播；live_time 是北京时间"
+    },
+    "douyin": {
+      "name": "抖音",
+      "room_url": "https://live.douyin.com/{room}",
+      "page_url": "https://live.douyin.com/{room}",
+      "page_max_bytes": 3000000,
+      "info_url": "https://webcast.amemv.com/webcast/room/reflow/info/",
+      "info_params": [["type_id", "0"], ["live_id", "1"], ["version_code", "99.99.99"], ["app_id", "1128"]],
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400",
+      "referer": "https://live.douyin.com/",
+      "blocked_text": ["verify_data", "验证码中间页"],
+      "_说明": "两步：先开直播间网页（约 1 MB，读到内部房间号就停；顺便收下游客 Cookie ttwid，只留在内存里），再用内部房间号问 info_url（参数后面接 room_id、msToken，带 a_bogus 签名，code/abogus.py）。room.status 2 = 在播、4 = 没开播。user_agent 参与签名，要和请求头一样"
+    }
+  }
+}

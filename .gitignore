@@ -16,6 +16,8 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+# 赛事数据的两张表（tools/esports.py 读它们生成 esports.json）：里面是职业选手的直播间房间号，只留在本机（2026-11-17 用户决定）
+esports/
 # 托盘程序的运行记录
 logs/
 # Evo 窗口（WebView2）的本地存储（记住主题等）

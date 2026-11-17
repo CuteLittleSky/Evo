@@ -18,6 +18,7 @@ import test_aspect
 import test_data_move
 import test_tester
 import test_eliminated
+import test_esports
 import test_follow
 import test_english
 import test_game_lang
@@ -79,6 +80,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "总览页\"关注我\"（B 站、小黑盒、Evo 官网）、右上角派圈助手、设置页支持我和鸣谢卡片": test_follow,
          "总览页的地图轮换（下载、中文名、倒计时、过了点、连不上、设置页的开关）": test_map_rotation,
          "开发者公告（和检查新版本共用开关、读公告、显示规则、托盘提醒、提示条）": test_notice,
+         "赛事数据（赛事文件的格式和下载、查开播状态、抖音签名、发赛事数据的脚本）": test_esports,
          "最常用武器（认武器、计时、记进数据库、数据页）": test_weapons,
          "匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、Evo 的占用、连不上、面板）": test_telemetry,
          "Evo 占用（读进程、现在的、对局中最近 10 局、右上角）": test_usage,

@@ -51,6 +51,7 @@ SECTIONS = [
     ("页面", "程序", [
         "code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/radar.py",
         "code/global_stats.py", "code/map_rotation.py"]),
+    ("页面", "赛事、看直播", ["code/esports_data.py", "code/live_status.py", "code/abogus.py"]),
     ("页面", "模板（panel/templates/）", ["panel/templates/*.html", "panel/templates/share/*.svg"]),
     ("页面", "图片、字体", [
         ("panel/static/", "样式表 style.css、字体，图标（legends/ 传奇头像由 tools/legend_icons.py 生成、ranks/ 段位、"
@@ -73,7 +74,7 @@ SECTIONS = [
                      "`tests/test_cloud_sync.py`、`tools/cloud_ping.py`"),
     ("开发用的脚本（tools/）", "打包、安装、发布", [
         "tools/build.py", "tools/evo.spec", "tools/install.py", "tools/release.py", "tools/publish.py",
-        "tools/cos.py", "tools/notice.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
+        "tools/cos.py", "tools/notice.py", "tools/esports.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
         (".github/workflows/", "GitHub Actions（Mirror酱 提的 PR #4）：发 GitHub Release 时把压缩包和更新日志传给 Mirror酱"
                                "（国内渠道）；读的是 tag 指向的那个提交里的这两个文件")]),
     ("开发用的脚本（tools/）", "做素材", [
