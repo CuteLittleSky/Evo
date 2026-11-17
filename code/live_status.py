@@ -9,7 +9,8 @@
 每个房间的结果：{"state": "live" 在播 / "offline" 没开播 / "missing" 房间不存在 / "error" 没查到,
                 "loop": 是不是在轮播（算没开播）, "name": 平台上的主播名, "title": 直播标题, "avatar": 头像地址,
                 "since": 开播时刻（time.time() 那种秒数，不知道是 None）, "error": 没查到的原因}
-房间号只接受数字：esports.json 被人改了也只能让 Evo 去问这几个平台的直播间，不能让它连别的地址。
+房间号只接受数字；抖音还可以写主播的抖音号（字母、数字、下划线，config/watch.json 里的 room_pattern）：
+esports.json 被人改了也只能让 Evo 去问这几个平台的直播间，不能让它连别的地址（room_ok()）。
 
 用法：python code/live_status.py 斗鱼 9999 B站 6   → 查这几个房间并打印
 """
@@ -34,7 +35,9 @@ PLATFORMS = CONFIG["platforms"]
 NAMES = {key: platform["name"] for key, platform in PLATFORMS.items()}  # {"douyu": "斗鱼", ...}
 LIVE, OFFLINE, MISSING, ERROR = "live", "offline", "missing", "error"
 BEIJING = timezone(timedelta(hours=8))
-ROOM_RE = re.compile(r"\d{1,24}")
+ROOM_RE = re.compile(r"\d{1,24}")  # 房间号：只能是数字（配置里没写 room_pattern 的平台）
+# 每个平台的房间号可以怎么写：抖音还收字母和下划线（主播的抖音号），拼不出 / ? # 这些能指到别处的字符
+ROOM_RES = {key: re.compile(platform.get("room_pattern") or ROOM_RE.pattern) for key, platform in PLATFORMS.items()}
 DOUYIN_ROOM_ID = re.compile(rb'\\"roomId\\":\\"(\d{10,})\\"|"roomId":"(\d{10,})"|\\"room_id\\":\\"(\d{10,})\\"')
 MAX_BYTES = 1_000_000
 CHUNK = 64 * 1024
@@ -51,9 +54,14 @@ class StatusError(Exception):
         self.status = status
 
 
+def room_ok(platform, room):
+    """这个平台的房间号写得对不对（平台不认识也算不对）。"""
+    return platform in ROOM_RES and isinstance(room, str) and ROOM_RES[platform].fullmatch(room) is not None
+
+
 def room_url(platform, room):
     """这个直播间的网页地址（给"去 X 看"用）；平台、房间号不对返回 None。"""
-    if platform not in PLATFORMS or not ROOM_RE.fullmatch(str(room)):
+    if not room_ok(platform, str(room)):
         return None
     return PLATFORMS[platform]["room_url"].format(room=room)
 
@@ -302,7 +310,7 @@ def query(players, get=None):
     wanted = {}  # (平台, 房间号) → 结果
     for player in players:
         key = (player.get("platform"), str(player.get("room")))
-        if key[0] not in CHECKERS or not ROOM_RE.fullmatch(key[1]):
+        if key[0] not in CHECKERS or not room_ok(key[0], key[1]):
             wanted[key] = result(ERROR, error="平台或房间号写得不对")
         else:
             wanted.setdefault(key, None)

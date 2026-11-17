@@ -79,6 +79,14 @@ def format_checks(out):
     out["选手、赛事写错的那一条去掉（id、平台、房间号、时间、类型……），不影响别的"] = (
         [p["id"] for p in cleaned["players"]] == ["ok"] and cleaned["players"][0]["name"] == "示例选手"
         and [e["id"] for e in cleaned["events"]] == ["ok"])
+    rooms = [player(pid="a", platform="douyin", room="xxfps"), player(pid="b", platform="douyin", room="NOVA_Tt1seven"),
+             player(pid="c", platform="douyin", room="197427647791"), player(pid="d", platform="douyin", room="a.b"),
+             player(pid="e", platform="douyin", room="a/b"), player(pid="f", platform="douyin", room="a?b=1"),
+             player(pid="g", platform="douyin", room="x" * 25), player(pid="h", platform="douyin", room=""),
+             player(pid="i", platform="douyu", room="xxfps"), player(pid="j", platform="huya", room="lck"),
+             player(pid="k", platform="bilibili", room="6a"), player(pid="l", platform="douyin", room=123)]
+    out["抖音的房间号还可以是主播的抖音号（字母、数字、下划线）；带点、斜杠、问号、太长的不收；别的平台照旧只能是数字"] = (
+        [p["id"] for p in esports_data.clean(file(rooms))["players"]] == ["a", "b", "c"])
     broken = 0
     for data in ([], {"version": 2, "players": [], "events": []}, {"version": 1, "players": []}, None):
         try:
@@ -283,7 +291,12 @@ def query_checks(out):
     live_status._douyin_inner.clear()
     out["直播间地址只按配置拼，房间号不对就没有地址"] = (
         live_status.room_url("bilibili", "6") == "https://live.bilibili.com/6"
-        and live_status.room_url("douyu", "9/../x") is None and live_status.room_url("kuaishou", "1") is None)
+        and live_status.room_url("douyu", "9/../x") is None and live_status.room_url("kuaishou", "1") is None
+        and live_status.room_url("douyin", "Smallfishuwu") == "https://live.douyin.com/Smallfishuwu"
+        and live_status.room_url("douyin", "a.b/../x") is None and live_status.room_url("douyu", "abc") is None)
+    odd = live_status.query([{"id": "1", "platform": "douyin", "room": "a.b"}, {"id": "2", "platform": "huya", "room": "lck"}],
+                            get=lambda *args, **more: (_ for _ in ()).throw(AssertionError("不该联网")))
+    out["房间号写得不对的不去问平台"] = all(found["state"] == live_status.ERROR for found in odd.values())
 
 
 def sign_checks(out):
@@ -361,6 +374,20 @@ def tool_checks(out):
     if missing:
         print("    没指出来的：", missing)
     out["每种写错都指出是哪个文件第几行，一次全列出来，不生成文件"] = code == 1 and data is None and not missing
+    letters = ["阿一,字母队,抖音,XXFPS,", "阿二,字母队,抖音,NOVA_Tt1seven,", "阿三,字母队,抖音,197427647791,"]
+    one_event = [f"训练赛,训练赛,,{day(0, '19:00')},{day(0, '23:00')},字母队"]
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(folder, letters, one_event)
+    out["抖音的房间号可以写主播的抖音号，生成时转成小写（抖音不分大小写）"] = (
+        code == 0 and data is not None and [(p["id"], p["room"]) for p in data["players"]] == [
+            ("douyin-xxfps", "xxfps"), ("douyin-nova_tt1seven", "nova_tt1seven"), ("douyin-197427647791", "197427647791")]
+        and esports_data.clean(data)["players"] == data["players"])
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(folder, ["阿一,字母队,抖音,XXFPS,", "阿二,字母队,抖音,xxfps,", "阿三,字母队,抖音,a.b,",
+                                             "阿四,数字队,斗鱼,xxfps,", "阿五,数字队,虎牙,1,", "阿六,数字队,B站,2,"], one_event)
+    out["抖音大小写不同的同一个房间查得出来；带点的、别的平台写字母的照样不行"] = (
+        code == 1 and data is None and "第 3 行：抖音 房间 xxfps 在第 2 行已经写过" in text
+        and "第 4 行：房间号「a.b」只能是字母、数字、下划线" in text and "第 5 行：房间号「xxfps」只能是数字" in text)
     with tempfile.TemporaryDirectory() as folder:
         code, text, data = run_tool(folder, roster, schedule)
         (Path(folder) / "赛程.csv").write_text("名字,类型\n", encoding="utf-8")

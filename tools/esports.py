@@ -10,7 +10,7 @@
     python tools/esports.py --init          esports/ 里还没有表时，建两张示例表和一份填写说明
 
 两张表在 E:\\Evo\\esports\\（不进 git：里面是别人的房间号），用 Excel 或 WPS 改，存成 CSV；GBK、UTF-8 都认。
-- 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名。平台只能写 斗鱼 / 虎牙 / B站 / 抖音；房间号只写数字；最后一列可以空
+- 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名。平台只能写 斗鱼 / 虎牙 / B站 / 抖音；房间号只写数字（抖音的也可以写主播的抖音号：字母、数字、下划线，存的时候转成小写）；最后一列可以空
 - 赛程.csv：名称,类型,阶段,开始,结束,队伍。类型是 联赛 / 训练赛 / 杯赛；时间写北京时间 2026-11-17 19:00；
   队伍用顿号「、」隔开，每个队名都要在选手库里、正好 3 个人
 有错就指出是哪个文件第几行，不上传。结束超过 7 天的赛事不放进去（赛事页只显示最近 7 天的）；选手只放这些赛事用到的。
@@ -51,7 +51,8 @@ GUIDE = """赛事数据怎么填（python tools/esports.py --init 生成的说�
 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名
   - 一个选手一行；一支队正好 3 个人；一个选手只能在一支队
   - 平台只能写：斗鱼 / 虎牙 / B站 / 抖音
-  - 房间号只写数字，就是直播间地址最后那串数字（虎牙要数字房间号，不要写英文别名）
+  - 房间号只写数字，就是直播间地址最后那串数字（虎牙要数字房间号，不要写英文别名）。
+    抖音的地址 live.douyin.com/ 后面有的是字母（主播的抖音号，如 xxfps），照着写就行，大小写都可以
   - Liquipedia页面名可以空着
   - 只有转会、换平台时才改
 
@@ -129,7 +130,12 @@ def check_players(rows, errors):
         if platform and platform not in PLATFORM_KEYS:
             errors.append(f"{where}：平台「{platform}」不认识，只能写 {' / '.join(PLATFORM_KEYS)}")
             bad = True
-        if room and not live_status.ROOM_RE.fullmatch(room):
+        if room and platform == "抖音" and live_status.room_ok("douyin", room):
+            room = room.lower()  # 抖音不分大小写：转成小写，XXFPS 和 xxfps 才查得出是同一个房间，选手的 id 也不会变
+        elif room and platform == "抖音":
+            errors.append(f"{where}：房间号「{room}」只能是字母、数字、下划线（直播间地址 live.douyin.com/ 后面那一段）")
+            bad = True
+        elif room and not live_status.ROOM_RE.fullmatch(room):
             errors.append(f"{where}：房间号「{room}」只能是数字（直播间地址最后那串数字）")
             bad = True
         if max(len(name), len(team)) > 40:

@@ -46,6 +46,7 @@
       "name": "抖音",
       "room_url": "https://live.douyin.com/{room}",
       "page_url": "https://live.douyin.com/{room}",
+      "room_pattern": "[A-Za-z0-9_]{1,24}",
       "page_max_bytes": 3000000,
       "player": "direct",
       "default_max_bitrate": 9000000,
@@ -54,7 +55,7 @@
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400",
       "referer": "https://live.douyin.com/",
       "blocked_text": ["verify_data", "验证码中间页"],
-      "_说明": "两步：先开直播间网页（约 1 MB，内部房间号在最后；在播的房间记着这一场的内部房间号，下次不用再开网页；顺便收下游客 Cookie ttwid，只留在内存里），再用内部房间号问 info_url（参数后面接 room_id、msToken，带 a_bogus 签名，code/abogus.py）。room.status 2 = 在播、4 = 没开播。user_agent 参与签名，要和请求头一样。player = direct：用 Evo 自己的播放器播，页面直接连抖音的视频服务器、不经过本机中转（取地址 code/watch_douyin.py：各档的地址就在 info_url 的回包里，只要 H.264 的）。default_max_bitrate：玩家没选过清晰度时，要码率（比特每秒）不超过这个数的最好一档（9000000 = 一般是 1080p60 8 Mbps 那一档；原画有的房间 15–20 Mbps）；写 0 是不限、要最好的"
+      "_说明": "两步：先开直播间网页（约 1 MB，内部房间号在最后；在播的房间记着这一场的内部房间号，下次不用再开网页；顺便收下游客 Cookie ttwid，只留在内存里），再用内部房间号问 info_url（参数后面接 room_id、msToken，带 a_bogus 签名，code/abogus.py）。room.status 2 = 在播、4 = 没开播。user_agent 参与签名，要和请求头一样。player = direct：用 Evo 自己的播放器播，页面直接连抖音的视频服务器、不经过本机中转（取地址 code/watch_douyin.py：各档的地址就在 info_url 的回包里，只要 H.264 的）。room_pattern：房间号可以怎么写（没写这一项的平台只能是数字）。抖音的直播间地址 live.douyin.com/ 后面除了数字房间号，也可以是主播的抖音号（字母、数字、下划线，不分大小写；2026-11-18 实测两种写法读出来的是同一场直播）；带点的抖音号没试过，不收。default_max_bitrate：玩家没选过清晰度时，要码率（比特每秒）不超过这个数的最好一档（9000000 = 一般是 1080p60 8 Mbps 那一档；原画有的房间 15–20 Mbps）；写 0 是不限、要最好的"
     }
   }
 }

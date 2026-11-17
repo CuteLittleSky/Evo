@@ -12,7 +12,8 @@ esports.json 由 tools/esports.py 从两张 CSV 表生成、上传：
      "events": [{"id": "20261117-1900-league", "name": "亚太北区职业联赛 第 3 周", "type": "联赛", "stage": "B 组对 C 组",
                  "start": "2026-11-17T19:00:00+08:00", "end": "2026-11-17T23:00:00+08:00", "teams": ["星火电竞", …]}]}
 - platforms：远程开关。某个平台是 false，Evo 就不在窗口里播它，改成"去 X 看"。没写的平台当作 true
-- players：id 只有字母、数字、- 和 _；platform 是 config/watch.json 里的四个之一；room 只能是数字
+- players：id 只有字母、数字、- 和 _；platform 是 config/watch.json 里的四个之一；room 只能是数字，
+  抖音的还可以是主播的抖音号（字母、数字、下划线；live_status.room_ok()）
 - events：type 是 联赛 / 训练赛 / 杯赛；start、end 带时区，end 晚于 start；teams 是队名，对应 players 里的 team
 - "进行中 / 即将开始 / 已结束"按 start、end 和电脑上的时间算（status()），不用手动改
 格式不对的那一条去掉，不影响别的；整个文件不对（不是 JSON、version 不认识）当作没读到。
@@ -78,7 +79,7 @@ def clean_player(raw):
     platform, room = raw.get("platform"), raw.get("room")
     if not isinstance(pid, str) or not ID_RE.fullmatch(pid) or name is None or team is None:
         return None
-    if platform not in live_status.PLATFORMS or not isinstance(room, str) or not live_status.ROOM_RE.fullmatch(room):
+    if not isinstance(platform, str) or not live_status.room_ok(platform, room):
         return None
     return {"id": pid, "name": name, "team": team, "platform": platform, "room": room,
             "liquipedia": _text(raw.get("liquipedia"), 100, required=False) or ""}

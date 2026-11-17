@@ -13,6 +13,8 @@
 - 没选过清晰度（或者选的那一档这个房间没有）：要码率不超过 config/watch.json 里 default_max_bitrate 的最好一档。
   原画有的房间有 15–20 Mbps，和 8 Mbps 的 1080p60 看着差不多、流量多一倍；想看原画的自己在菜单里选
 
+房间号可以是数字的，也可以是主播的抖音号（live.douyin.com/ 后面那一段，两种读出来的是同一场直播）。
+
 用法：python code/watch_douyin.py 房间号 [档]   → 打印清晰度和地址（地址里的参数不打印）
 """
 
@@ -153,7 +155,7 @@ def mask(url):
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    if len(sys.argv) < 2 or not live_status.ROOM_RE.fullmatch(sys.argv[1]):
+    if len(sys.argv) < 2 or not live_status.room_ok("douyin", sys.argv[1]):
         raise SystemExit(__doc__)
     try:
         result = resolve(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
