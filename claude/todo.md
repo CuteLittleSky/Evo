@@ -81,7 +81,12 @@
     - 点「发布」时跑 `tools/esports.py` 现在那套检查，再写 R2 上的 `esports.json`（格式不变，Evo 不用改）
     - Liquipedia 定时抓：Key 放 Worker 的机密变量，每小时最多 20–30 次（和派圈云端的定时器共用每小时 60 次）
   - 还没问清：协作的有谁、各能做什么（只看 / 能改 / 能发布）
-  - 11-17 告诉了「赛事页和看直播」那个窗口，问它后面几步会不会改 `esports.json` 的格式、`tools/esports.py` 的检查规则
+  - 「赛事页和看直播」窗口 11-17 回复：它后面几步都不改 `esports.json` 的格式和 `tools/esports.py` 的检查。要照着做的几条：
+    - 规矩以 `code/esports_data.py` 的 `clean_*` 和 `tools/esports.py` 的 `check_*` / `build` 为准；生成以后照 `clean()` 再过一遍，数量对不上就不发布
+    - 发布时 `platforms`（平台开关）照线上原样带着，不能冲掉：出事时不发版就能关掉一个平台，靠的只有它
+    - 正式的 `esports.json` 还没传过（只有 `esports_test.json`）：第一次写正式文件前先问用户
+    - 选手资料不放进 `esports.json`（赛事页开着时每 10 分钟下载一次，要小）：另放一个文件，用 players 里已有的 `liquipedia` 字段（页面名）对上；Evo 要显示时找那个窗口
+    - 动 `code/esports_data.py`、`tools/esports.py` 之前先跟那个窗口说
 
 ## 一、先做
 
