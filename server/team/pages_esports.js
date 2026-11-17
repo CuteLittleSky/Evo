@@ -41,8 +41,8 @@ function playerForm(action, p, teamNames, submit) {
       <label class="field">房间号<span class="help">直播间地址最后那一段：一般是数字；抖音也可以是主播的抖音号（字母、数字、下划线）</span>
         <input class="input" name="room" value="${escape(p.room)}" maxlength="24" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     </div>
-    <label class="field">Liquipedia 页面名<span class="help">可以空着，比如 Panic_(American_player)</span>
-      <input class="input" name="liquipedia" value="${escape(p.liquipedia)}" maxlength="100" autocomplete="off"></label>
+    <label class="field">Liquipedia 页面名<span class="help">可以空着；贴 Liquipedia 选手页的网址就行，会自动存成页面名（比如 Panic_(American_player)）</span>
+      <input class="input" name="liquipedia" value="${escape(p.liquipedia)}" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <div><button class="btn btn-primary" type="submit">${submit}</button></div>
   </form>`;
 }

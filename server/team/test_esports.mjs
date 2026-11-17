@@ -78,6 +78,18 @@ check("斗鱼写字母 → 提示只能是数字", r.status === 400 && r.text.in
 r = await editor.get("/players");
 check("房间号输入框不限只填数字（抖音号要能填）、链接是小写", !r.text.includes('pattern="[0-9]{1,24}"') && r.text.includes("https://live.douyin.com/xxfps"));
 await editor.post(`/players/${handle.id}/delete`);
+r = await add(editor, "贴网址", "临时队", "douyu", "7001", "https://liquipedia.net/apexlegends/Panic_%28American_player%29");
+const pasted = playerList().find((x) => x.name === "贴网址");
+check("Liquipedia 贴网址 → 存成页面名", r.location === "/players?ok=added" && pasted.liquipedia === "Panic_(American_player)");
+r = await add(editor, "乱填", "临时队", "douyu", "7002", "https://example.com/x");
+check("别的网站的网址 → 提示看不懂", r.status === 400 && r.text.includes("看不懂 Liquipedia 页面名"));
+// 11-18 以前存进去的整个网址：读的时候转成页面名
+const raw = JSON.parse(env.DATA.objects.get(PLAYERS).body);
+raw.items.find((x) => x.name === "贴网址").liquipedia = "https://liquipedia.net/apexlegends/3Mz";
+await env.DATA.put(PLAYERS, JSON.stringify(raw));
+r = await editor.get("/players");
+check("以前存的网址读出来是页面名", r.text.includes("Liquipedia：3Mz") && !r.text.includes("Liquipedia：https://"));
+await editor.post(`/players/${pasted.id}/delete`);
 r = await add(editor, "x".repeat(41), "北辰", "douyu", "5");
 check("名字超过 40 个字 → 提示", r.status === 400 && r.text.includes("最多 40 个字"));
 r = await add(editor, "新人", "北辰", "youtube", "5");

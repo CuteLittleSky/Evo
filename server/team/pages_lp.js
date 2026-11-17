@@ -19,7 +19,7 @@ function statusCard(me, p, keySet, now) {
   const round = !keySet
     ? `<p class="note note-error">还没配 Liquipedia 的 Key，现在什么都不会抓。管理员在电脑上配一次就行（见 docs/底座.md"协作网页"）。</p>`
     : p.running
-      ? `<p>正在抓：第 ${p.done} / ${p.total} 步，大约还要 ${p.left * 3 < 60 ? `${Math.max(p.left * 3, 3)} 分钟` : `${Math.ceil(p.left * 3 / 6) / 10} 小时`}（每 3 分钟抓一步）。</p>`
+      ? `${p.pausedUntil > now ? `<p class="note note-info">Liquipedia 说请求太频繁，歇到 ${escape(beijingText(p.pausedUntil).slice(11))} 再接着抓（这一次不算失败，不会因此跳过）。</p>` : ""}<p>正在抓：第 ${p.done} / ${p.total} 步，大约还要 ${p.left * 3 < 60 ? `${Math.max(p.left * 3, 3)} 分钟` : `${Math.ceil(p.left * 3 / 6) / 10} 小时`}（每 3 分钟抓一步）。</p>`
       : p.lastRoundDone
         ? `<p>上一轮 ${escape(ago(p.lastRoundDone, now))}抓完（${escape(beijingText(p.lastRoundDone))}）。${p.refresh ? "已经排上，几分钟内开始新的一轮。" : `下一轮大约在 ${escape(beijingText(p.next))}。`}</p>`
         : `<p>还没抓过。${p.refresh ? "已经排上，几分钟内开始。" : ""}</p>`;

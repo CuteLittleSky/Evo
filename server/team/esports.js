@@ -4,6 +4,7 @@
 // 那两个文件改了规则，这里跟着改（找「赛事页和看直播」那个窗口商量过：格式 version 1 不变）。
 
 import { Refuse } from "./store.js";
+import { pageFromInput } from "./liquipedia.js";
 
 // 同 config/watch.json 的 platforms（顺序也一样）。pattern 同那里的 room_pattern：房间号可以怎么写，没写的只能是数字。
 // 抖音的地址后面也可以是主播的抖音号（字母、数字、下划线，不分大小写；2026-11-18 用户同意、Evo 那边先改的）
@@ -110,7 +111,10 @@ export function cleanPlayerFields(form) {
       : `房间号「${raw}」只能是数字（直播间地址最后那串数字；虎牙要数字房间号）`);
   }
   const room = normalRoom(platform, raw);
-  const liquipedia = squash(form.liquipedia);
+  // 贴 Liquipedia 选手页的网址也认，存成页面名（https://liquipedia.net/apexlegends/3Mz → 3Mz）
+  const typed = squash(form.liquipedia);
+  const liquipedia = typed ? pageFromInput(typed) : "";
+  if (liquipedia === null) throw new Refuse(`看不懂 Liquipedia 页面名「${typed}」：贴选手页的网址（https://liquipedia.net/apexlegends/…），或者页面名`);
   if (length(liquipedia) > 100) throw new Refuse("Liquipedia 页面名最多 100 个字");
   return { name, team, platform, room, liquipedia };
 }

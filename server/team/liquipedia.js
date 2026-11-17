@@ -41,7 +41,10 @@ export async function query(type, params, { apiKey, fetchImpl = fetch }) {
   } catch {
     return { ok: false, error: "连不上 Liquipedia（超时或网络出错）" };
   }
-  if (!response.ok) return { ok: false, error: `Liquipedia 回了 HTTP ${response.status}` };
+  if (!response.ok) {
+    const hint = response.status === 429 ? "（请求太频繁，先歇一会儿）" : "";
+    return { ok: false, status: response.status, error: `Liquipedia 回了 HTTP ${response.status}${hint}` };
+  }
   let body;
   try {
     body = await response.json();

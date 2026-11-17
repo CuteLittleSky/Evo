@@ -38,6 +38,7 @@ export const MIN_GAP = 2.5 * MINUTE;
 export const HOURLY_CAP = 20;
 export const CYCLE = 24 * HOUR;
 export const MAX_ATTEMPTS = 3;
+export const PAUSE_429 = 15 * MINUTE;  // Liquipedia 说请求太频繁（429）：歇这么久再来，这一次不算"试过"
 const BATCH = 40;
 const RESULT_BATCH = 5;
 const MAX_TRACKED = 20;
@@ -199,7 +200,8 @@ function addError(s, now, step, text) {
 }
 
 // 定时任务每次叫一次。返回做了什么（测试、日志用）：idle 没到时候 / nothing 没有要抓的 / nokey 没配 Key /
-// wait 离上次请求太近或这一小时用完了 / done 做了一步 / failed 这一步没成 / skipped 试了 3 次跳过
+// wait 离上次请求太近、这一小时用完了或者在歇着 / done 做了一步 / failed 这一步没成 / paused Liquipedia 说太频繁、歇 15 分钟 /
+// skipped 试了 3 次跳过
 export async function tick(env, now, fetchImpl = fetch) {
   const bucket = env.DATA;
   const s = await state(bucket);
@@ -241,7 +243,7 @@ export async function tick(env, now, fetchImpl = fetch) {
     s.round.done += 1;
   }
   if (!s.queue.length) return finishRound(s, now, save);
-  if (now - s.lastRequestAt < MIN_GAP || s.recent.length >= HOURLY_CAP) {
+  if (now - s.lastRequestAt < MIN_GAP || s.recent.length >= HOURLY_CAP || now < (s.pausedUntil ?? 0)) {
     await save();
     return "wait";
   }
@@ -265,8 +267,12 @@ export async function tick(env, now, fetchImpl = fetch) {
   const result = await runStep(bucket, step, { apiKey: env.LIQUIPEDIA_API_KEY, fetchImpl }, now);
   if (!result.ok) {
     addError(s, now, step, result.error);
+    if (result.status === 429) {
+      s.pausedUntil = now + PAUSE_429;
+      s.attempts[id] -= 1;
+    }
     await save();
-    return "failed";
+    return result.status === 429 ? "paused" : "failed";
   }
   s.queue.shift();
   delete s.attempts[id];
@@ -354,6 +360,6 @@ export function progress(s, now) {
   const left = running ? s.queue.filter((x) => !x.kind.startsWith("plan-")).length : 0;
   const next = !running && s.lastRoundDone ? (s.refresh ? now : s.lastRoundDone + CYCLE) : null;
   return { recent, running, done: s.round?.done ?? 0, total: s.round?.total ?? 0, left, hoursLeft: Math.ceil((left * 3) / 60 * 10) / 10,
-           next, lastRoundDone: s.lastRoundDone, errors: s.errors ?? [], refresh: Boolean(s.refresh) };
+           next, lastRoundDone: s.lastRoundDone, errors: s.errors ?? [], refresh: Boolean(s.refresh), pausedUntil: s.pausedUntil ?? 0 };
 }
 

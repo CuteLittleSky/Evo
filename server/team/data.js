@@ -14,6 +14,7 @@
 
 import { Refuse, randomHex, readDoc, updateDoc } from "./store.js";
 import { PLATFORMS, cleanEventFields, cleanPlayerFields, squash } from "./esports.js";
+import { pageFromInput } from "./liquipedia.js";
 
 export const PLAYERS = "manual/players.json";
 export const EVENTS = "manual/events.json";
@@ -26,8 +27,10 @@ const emptyList = () => ({ version: 1, items: [] });
 const emptyLog = () => ({ items: [] });
 const emptyPublished = () => ({});
 
+// 读出来的 Liquipedia 页面名一律是页面名：2026-11-18 以前存的有整个网址（那时候还不认网址），读的时候转一下，下次保存就存成页面名
 export async function players(bucket) {
-  return (await readDoc(bucket, PLAYERS, emptyList)).data.items;
+  return (await readDoc(bucket, PLAYERS, emptyList)).data.items.map((p) => (/^https?:\/\//i.test(p.liquipedia ?? "")
+    ? { ...p, liquipedia: pageFromInput(p.liquipedia) ?? p.liquipedia } : p));
 }
 
 export async function events(bucket) {

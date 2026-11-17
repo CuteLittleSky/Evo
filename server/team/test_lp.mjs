@@ -30,12 +30,13 @@ async function join(name, role) {
 const EVENT = "ALGS/2026/Split_2/Playoffs";
 const calls = [];
 let failType = null;
+let failStatus = 500;
 function api(url, options) {
   const u = new URL(url);
   const type = u.pathname.split("/").pop();
   const cond = u.searchParams.get("conditions") ?? "";
   calls.push({ type, cond, url, headers: options.headers });
-  if (failType === type) return Promise.resolve(new Response("down", { status: 500 }));
+  if (failType === type) return Promise.resolve(new Response("down", { status: failStatus }));
   const has = (page) => cond.includes(`::${page}]]`);
   let result = [];
   if (type === "tournament") {
@@ -167,6 +168,17 @@ check("这一小时用满 20 次 → 等着", (await run()) === "wait" && calls.
 st.recent = [];
 await env.DATA.put(STATE, JSON.stringify(st));
 failType = "placement";
+failStatus = 429;
+now += 3 * MINUTE;
+const sent429 = calls.length;
+check("Liquipedia 说太频繁（429）→ 歇着", (await run()) === "paused" && doc(STATE).pausedUntil === now + 15 * MINUTE);
+check("429 那一次不算试过", Object.values(doc(STATE).attempts).every((n) => n === 0));
+now += 3 * MINUTE;
+check("歇着的时候不发请求", (await run()) === "wait" && calls.length === sent429 + 1);
+r = await viewer.get("/liquipedia");
+check("页面上写着在歇着", r.text.includes("Liquipedia 说请求太频繁，歇到"));
+now += 13 * MINUTE;
+failStatus = 500;
 now += 3 * MINUTE;
 check("Liquipedia 出错 → 这一步没成、记下错误", (await run()) === "failed" && doc(STATE).errors[0].text.includes("HTTP 500"));
 now += 3 * MINUTE;
