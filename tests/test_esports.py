@@ -87,6 +87,22 @@ def format_checks(out):
              player(pid="k", platform="bilibili", room="6a"), player(pid="l", platform="douyin", room=123)]
     out["抖音的房间号还可以是主播的抖音号（字母、数字、下划线）；带点、斜杠、问号、太长的不收；别的平台照旧只能是数字"] = (
         [p["id"] for p in esports_data.clean(file(rooms))["players"]] == ["a", "b", "c"])
+    good = "3fa9c1d2e4b5a6f7.webp"
+    logos = {"示例战队": {"logo": good}, "只在赛程里的队": {"logo": "0123456789abcdef.png"}, "名单里没有的队": {"logo": good},
+             "网址": {"logo": "https://example.invalid/a.png"}, "别的文件夹": {"logo": "../../latest.json"},
+             "大写": {"logo": "3FA9C1D2E4B5A6F7.webp"}, "矢量图": {"logo": "3fa9c1d2e4b5a6f7.svg"}, "太短": {"logo": "a.png"},
+             "不是字典": good, "没写": {}}
+    roster = [player(), *[player(pid=f"t{n}", team=team) for n, team in enumerate(logos) if team not in ("示例战队", "只在赛程里的队", "名单里没有的队")]]
+    with_logos = esports_data.clean(file(roster, [event(teams=("示例战队", "只在赛程里的队"))], teams=logos))
+    out["队徽：只收名单里的队、写法对的文件名（网址、别的文件夹、大写、SVG、太短的都不要）；没有这一项、写得不对当作都没有队徽"] = (
+        with_logos["teams"] == {"示例战队": {"logo": good}, "只在赛程里的队": {"logo": "0123456789abcdef.png"}}
+        and esports_data.clean(file())["teams"] == {} and esports_data.clean(file(teams=["示例战队"]))["teams"] == {}
+        and len(with_logos["players"]) == len(roster))
+    out["队徽的地址由 Evo 自己拼（只会去 dl.evotracker.cn 的 esports/logos/ 下面拿）；没有队徽、存下的旧文件里没有这一项：没有地址"] = (
+        esports_data.logo_url(with_logos, "示例战队") == "https://dl.evotracker.cn/esports/logos/" + good
+        and esports_data.logo_url(with_logos, "网址") is None and esports_data.logo_url(with_logos, "没有这支队") is None
+        and esports_data.logo_url({"players": [], "events": []}, "示例战队") is None and esports_data.logo_url(None, "示例战队") is None
+        and esports_data.logo_url({"teams": {"示例战队": {"logo": "../x.png"}}}, "示例战队") is None)
     broken = 0
     for data in ([], {"version": 2, "players": [], "events": []}, {"version": 1, "players": []}, None):
         try:
@@ -388,6 +404,20 @@ def tool_checks(out):
     out["抖音大小写不同的同一个房间查得出来；带点的、别的平台写字母的照样不行"] = (
         code == 1 and data is None and "第 3 行：抖音 房间 xxfps 在第 2 行已经写过" in text
         and "第 4 行：房间号「a.b」只能是字母、数字、下划线" in text and "第 5 行：房间号「xxfps」只能是数字" in text)
+    sys.path.insert(0, str(TOOL.parent))
+    import esports as tool  # tools/esports.py
+    members = [{"line": n, "name": f"选手{n}", "team": team, "platform": "douyu", "room": str(n), "liquipedia": ""}
+               for n, team in enumerate(["有队徽的队"] * 3 + ["没队徽的队"] * 3 + ["没比赛的队"] * 3, 1)]
+    matches = [{"line": 2, "name": "联赛", "type": "联赛", "stage": "", "teams": ["有队徽的队", "没队徽的队"],
+                "start": today + timedelta(hours=1), "end": today + timedelta(hours=4)}]
+    online_teams = {"有队徽的队": {"logo": "3fa9c1d2e4b5a6f7.webp"}, "没比赛的队": {"logo": "0123456789abcdef.png"},
+                    "写错的": {"logo": "x.gif"}}
+    built = tool.build(members, matches, {}, [], teams=online_teams)
+    plain = tool.build(members, matches, {}, [])
+    out["发布脚本不管队徽：上传时照线上现在的带上，只留这次用到的队；一个都没有就不写这一项"] = (
+        built["teams"] == {"有队徽的队": {"logo": "3fa9c1d2e4b5a6f7.webp"}} and "teams" not in plain
+        and esports_data.clean(built)["teams"] == built["teams"]
+        and {**built, "teams": None, "updated": ""} == {**plain, "teams": None, "updated": ""})
     with tempfile.TemporaryDirectory() as folder:
         code, text, data = run_tool(folder, roster, schedule)
         (Path(folder) / "赛程.csv").write_text("名字,类型\n", encoding="utf-8")

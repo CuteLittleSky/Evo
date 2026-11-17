@@ -105,7 +105,7 @@ def safe_image(url):
 
 
 def roster(data, event):
-    """看直播页要的名单：[{"name": 队名, "initial": 第一个字, "players": [选手, ...]}, ...]。
+    """看直播页要的名单：[{"name": 队名, "initial": 第一个字, "logo": 队徽地址或 None, "players": [选手, ...]}, ...]。
     选手：id、名字、队名、平台、房间号、直播间地址；embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时
     问清晰度和播放地址的接口（都没有就是不能在窗口里播）。"""
     teams = []
@@ -119,7 +119,8 @@ def roster(data, event):
                             "url": live_status.room_url(player["platform"], player["room"]),
                             "embed": embed.format(room=player["room"]) if embed else None,
                             "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None})
-        teams.append({"key": f"t{index}", "name": team, "initial": team[:1].upper(), "players": members})
+        teams.append({"key": f"t{index}", "name": team, "initial": team[:1].upper(), "players": members,
+                      "logo": esports_data.logo_url(data, team)})  # 队徽的地址，没有是 None（页面用队名第一个字）
     return teams
 
 

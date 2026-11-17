@@ -10,11 +10,15 @@ esports.json 由 tools/esports.py 从两张 CSV 表生成、上传：
      "players": [{"id": "douyu-520013", "name": "Kite", "team": "星火电竞", "platform": "douyu", "room": "520013",
                   "liquipedia": ""}],
      "events": [{"id": "20261117-1900-league", "name": "亚太北区职业联赛 第 3 周", "type": "联赛", "stage": "B 组对 C 组",
-                 "start": "2026-11-17T19:00:00+08:00", "end": "2026-11-17T23:00:00+08:00", "teams": ["星火电竞", …]}]}
+                 "start": "2026-11-17T19:00:00+08:00", "end": "2026-11-17T23:00:00+08:00", "teams": ["星火电竞", …]}],
+     "teams": {"星火电竞": {"logo": "3fa9c1d2e4b5a6f7.webp"}}}
 - platforms：远程开关。某个平台是 false，Evo 就不在窗口里播它，改成"去 X 看"。没写的平台当作 true
 - players：id 只有字母、数字、- 和 _；platform 是 config/watch.json 里的四个之一；room 只能是数字，
   抖音的还可以是主播的抖音号（字母、数字、下划线；live_status.room_ok()）
 - events：type 是 联赛 / 训练赛 / 杯赛；start、end 带时区，end 晚于 start；teams 是队名，对应 players 里的 team
+- teams（可以没有）：队徽。键是队名，logo 是公开存储桶 esports/logos/ 下的文件名（小写字母和数字 + .png / .webp，
+  协作网页上传时起的）。**只写文件名、不写网址**：Evo 自己拼成 config/watch.json 里 logo_url 那个地址（logo_url()）。
+  没有队徽的队不写；名单里没有的队、文件名写得不对的那一条去掉
 - "进行中 / 即将开始 / 已结束"按 start、end 和电脑上的时间算（status()），不用手动改
 格式不对的那一条去掉，不影响别的；整个文件不对（不是 JSON、version 不认识）当作没读到。
 存储桶的密钥就算泄露，别人也只能改赛程上的字和房间号（只会去问这四个平台的直播间），不能让 Evo 打开别的网站。
@@ -46,6 +50,7 @@ FRESH_SECONDS = 60     # 这么久以内下载过就不重下
 RECENT_DAYS = 7        # "最近结束"只留这么多天
 TYPES = ("联赛", "训练赛", "杯赛")
 ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
+LOGO_RE = re.compile(r"[a-z0-9]{8,40}\.(png|webp)")  # 队徽的文件名：拼不出别的文件夹、别的网站
 LIVE, UPCOMING, ENDED = "live", "upcoming", "ended"
 
 
@@ -103,6 +108,23 @@ def clean_event(raw):
             "end": end.isoformat(), "teams": names[:60]}
 
 
+def clean_teams(raw, known):
+    """esports.json 的 teams → {队名: {"logo": 文件名}}。known：选手、赛事里出现过的队名；别的队、写得不对的去掉。"""
+    out = {}
+    for name, item in (raw.items() if isinstance(raw, dict) else ()):
+        name = _text(name, 40)
+        logo = item.get("logo") if isinstance(item, dict) else None
+        if name in known and isinstance(logo, str) and LOGO_RE.fullmatch(logo):
+            out[name] = {"logo": logo}
+    return out
+
+
+def logo_url(data, team):
+    """这支队的队徽图片地址；没有队徽返回 None。"""
+    logo = ((data.get("teams") or {}).get(team) or {}).get("logo") if data else None
+    return live_status.CONFIG["logo_url"].format(file=logo) if logo and LOGO_RE.fullmatch(logo) else None
+
+
 def _unique(items, check):
     out, seen = [], set()
     for raw in items:
@@ -120,10 +142,11 @@ def clean(data):
     if not isinstance(data.get("players"), list) or not isinstance(data.get("events"), list):
         raise EsportsError("赛事文件的格式不对")
     switches = data.get("platforms") if isinstance(data.get("platforms"), dict) else {}
+    players, events = _unique(data["players"][:2000], clean_player), _unique(data["events"][:200], clean_event)
+    known = {player["team"] for player in players} | {team for event in events for team in event["teams"]}
     return {"version": VERSION, "updated": data["updated"] if parse_time(data.get("updated")) else None,
             "platforms": {key: switches.get(key) is not False for key in live_status.PLATFORMS},
-            "players": _unique(data["players"][:2000], clean_player),
-            "events": _unique(data["events"][:200], clean_event)}
+            "players": players, "events": events, "teams": clean_teams(data.get("teams"), known)}
 
 
 def _address(url):

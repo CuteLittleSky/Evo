@@ -35,7 +35,7 @@ NOW = datetime.now().astimezone().replace(microsecond=0)
 TEAMS = ("甲队", "<b>乙队</b>", "丙队")
 
 
-def serve(folder, platforms=None):
+def serve(folder, platforms=None, teams=None):
     players = []
     for team, platform in zip(TEAMS, ("douyu", "bilibili", "douyin")):
         players += [{"id": f"{platform}-{n}", "name": f"{team[:1]}{n}号" if n > 1 else "kite</script>", "team": team,
@@ -48,7 +48,7 @@ def serve(folder, platforms=None):
                "teams": ["甲队"]}]
     path = Path(folder) / "esports.json"
     path.write_text(json.dumps({"version": 1, "updated": NOW.isoformat(), "players": players, "events": events,
-                                "platforms": platforms or {}}), encoding="utf-8")
+                                "platforms": platforms or {}, **({"teams": teams} if teams else {})}), encoding="utf-8")
     esports_data.URL = str(path)
     esports_data.CACHE_PATH.unlink(missing_ok=True)
     panel_esports._status.update(at=0.0, found={})
@@ -167,6 +167,16 @@ def main():
     finally:
         live_status.query, game_detect.game_running = real_query, real_game
 
+    serve(folder, teams={"甲队": {"logo": "3fa9c1d2e4b5a6f7.webp"}, "<b>乙队</b>": {"logo": "https://example.invalid/x.png"}})
+    with_logo = client.get("/esports/live/watch").get_data(as_text=True)
+    marks = re.findall(r'<span class="watch-team-logo[^"]*"[^>]*>.*?</span>', with_logo, re.S)
+    out["有队徽的队显示队徽（图片只从 dl.evotracker.cn 的 esports/logos/ 加载，加载不出来时页面换回第一个字）；没有的、写得不对的照旧是队名第一个字"] = (
+        len(marks) == 4 and sum("<img " in m for m in marks) == 1
+        and 'class="watch-team-logo has-img"' in marks[1] and 'data-initial="甲"' in marks[1]
+        and 'src="https://dl.evotracker.cn/esports/logos/3fa9c1d2e4b5a6f7.webp"' in marks[1]
+        and 'referrerpolicy="no-referrer"' in marks[1] and 'alt=""' in marks[1]
+        and [text(m) for m in (marks[0], marks[2], marks[3])] == ["丙", "<", "没"] and "example.invalid" not in with_logo)
+    serve(folder)
     home = client.get("/esports").get_data(as_text=True)
     out["别的页面照旧有顶部导航和主题按钮"] = '<nav class="nav"' in home and 'id="theme-toggle"' in home
     return report(out)

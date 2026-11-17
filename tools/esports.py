@@ -212,7 +212,8 @@ def load_tables(folder):
 
 # ---------- 转成 esports.json ----------
 
-def build(players, events, switches, notes, now=None):
+def build(players, events, switches, notes, now=None, teams=None):
+    """teams：{队名: {"logo": 文件名}}（队徽；这个脚本不管队徽，上传时照线上现在的带上）。只留这次用到的队，一个都没有就不写这一项。"""
     now = now or now_beijing()
     kept, ids = [], set()
     old = [event for event in events if now - event["end"] > timedelta(days=esports_data.RECENT_DAYS)]
@@ -235,6 +236,9 @@ def build(players, events, switches, notes, now=None):
                          "platform": p["platform"], "room": p["room"], "liquipedia": p["liquipedia"]}
                         for p in players if p["team"] in used],
             "events": kept}
+    logos = esports_data.clean_teams(teams, used)
+    if logos:
+        data["teams"] = {team: logos[team] for team in sorted(logos)}
     checked = esports_data.clean(data)  # Evo 读的时候会不会去掉哪一条
     if len(checked["players"]) != len(data["players"]) or len(checked["events"]) != len(data["events"]):
         raise Stop("生成的文件里有 Evo 会去掉的条目（名字里有特别的字符？），告诉 Claude 查一下")
@@ -408,7 +412,8 @@ def main():
             print(f"写到了 {args.out}（没有上传）")
             return 0
         current = online(name)
-        data = build(players, events, esports_data.clean(current)["platforms"] if current else {}, notes)
+        online_now = esports_data.clean(current) if current else {}
+        data = build(players, events, online_now.get("platforms", {}), notes, teams=online_now.get("teams"))
         for note in notes:
             print(f"提醒：{note}")
         examples = [text for text in [p["name"] for p in data["players"]] + [e["name"] for e in data["events"]]

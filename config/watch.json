@@ -1,5 +1,7 @@
 {
   "_说明": "赛事页、看直播（code/live_status.py、code/esports_data.py）：四个直播平台的名字、直播间地址、查房间的接口和请求头。和识别游戏画面无关。平台改了接口先改这里",
+  "logo_url": "https://dl.evotracker.cn/esports/logos/{file}",
+  "_说明_logo_url": "队徽图片的地址。esports.json 里每支队只写文件名（如 3fa9c1d2e4b5a6f7.webp），Evo 自己拼成这个地址：赛程文件被人改了也只会去这里拿图",
   "timeout": 10,
   "_说明_timeout": "每个请求最多等几秒",
   "parallel": 4,

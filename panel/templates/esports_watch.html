@@ -90,8 +90,12 @@
       <details class="watch-team-box" data-team="{{ team.key }}">
         <summary>
           <svg class="watch-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
-          {# 队标的位置：先用队名的第一个字 #}
+          {# 队徽（赛程文件里有才有，图片放在 dl.evotracker.cn）；没有、加载不出来（下面的脚本换掉）就用队名的第一个字 #}
+          {% if team.logo %}
+          <span class="watch-team-logo has-img" aria-hidden="true" data-initial="{{ team.initial }}"><img src="{{ team.logo }}" alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"></span>
+          {% else %}
           <span class="watch-team-logo" aria-hidden="true">{{ team.initial }}</span>
+          {% endif %}
           <span class="watch-team-name es-ell">{{ team.name }}</span>
           <span class="watch-team-live" data-team-live>…</span>
         </summary>
@@ -695,6 +699,17 @@
 
     document.querySelectorAll(".watch-p").forEach(function (btn) {
       btn.addEventListener("click", function () { select(btn.dataset.player); });
+    });
+    // 队徽加载不出来（没连上、文件没了）：换回队名的第一个字。脚本运行以前就失败了的也算
+    document.querySelectorAll(".watch-team-logo img").forEach(function (img) {
+      function fallback() {
+        var box = img.parentNode;
+        if (!box) return;
+        box.classList.remove("has-img");
+        box.textContent = box.dataset.initial || "";
+      }
+      img.addEventListener("error", fallback);
+      if (img.complete && img.naturalWidth === 0) fallback();
     });
     document.querySelectorAll(".watch-seg button").forEach(function (btn) {
       btn.addEventListener("click", function () {
