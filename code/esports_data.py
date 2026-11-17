@@ -155,11 +155,11 @@ def cached():
         return None
 
 
-def get(force=False):
-    """打开赛事页时调用。返回 {"data": 赛事数据（一次都没读到过是 None）, "ok": 是不是最新的,
+def get(force=False, fresh=FRESH_SECONDS):
+    """打开赛事页、看直播页时调用（fresh 秒以内下载过就不重下）。返回 {"data": 赛事数据（一次都没读到过是 None）, "ok": 是不是最新的,
     "error": 没读到的原因, "fetched_at": data 是什么时候下载的}。"""
     saved = cached()
-    if saved and not force and 0 <= time.time() - saved["fetched_at"] < FRESH_SECONDS:
+    if saved and not force and 0 <= time.time() - saved["fetched_at"] < fresh:
         return {"data": saved["data"], "ok": True, "error": None, "fetched_at": saved["fetched_at"]}
     try:
         data = fetch()

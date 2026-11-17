@@ -240,9 +240,20 @@ def check_bilibili(rooms, get):
     return parse_bilibili(get(url, _headers("bilibili")), rooms)
 
 
+_douyin_inner = {}  # 抖音房间号 → 正在播的那一场的内部房间号（只在内存里）
+
+
 def check_douyin(rooms, get):
+    """在播的房间记着它这一场的内部房间号，下次只问接口（约 70 KB）；没在播的每次都要开直播间网页（约 1 MB，
+    内部房间号在网页的最后）才知道有没有开新的一场。记着的那一场结束了：这次算没开播，下次再开网页。"""
     cfg, out = PLATFORMS["douyin"], {}
     for room in rooms:
+        inner = _douyin_inner.pop(room, None)
+        if inner is not None:
+            out[room] = _douyin_room(inner, get)
+            if out[room]["state"] == LIVE:
+                _douyin_inner[room] = inner
+            continue
         page_headers = {**_headers("douyin"), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
         page = get(cfg["page_url"].format(room=room), page_headers, limit=cfg["page_max_bytes"],
                    until=DOUYIN_ROOM_ID, cookies=True)
@@ -250,11 +261,18 @@ def check_douyin(rooms, get):
         if inner is None:
             out[room] = result(MISSING)
             continue
-        token = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(107))
-        params = [*cfg["info_params"], ("room_id", inner), ("msToken", token)]
-        url = abogus.signed_url(cfg["info_url"], params, cfg["user_agent"])
-        out[room] = parse_douyin_room(get(url, _headers("douyin"), cookies=True))
+        out[room] = _douyin_room(inner, get)
+        if out[room]["state"] == LIVE:
+            _douyin_inner[room] = inner
     return out
+
+
+def _douyin_room(inner, get):
+    cfg = PLATFORMS["douyin"]
+    token = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(107))
+    params = [*cfg["info_params"], ("room_id", inner), ("msToken", token)]
+    url = abogus.signed_url(cfg["info_url"], params, cfg["user_agent"])
+    return parse_douyin_room(get(url, _headers("douyin"), cookies=True))
 
 
 CHECKERS = {"douyu": check_douyu, "huya": check_huya, "bilibili": check_bilibili, "douyin": check_douyin}

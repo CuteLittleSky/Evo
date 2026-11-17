@@ -27,9 +27,10 @@
       "room_url": "https://live.bilibili.com/{room}",
       "batch_url": "https://api.live.bilibili.com/xlive/web-room/v1/index/getRoomBaseInfo?req_biz=web_room_componet",
       "batch_size": 30,
+      "embed_url": "https://www.bilibili.com/blackboard/live/live-activity-player.html?cid={room}&quality=0",
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
       "referer": "https://live.bilibili.com/",
-      "_说明": "batch_url 一次查多个房间（后面接 &room_ids=…）。回的 data.by_room_ids 按真实房间号列，短号在 short_id 里；不存在的房间不在里面。live_status 1 = 在播、2 = 轮播；live_time 是北京时间"
+      "_说明": "batch_url 一次查多个房间（后面接 &room_ids=…）。回的 data.by_room_ids 按真实房间号列，短号在 short_id 里；不存在的房间不在里面。live_status 1 = 在播、2 = 轮播；live_time 是北京时间。embed_url 是 B站官方的嵌入播放器（看直播页放在 iframe 里；有 embed_url 的平台才能在 Evo 窗口里播）"
     },
     "douyin": {
       "name": "抖音",
@@ -41,7 +42,7 @@
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400",
       "referer": "https://live.douyin.com/",
       "blocked_text": ["verify_data", "验证码中间页"],
-      "_说明": "两步：先开直播间网页（约 1 MB，读到内部房间号就停；顺便收下游客 Cookie ttwid，只留在内存里），再用内部房间号问 info_url（参数后面接 room_id、msToken，带 a_bogus 签名，code/abogus.py）。room.status 2 = 在播、4 = 没开播。user_agent 参与签名，要和请求头一样"
+      "_说明": "两步：先开直播间网页（约 1 MB，内部房间号在最后；在播的房间记着这一场的内部房间号，下次不用再开网页；顺便收下游客 Cookie ttwid，只留在内存里），再用内部房间号问 info_url（参数后面接 room_id、msToken，带 a_bogus 签名，code/abogus.py）。room.status 2 = 在播、4 = 没开播。user_agent 参与签名，要和请求头一样"
     }
   }
 }

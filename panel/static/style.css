@@ -1123,3 +1123,131 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .es-foot { margin: 0; font-size: 12px; color: var(--muted); }
 .es-empty-title { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: var(--text); }
 .es-empty-title + .small { margin: 0; }
+
+/* ---------- 看直播页（panel_esports.py、esports_watch.html，2026-11-17 用户定的；样子照用户给的样稿）----------
+   占满整个窗口：左边播放器那一栏和右边的队伍列表各自滚动，页面本身不滚。
+   平台的色点（用户给的颜色）：深色主题直接用；浅色主题在白底上不到 3:1，换成同一色相深一些的（下面 --pf-*）。
+   播放器那一块不分主题，一直是深色的，里面的色点用原来的亮色 */
+:root, [data-theme="dark"] { --pf-douyu: #FF7A2F; --pf-huya: #F2B705; --pf-bilibili: #FB7299; --pf-douyin: #25D9E8; }
+[data-theme="light"] { --pf-douyu: #D4561A; --pf-huya: #9A7400; --pf-bilibili: #D63F75; --pf-douyin: #0C8794; }
+.es-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.es-dot.pf-douyu { background: var(--pf-douyu); }
+.es-dot.pf-huya { background: var(--pf-huya); }
+.es-dot.pf-bilibili { background: var(--pf-bilibili); }
+.es-dot.pf-douyin { background: var(--pf-douyin); }
+.es-avatar { position: relative; flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--nav-on-bg); font-size: 12px; font-weight: 700; }
+.es-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+
+.wrap.watch-wrap { max-width: none; padding: 0; gap: 0; height: 100vh; }
+.in-app .wrap.watch-wrap { height: 100%; }
+.in-app body:has(.watch-wrap) { overflow: hidden; scrollbar-gutter: auto; }  /* 两栏各自滚动，不给整页留滚动条的位置 */
+.watch-wrap > .page { flex: 1; min-height: 0; gap: 0; }
+.watch-wrap > .page > :not(.watch):not(script) { margin: 12px 20px 0; }  /* 顶部的提示条（更新、公告……）照样显示 */
+.watch { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+.watch-main { min-width: 0; overflow-y: auto; padding: 14px 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+.watch-head { display: flex; align-items: center; gap: 12px; min-height: 32px; }
+.watch-back { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px 0 6px; border-radius: 6px; color: var(--muted); font-size: 13px; }
+.watch-back:hover { background: var(--nav-on-bg); color: var(--text); }
+.watch-sep { flex: none; width: 1px; height: 14px; background: var(--border); }
+.watch-title { margin: 0; min-width: 0; font-size: 15px; font-weight: 700; }
+.watch-stage { flex: none; font-size: 13px; color: var(--muted); }
+.watch-mark { flex: none; margin-left: auto; }
+
+.watch-apex { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border-radius: 8px; font-size: 13px;
+  border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-text); }
+.watch-apex[hidden], .watch-info[hidden], .watch-mates[hidden], .watch-chips[hidden] { display: none; }
+.watch-apex svg { flex: none; }
+.watch-apex .btn { padding: 6px 14px; font-size: 13px; }
+
+/* 播放器：16:9；窗口很大时不让它高过窗口（否则要滚动才看得到下面的按钮） */
+.watch-stage-box { position: relative; flex: none; width: 100%; max-width: max(480px, calc((100vh - 300px) * 16 / 9)); aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
+  background: #161A22; color: #ECEEF2; --pf-douyu: #FF7A2F; --pf-huya: #F2B705; --pf-bilibili: #FB7299; --pf-douyin: #25D9E8; }
+.watch-screen { position: absolute; inset: 0; }
+.watch-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+.watch-chips { position: absolute; top: 12px; left: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; pointer-events: none; }
+.watch-chip-live, .watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; }
+.watch-chip-live { background: #FF5A5A; color: #2A0A0A; font-weight: 700; }
+.watch-chip-live-dot { width: 6px; height: 6px; border-radius: 50%; background: #2A0A0A; }
+.watch-chip { background: rgb(8 9 12 / 0.72); color: #ECEEF2; }
+.watch-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+.watch-msg-title { margin: 0; font-size: 17px; font-weight: 700; }
+.watch-msg-text { margin: 0; max-width: 420px; font-size: 13px; line-height: 1.7; color: #B4BAC6; }
+.watch-primary { font: inherit; margin-top: 8px; display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;
+  background: #FF5A5A; color: #2A0A0A; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.watch-primary:hover { filter: brightness(1.08); }
+.watch-primary:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
+
+.watch-info { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.watch-avatar { width: 44px; height: 44px; font-size: 17px; }
+.watch-who { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 2px; }
+.watch-who-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.watch-name { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.watch-team, .watch-live-title { font-size: 13px; color: var(--muted); }
+.watch-link { padding: 7px 14px; border-radius: 8px; font-size: 13px; gap: 6px; }
+.watch-link:focus-visible, .watch-back:focus-visible, .watch-apex .btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+
+.watch-mates { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.watch-mates-label { margin-right: 4px; font-size: 12px; color: var(--muted); }
+.watch-mates-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-mate { font: inherit; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 16px;
+  background: transparent; color: var(--text); font-size: 13px; }
+button.watch-mate { cursor: pointer; }
+button.watch-mate:hover { background: var(--nav-on-bg); }
+button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.watch-mate.on { background: var(--nav-on-bg); border-color: var(--accent); }
+.watch-mate.dis { color: var(--muted); border-style: dashed; border-color: var(--dashed); }  /* 没开播：灰色、虚线框 */
+.watch-mate-sub { font-size: 12px; color: var(--muted); }
+.watch-note { margin: 0; display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.watch-note svg { flex: none; margin-top: 2px; }
+
+.watch-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--card); border-left: 1px solid var(--border); }
+.watch-side-head { padding: 14px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
+.watch-side-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.watch-side-title h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.watch-count { font-size: 12px; color: var(--muted); }
+.watch-count-live { color: var(--text); }
+.watch-seg { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.watch-seg button { font: inherit; flex: 1; height: 30px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
+.watch-seg button:hover { color: var(--text); }
+.watch-seg button.on { background: var(--nav-on-bg); color: var(--nav-on-text); font-weight: 600; }
+.watch-seg button:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.watch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 2px; }
+.watch-team-box[hidden] { display: none; }
+.watch-team-box > summary { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px 0 6px; border-radius: 8px; cursor: pointer; list-style: none; }
+.watch-team-box > summary::-webkit-details-marker { display: none; }
+.watch-team-box > summary:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.watch-team-box > summary:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: -2px; }
+.watch-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
+.watch-team-box[open] .watch-chev { transform: rotate(90deg); }
+.watch-team-logo { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: var(--nav-on-bg); font-size: 13px; font-weight: 700; }
+.watch-team-name { flex: 1; min-width: 0; font-weight: 600; }
+.watch-team-live { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.watch-team-live.on { color: var(--bad); }  /* 红点 + "N 人在播"：字用 --bad（浅色主题下 --accent 在白底上不到 4.5:1） */
+.watch-players { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 2px; }
+.watch-p { font: inherit; display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.watch-p:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.watch-p:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: -2px; }
+.watch-p.sel { background: var(--nav-on-bg); border-color: var(--border); }
+.watch-p:disabled { color: var(--muted); cursor: default; }
+.watch-p:disabled .es-avatar { background: var(--bg); border: 1px solid var(--border); font-weight: 600; }
+.watch-p.live .es-avatar::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); border: 2px solid var(--card); }
+.watch-p-name { flex: 1; min-width: 0; font-size: 13px; }
+.watch-p.live .watch-p-name { font-weight: 600; }
+.watch-p-plat { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.watch-p-time { flex: none; min-width: 42px; text-align: right; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.watch-empty { margin: 0; padding: 8px 10px; font-size: 12px; color: var(--muted); }
+.watch-empty[hidden] { display: none; }
+.watch-side-foot { margin: 0; padding: 12px 16px 14px; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.6; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .watch-chev { transition: none; } }
+/* 窗口窄：两栏叠起来，整页滚动 */
+@media (max-width: 900px) {
+  .wrap.watch-wrap, .in-app .wrap.watch-wrap { height: auto; }
+  .in-app body:has(.watch-wrap) { overflow-y: auto; }
+  .watch { grid-template-columns: minmax(0, 1fr); }
+  .watch-main { overflow: visible; }
+  .watch-side { border-left: 0; border-top: 1px solid var(--border); }
+  .watch-list { overflow: visible; }
+}

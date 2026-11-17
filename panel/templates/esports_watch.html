@@ -1,11 +1,386 @@
 {% extends "base.html" %}
 {% block title %}{{ event.name }} · Evo{% endblock %}
+{# 看直播页（panel_esports.py，2026-11-17 用户定的，样子照用户给的样稿）：占满整个窗口，没有顶部导航，只有"← 赛事"。
+   左边：赛事名、播放器、正在看的选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
+   名单先由服务器画好（都不能点）；谁在播由下面的脚本每 60 秒问一次 /esports/<赛事>/status，再把在播的点亮。
+   能在窗口里播的只有配置里有嵌入播放器的平台（现在是 B站）；别的显示"去 X 看"的退路 #}
+{% block wrap_class %} watch-wrap{% endblock %}
+{% block top %}{% endblock %}
 
-{# 看直播页（panel_esports.py）：下一步做。现在只是占位：能从赛事页点进来、点回去 #}
 {% block content %}
-<a class="back-link" href="{{ url_for('esports.page') }}">← 赛事</a>
-<section class="card empty-card">
-  <p class="es-empty-title">{{ event.name }}{% if event.stage %} · {{ event.stage }}{% endif %}</p>
-  <p class="small">看直播页还在做，做好以后从这里看选手的第一视角直播。</p>
-</section>
+<div class="watch">
+  <div class="watch-main">
+    <div class="watch-head">
+      <a class="watch-back" href="{{ url_for('esports.page') }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>赛事
+      </a>
+      <span class="watch-sep" aria-hidden="true"></span>
+      <h1 class="watch-title es-ell">{{ event.name }}</h1>
+      {% if event.stage %}<span class="watch-stage">{{ event.stage }}</span>{% endif %}
+      {# 没开始的赛事也能进来看选手赛前的直播：这里写什么时候开始，不写"进行中" #}
+      {% if event.state == 'live' %}
+      <span class="es-live-tag watch-mark"><span class="es-live-dot" aria-hidden="true"></span>{{ event.mark }}</span>
+      {% else %}
+      <span class="es-tag watch-mark">{{ event.mark }}</span>
+      {% endif %}
+    </div>
+
+    {# Apex 在运行、这里又正在播的时候才显示（脚本每 10 秒问一次 /esports/game） #}
+    <div class="watch-apex" id="watch-apex" role="status" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l9.5 17h-19z"></path><path d="M12 10v4.5M12 17.5v.5"></path></svg>
+      <span class="grow">Apex 正在运行。看直播会占用显卡，可能让游戏掉帧。</span>
+      <button type="button" class="btn" id="watch-apex-keep">继续看</button>
+      <button type="button" class="btn" id="watch-apex-close">关闭直播</button>
+    </div>
+
+    <div class="watch-stage-box">
+      {# 画面左上角一直标着平台和房间号（用户定的底线：不藏平台） #}
+      <div class="watch-chips" id="watch-chips" hidden>
+        <span class="watch-chip-live"><span class="watch-chip-live-dot" aria-hidden="true"></span>直播中</span>
+        <span class="watch-chip"><span class="es-dot" id="watch-chip-dot" aria-hidden="true"></span><span id="watch-chip-text"></span></span>
+      </div>
+      <div class="watch-screen" id="watch-screen">
+        <div class="watch-msg"><p class="watch-msg-title">正在看谁在播…</p></div>
+      </div>
+    </div>
+
+    <div class="watch-info" id="watch-info" hidden>
+      <span class="es-avatar watch-avatar" id="watch-avatar" aria-hidden="true"></span>
+      <div class="watch-who">
+        <div class="watch-who-line"><span class="watch-name" id="watch-name"></span><span class="watch-team" id="watch-team"></span></div>
+        <span class="watch-live-title es-ell" id="watch-live-title"></span>
+      </div>
+      {# 三个按钮都是用系统浏览器打开这位主播的直播间：发弹幕、送礼物要登录平台，玩家一般在浏览器里登录过 #}
+      <a class="btn watch-link" id="watch-danmu" target="_blank" rel="noopener noreferrer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H10l-4 3.5V16H4z"></path><path d="M8 9.5h8M8 12.5h5"></path></svg>发送弹幕
+      </a>
+      <a class="btn watch-link" id="watch-gift" target="_blank" rel="noopener noreferrer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="8" width="17" height="4" rx="1"></rect><path d="M5.5 12v8h13v-8M12 8v12"></path><path d="M12 8C10.5 4.5 7 4.5 7 6.5S10 8 12 8zM12 8c1.5-3.5 5-3.5 5-1.5S14 8 12 8z"></path></svg>给主播送礼物
+      </a>
+      <a class="btn watch-link" id="watch-go" target="_blank" rel="noopener noreferrer">
+        <span id="watch-go-text">去平台看</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>
+      </a>
+    </div>
+
+    <div class="watch-mates" id="watch-mates" hidden>
+      <span class="watch-mates-label" id="watch-mates-label">同队视角</span>
+      <span class="watch-mates-list" id="watch-mates-list" role="group" aria-labelledby="watch-mates-label"></span>
+    </div>
+
+    <p class="watch-note">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8v.5"></path></svg>
+      <span>每位选手的直播延迟不一样，比赛通常至少延迟 10 分钟，所以切换后画面时间可能对不上。</span>
+    </p>
+  </div>
+
+  <aside class="watch-side" aria-labelledby="h-watch-teams">
+    <div class="watch-side-head">
+      <div class="watch-side-title">
+        <h2 id="h-watch-teams">队伍</h2>
+        {# 一句完整的话，到了以后读屏软件念一次 #}
+        <span class="watch-count" id="watch-count" role="status" aria-atomic="true">正在看谁在播…</span>
+      </div>
+      <div class="watch-seg" role="group" aria-label="筛选队伍">
+        <button type="button" class="on" aria-pressed="true" data-filter="all">全部 <span class="num">{{ teams|length }}</span> 支</button>
+        <button type="button" aria-pressed="false" data-filter="live">有人在播的</button>
+      </div>
+    </div>
+    <div class="watch-list" id="watch-list">
+      {% for team in teams %}
+      <details class="watch-team-box" data-team="{{ team.key }}">
+        <summary>
+          <svg class="watch-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          {# 队标的位置：先用队名的第一个字 #}
+          <span class="watch-team-logo" aria-hidden="true">{{ team.initial }}</span>
+          <span class="watch-team-name es-ell">{{ team.name }}</span>
+          <span class="watch-team-live" data-team-live>…</span>
+        </summary>
+        <div class="watch-players">
+          {% for p in team.players %}
+          {# 没开播的不能点（disabled）；在播的由脚本点亮 #}
+          <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
+            <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
+            <span class="watch-p-name es-ell">{{ p.name }}</span>
+            <span class="watch-p-plat"><span class="es-dot pf-{{ p.platform }}" aria-hidden="true"></span>{{ p.platform_name }}</span>
+            <span class="watch-p-time num" data-time>…</span>
+          </button>
+          {% else %}
+          <p class="watch-empty">名单里还没有这支队的选手</p>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+      <p class="watch-empty" id="watch-none" hidden>现在没有队伍在播。</p>
+    </div>
+    <p class="watch-side-foot">开着这一页时每 60 秒刷新一次谁在播。</p>
+  </aside>
+</div>
+<script type="application/json" id="watch-data">{{ page_data|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var data = JSON.parse(document.getElementById("watch-data").textContent);
+    var byId = {};
+    data.players.forEach(function (p) { byId[p.id] = p; });
+    function $(id) { return document.getElementById(id); }
+    // status：上次问到的 {选手 id: {state, title, avatar, since}}，还没问到是 null；sel：正在看的选手；
+    // closed：点了"关闭直播"；apexOk：点了"继续看"（Apex 关掉以后重新算）
+    var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
+              apex: false, apexOk: false, stageKey: null, lastTry: 0};
+
+    function info(id) { return st.status ? st.status[id] : null; }
+    function isLive(id) { var s = info(id); return !!s && s.state === "live"; }
+    function canEmbed(p) { return !!p.embed && st.platforms[p.platform] !== false; }  // 能在窗口里播，平台开关也开着
+    function minutes(since) { return since ? Math.max(0, Math.floor((Date.now() / 1000 - since) / 60)) : null; }
+    function clock(since) {  // "2:14" = 开播 2 小时 14 分
+      var m = minutes(since);
+      return m === null ? "在播" : Math.floor(m / 60) + ":" + String(m % 60).padStart(2, "0");
+    }
+    function spoken(since) {
+      var m = minutes(since);
+      if (m === null) return "在播";
+      return "开播 " + (m >= 60 ? Math.floor(m / 60) + " 小时 " : "") + (m % 60) + " 分";
+    }
+    function el(tag, cls, text) {
+      var node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+    // 头像：平台给了就用（不带来源页），没有、加载不了就用名字的第一个字。地址没变不重画，免得每分钟闪一下
+    function setAvatar(node, p, s) {
+      var src = s && s.avatar ? s.avatar : "";
+      if (node.dataset.src === src) return;
+      node.dataset.src = src;
+      node.textContent = "";
+      if (!src) { node.textContent = p.initial; return; }
+      var img = document.createElement("img");
+      img.alt = "";
+      img.referrerPolicy = "no-referrer";
+      img.addEventListener("error", function () { node.dataset.src = ""; node.textContent = p.initial; });
+      img.src = src;
+      node.appendChild(img);
+    }
+
+    function renderList() {
+      var liveTotal = 0, shown = 0;
+      document.querySelectorAll(".watch-team-box").forEach(function (box) {
+        var n = 0;
+        box.querySelectorAll(".watch-p").forEach(function (btn) {
+          var id = btn.dataset.player, p = byId[id], s = info(id), live = isLive(id);
+          if (live) n++;
+          btn.disabled = !live;
+          btn.classList.toggle("live", live);
+          btn.classList.toggle("sel", id === st.sel);
+          btn.setAttribute("aria-pressed", id === st.sel ? "true" : "false");
+          setAvatar(btn.querySelector("[data-avatar]"), p, live ? s : null);
+          var time = btn.querySelector("[data-time]");
+          time.textContent = !st.status ? "…" : live ? clock(s.since) : s && s.state === "error" ? "没查到" : "未开播";
+          if (live) time.title = spoken(s.since); else time.removeAttribute("title");
+        });
+        liveTotal += n;
+        var tag = box.querySelector("[data-team-live]");
+        tag.textContent = "";
+        tag.classList.toggle("on", n > 0);
+        if (!st.status) tag.textContent = "…";
+        else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), " 人在播");
+        else tag.textContent = "没人在播";
+        box.hidden = st.filter === "live" && !!st.status && n === 0;
+        if (!box.hidden) shown++;
+      });
+      $("watch-none").hidden = shown > 0;
+      var count = $("watch-count");
+      count.textContent = "";
+      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.length), " 人");
+      else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
+    }
+
+    function message(title, text) {
+      var box = el("div", "watch-msg");
+      box.append(el("p", "watch-msg-title", title));
+      if (text) box.append(el("p", "watch-msg-text", text));
+      return box;
+    }
+
+    // 播放器那一块。只在"该显示什么"变了的时候重画：每分钟刷新状态时不能把正在播的画面重新加载一遍
+    function renderStage() {
+      var p = st.sel ? byId[st.sel] : null, s = p ? info(p.id) : null, live = !!p && isLive(p.id);
+      var anyLive = data.players.some(function (x) { return isLive(x.id); });
+      var key, build;
+      if (!st.status) {
+        key = st.failed ? "failed" : "loading";
+        build = function () { return st.failed ? message("没查到谁在播", "可能是网络连不上，一分钟后会再试。") : message("正在看谁在播…"); };
+      } else if (st.closed) {
+        key = "closed";
+        build = function () {
+          var box = message("直播已关闭", p ? "想接着看，点下面的按钮，或者在右边换一位选手。" : "在右边选一位在播的选手可以重新看。");
+          if (p && live) {
+            var again = el("button", "watch-primary", "继续看 " + p.name);
+            again.type = "button";
+            again.addEventListener("click", function () { st.closed = false; render(); });
+            box.append(again);
+          }
+          return box;
+        };
+      } else if (!p) {
+        key = anyLive ? "pick" : "nobody";
+        build = function () {
+          return anyLive ? message("在右边选一位在播的选手") : message("现在没有选手在播", "有选手开播以后，右边的名单会亮起来，最慢 2 分钟。");
+        };
+      } else if (!live) {
+        key = "offline:" + p.id + ":" + (s ? s.state : "");
+        build = function () {
+          return message(p.name + (s && s.state === "error" ? " 的直播间没查到" : " 现在没有开播"),
+                         anyLive ? "在右边选一位在播的选手。" : "有选手开播以后，右边的名单会亮起来，最慢 2 分钟。");
+        };
+      } else if (canEmbed(p)) {
+        key = "embed:" + p.id;
+        build = function () {
+          var frame = el("iframe", "watch-frame");
+          frame.title = p.name + " 的" + p.platform_name + "直播";
+          frame.allow = "autoplay; fullscreen";
+          frame.referrerPolicy = "no-referrer";
+          frame.src = p.embed;
+          return frame;
+        };
+      } else {
+        // 退路：平台开关关了，或者这个平台还不能在窗口里播。按钮用玩家自己的默认浏览器打开直播间（2026-11-17 用户定的）
+        key = "fallback:" + p.id;
+        build = function () {
+          var box = message(p.platform_name + "的直播暂时不能在 Evo 里直接播放", "可以去" + p.platform_name + "看 " + p.name + " 的直播，会用你的浏览器打开。");
+          var link = el("a", "watch-primary", "打开" + p.platform_name + "直播间");
+          link.href = p.url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          box.append(link);
+          return box;
+        };
+      }
+      if (key !== st.stageKey) {
+        st.stageKey = key;
+        $("watch-screen").replaceChildren(build());
+      }
+
+      var chips = $("watch-chips");
+      chips.hidden = !(live && !st.closed);
+      if (!chips.hidden) {
+        $("watch-chip-dot").className = "es-dot pf-" + p.platform;
+        $("watch-chip-text").textContent = canEmbed(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
+      }
+
+      $("watch-info").hidden = !p;
+      $("watch-mates").hidden = !p;
+      if (!p) return;
+      setAvatar($("watch-avatar"), p, live ? s : null);
+      $("watch-name").textContent = p.name;
+      $("watch-team").textContent = p.team;
+      $("watch-live-title").textContent = live ? (s.title || p.platform_name + " 房间 " + p.room) : "未开播";
+      [["watch-danmu", "发弹幕"], ["watch-gift", "送礼物"], ["watch-go", "看直播"]].forEach(function (pair) {
+        var link = $(pair[0]);
+        link.href = p.url;
+        link.title = "用浏览器打开 " + p.name + " 的" + p.platform_name + "直播间" + pair[1];
+      });
+      $("watch-go-text").textContent = "去" + p.platform_name + "看";
+
+      var mates = data.players.filter(function (x) { return x.team === p.team; }).map(function (m) {
+        if (!isLive(m.id)) {
+          var off = el("span", "watch-mate dis");
+          off.append(m.name, el("span", "watch-mate-sub", st.status ? "未开播" : "…"));
+          return off;
+        }
+        var btn = el("button", "watch-mate" + (m.id === p.id ? " on" : ""));
+        btn.type = "button";
+        btn.setAttribute("aria-pressed", m.id === p.id ? "true" : "false");
+        btn.append(el("span", "es-dot pf-" + m.platform), m.name, el("span", "watch-mate-sub", m.platform_name));
+        btn.addEventListener("click", function () { select(m.id); });
+        return btn;
+      });
+      $("watch-mates-list").replaceChildren.apply($("watch-mates-list"), mates);
+    }
+
+    function renderApex() {
+      var playing = (st.stageKey || "").indexOf("embed:") === 0;
+      $("watch-apex").hidden = !(st.apex && !st.apexOk && playing);
+    }
+
+    function render() { renderList(); renderStage(); renderApex(); }
+
+    function select(id) {
+      st.sel = id;
+      st.closed = false;
+      var box = document.querySelector('.watch-p[data-player="' + CSS.escape(id) + '"]');
+      if (box) box.closest("details").open = true;
+      try { history.replaceState(null, "", "?p=" + encodeURIComponent(id)); } catch (e) {}
+      render();
+    }
+
+    // 还没选人（也没点"关闭直播"）：自动选第一位在播的，先挑能在窗口里播的
+    function autoSelect() {
+      if (st.sel || st.closed || !st.status) return;
+      var live = data.players.filter(function (p) { return isLive(p.id); });
+      var pick = live.filter(canEmbed)[0] || live[0];
+      if (pick) select(pick.id);
+    }
+
+    function refresh() {
+      st.lastTry = Date.now();
+      fetch(data.status_url, { cache: "no-store" })
+        .then(function (r) {
+          if (r.status === 404) { location.reload(); throw new Error("gone"); }  // 这场赛事从赛程里拿掉了：回赛事页
+          return r.json();
+        })
+        .then(function (r) {
+          st.status = r.players;
+          st.platforms = r.platforms;
+          st.failed = false;
+          autoSelect();
+          render();
+        })
+        .catch(function () { st.failed = true; render(); });
+    }
+    function checkGame() {
+      fetch(data.game_url, { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          st.apex = !!r.running;
+          if (!st.apex) st.apexOk = false;
+          renderApex();
+        })
+        .catch(function () {});
+    }
+    // 页面看不见时（最小化、切到别的程序）不问；回来以后超过 60 秒没问过就马上问一次
+    function tick() {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - st.lastTry >= 60000) refresh();
+    }
+
+    document.querySelectorAll(".watch-p").forEach(function (btn) {
+      btn.addEventListener("click", function () { select(btn.dataset.player); });
+    });
+    document.querySelectorAll(".watch-seg button").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        st.filter = btn.dataset.filter;
+        document.querySelectorAll(".watch-seg button").forEach(function (other) {
+          other.classList.toggle("on", other === btn);
+          other.setAttribute("aria-pressed", other === btn ? "true" : "false");
+        });
+        renderList();
+      });
+    });
+    $("watch-apex-keep").addEventListener("click", function () { st.apexOk = true; renderApex(); });
+    $("watch-apex-close").addEventListener("click", function () { st.closed = true; render(); });
+    document.addEventListener("visibilitychange", tick);
+    if (st.sel) {
+      var first = document.querySelector('.watch-p[data-player="' + CSS.escape(st.sel) + '"]');
+      if (first) first.closest("details").open = true;
+    }
+    render();
+    refresh();
+    checkGame();
+    setInterval(tick, 5000);
+    setInterval(function () { if (document.visibilityState === "visible") checkGame(); }, 10000);
+  })();
+</script>
 {% endblock %}
