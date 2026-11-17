@@ -282,6 +282,9 @@ const broken = await worker.fetch(new Request(ORIGIN + "/", { headers: { Cookie:
 check("存储桶出错 → 500 页面，不露出错误细节", broken.status === 500 && !(await broken.text()).includes("R2 坏了"));
 r = await browser().go("PUT", "/");
 check("别的请求方式 → 405", r.status === 405);
+r = await browser().go("HEAD", "/");
+check("HEAD（测速工具）照 GET 回响应头、没有内容", r.status === 200 && r.text === ""
+  && r.headers.get("X-Robots-Tag") === "noindex, nofollow");
 
 console.log(failures ? `\n${failures} / ${checks} 项没通过` : `\n全部通过（${checks} 项）`);
 process.exit(failures ? 1 : 0);

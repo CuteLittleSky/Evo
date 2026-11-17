@@ -66,6 +66,11 @@ export async function handle(request, env, now = Date.now()) {
   const method = request.method;
   const bucket = env.DATA;
 
+  // HEAD（测速、看网站通不通的工具常用）：照 GET 走一遍，只回响应头
+  if (method === "HEAD") {
+    const response = await handle(new Request(request, { method: "GET" }), env, now);
+    return new Response(null, { status: response.status, headers: response.headers });
+  }
   if (path === "/robots.txt") return respond("User-agent: *\nDisallow: /\n", { type: "text/plain; charset=utf-8" });
   if (path === "/app.js") return respond(APP_JS, { type: "text/javascript; charset=utf-8" });
   if (path === "/favicon.ico") return new Response(null, { status: 204, headers: SECURITY });
