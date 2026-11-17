@@ -1248,8 +1248,6 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .watch-mate.on { background: var(--nav-on-bg); border-color: var(--accent); }
 .watch-mate.dis { color: var(--muted); border-style: dashed; border-color: var(--dashed); }  /* 没开播：灰色、虚线框 */
 .watch-mate-sub { font-size: 12px; color: var(--muted); }
-.watch-note { margin: 0; display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; color: var(--muted); }
-.watch-note svg { flex: none; margin-top: 2px; }
 
 .watch-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--card); border-left: 1px solid var(--border); }
 .watch-side-head { padding: 14px 16px 10px; display: flex; flex-direction: column; gap: 10px; }

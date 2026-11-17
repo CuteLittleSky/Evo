@@ -87,9 +87,8 @@ def main():
     out["没开始的赛事也能进来：右上角写什么时候开始，不写\"进行中\""] = (
         f"{panel_esports.day_text(start, NOW)} {start:%H:%M} 开始" in text(soon_head) and "进行中" not in soon_head
         and "es-live-tag" not in soon_head and len(page_data(soon)["players"]) == 3)
-    out["三个去平台的按钮（用浏览器打开）、同队视角、延迟的说明；没有\"上一位 / 下一位\""] = (
-        all(word in words for word in ("发送弹幕", "给主播送礼物", "同队视角",
-                                       "每位选手的直播延迟不一样，比赛通常至少延迟 10 分钟，所以切换后画面时间可能对不上。"))
+    out["三个去平台的按钮（用浏览器打开）、同队视角；没有延迟的说明（用户删了）、没有\"上一位 / 下一位\""] = (
+        all(word in words for word in ("发送弹幕", "给主播送礼物", "同队视角")) and "延迟" not in words
         and raw.count('target="_blank" rel="noopener noreferrer"') == 3 and "上一位" not in raw and "下一位" not in raw)
     apex = re.findall(r'<div class="watch-apex"[^>]*>.*?</div>', raw, re.S)[0]
     out["Apex 提示条先藏着，写着会占用显卡，有\"继续看\"和\"关闭直播\""] = (
