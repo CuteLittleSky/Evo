@@ -1,5 +1,5 @@
-"""在 Evo 窗口里播斗鱼（flv_relay.py、watch_douyu.py、panel_esports.py 的 /esports/play 和 /esports/stream）。
-不联网：视频是这里拼出来的假 FLV，斗鱼的接口换成假的。
+"""在 Evo 窗口里播斗鱼、抖音（flv_relay.py、watch_douyu.py、watch_douyin.py、panel_esports.py 的 /esports/play 和
+/esports/stream）。不联网：视频是这里拼出来的假 FLV，斗鱼、抖音的接口换成假的。
 
 - FLV 拆标签：不管数据怎么分块，拆出来的都一样；不是 FLV 报错；认得出 H.264、H.265（老式和新式两种写法）
 - 中转：第一段原样转；不是 H.264 一开始就报错、什么都不发；
@@ -9,8 +9,12 @@
 - 斗鱼取地址：签名（MD5 连算几遍）、表单里写明不要 H.265、签名材料 5 分钟内不重要、斗鱼不认时重要一次再试；
   清晰度按斗鱼给的顺序、线路现在用的在前；地址怎么拼、限 300 秒的补上不限时、算得出多久到期；
   实际给的是哪一档；刚取过的地址紧接着用一次；默认的线路连不上换别的线路
+- 抖音取地址：各档从好到差、叫什么（抖音菜单上的名字加分辨率或码率）、只有声音的不算；没选过时要码率不超过上限的
+  最好一档；选了按选的；地址换成 https；只要 H.264，一档都没有、没开播说明原因；记着这一场的内部房间号就只问一个请求，
+  没记着、记着的那一场结束了就开直播间网页
 - 面板的接口：问清晰度和播放地址（不是能播的选手回 404、平台开关关了回 404、取不到说明原因）；
-  中转要带口令；一次只播一路，开新的一路上一路就停；不是 H.264 回 502
+  中转要带口令；一次只播一路，开新的一路上一路就停；不是 H.264 回 502；
+  抖音：给页面的是抖音自己的视频地址（页面直接连），不中转
 
 运行：python tests/test_watch_play.py
 """
@@ -27,7 +31,9 @@ import esports_data
 import flv_relay
 import panel_app
 import panel_esports
+import live_status
 import storage
+import watch_douyin
 import watch_douyu
 from flv_relay import AUDIO, SCRIPT, VIDEO
 
@@ -341,6 +347,121 @@ def douyu_checks(out):
         and "wsAuth" in watch_douyu.mask("https://ws.douyucdn.cn/live/520013rABC.flv?wsAuth=secret-token&expire=0"))
 
 
+DOUYIN_TIERS = {  # 档名: (编码, 分辨率, 帧率, 码率)；顺序故意是乱的，ao 只有声音
+    "sd": ("h264", "1280x720", 30, 2_000_000), "uhd": ("h264", "1920x1080", 60, 8_000_000),
+    "md": ("h264", "640x360", 15, 800_000), "ao": ("h264", "", 0, 0), "hd": ("h264", "1280x720", 59, 6_000_000),
+    "ld": ("h264", "960x540", 25, 1_000_000), "origin": ("h264", "", 60, 14_080_000)}
+DOUYIN_MENU = {"ld": "标清", "sd": "高清", "hd": "超清", "uhd": "蓝光"}
+DOUYIN_PAGE = '<html>…{\\"roomInfo\\":{\\"roomId\\":\\"%s\\",\\"web_rid\\":\\"800\\"}}…</html>'
+
+
+def douyin_body(tiers=None, status=2, menu=None, flv=None):
+    """假的抖音房间接口回包。flv：{档名: 地址}，没写的用 http 的假地址。"""
+    tiers = DOUYIN_TIERS if tiers is None else tiers
+    data = {key: {"main": {"flv": (flv or {}).get(key, f"http://pull-q5.douyincdn.com/thirdgame/stream-1_{key}.flv?expire=1&sign=secret-{key}"),
+                           "hls": f"http://pull-q5.douyincdn.com/thirdgame/stream-1_{key}.m3u8",
+                           "sdk_params": json.dumps({"VCodec": codec, "resolution": size, "fps": fps, "vbitrate": bitrate})}}
+            for key, (codec, size, fps, bitrate) in tiers.items()}
+    menu = DOUYIN_MENU if menu is None else menu
+    pull = {"stream_data": json.dumps({"common": {}, "data": data}),
+            "options": {"qualities": [{"sdk_key": key, "name": name} for key, name in menu.items()]}}
+    return json.dumps({"status_code": 0, "data": {"room": {"status": status, "stream_url": {"live_core_sdk_data": {"pull_data": pull}}}}}).encode("utf-8")
+
+
+def douyin_checks(out):
+    found = watch_douyin.parse(douyin_body())
+    out["抖音：各档从好到差，叫抖音菜单上的名字加分辨率（原画写码率）；只有声音的那一档不算"] = (
+        [(q["id"], q["name"]) for q in found["qualities"]] == [
+            ("origin", "原画 14M"), ("uhd", "蓝光 1080P60"), ("hd", "超清 720P60"), ("sd", "高清 720P"),
+            ("ld", "标清 540P"), ("md", "流畅 360P")])
+    small = {**{k: v for k, v in DOUYIN_TIERS.items() if k != "uhd"}, "origin": ("h264", "", 59, 5_885_952)}
+    low = watch_douyin.parse(douyin_body(small, menu={"ld": "标清", "sd": "高清", "hd": "超清", "origin": "蓝光"}))
+    out["抖音：没选过清晰度时要码率不超过上限（9 Mbps）的最好一档：原画 14 Mbps 的房间给 1080p60，原画不到 9 Mbps 的给原画"] = (
+        found["rate"] == "uhd" and low["rate"] == "origin" and low["qualities"][0] == {"id": "origin", "name": "蓝光 6M"})
+    heavy = {"origin": ("h264", "", 60, 20_000_000), "uhd": ("h264", "1920x1080", 60, 12_000_000)}
+    out["抖音：玩家选了就按选的；选的那一档这个房间没有，按没选过的办；每一档都超过上限就要码率最低的"] = (
+        watch_douyin.parse(douyin_body(), "origin")["rate"] == "origin" and watch_douyin.parse(douyin_body(), "ld")["rate"] == "ld"
+        and watch_douyin.parse(douyin_body(small), "uhd")["rate"] == "origin"
+        and watch_douyin.parse(douyin_body(heavy, menu={}))["rate"] == "uhd")
+    odd = watch_douyin.parse(douyin_body(flv={"uhd": "javascript:alert(1)", "hd": "https://pull-flv-q5.douyincdn.com/a/b_hd.flv?sign=x"}))
+    out["抖音：给页面的地址是 https 的（抖音给 http 的换掉）；不像地址的那一档不要"] = (
+        found["url"] == "https://pull-q5.douyincdn.com/thirdgame/stream-1_uhd.flv?expire=1&sign=secret-uhd"
+        and [q["id"] for q in odd["qualities"]] == ["origin", "hd", "sd", "ld", "md"] and odd["rate"] == "hd"
+        and odd["url"] == "https://pull-flv-q5.douyincdn.com/a/b_hd.flv?sign=x" and found["ttl"] is None)
+    mixed = {"origin": ("h265", "", 60, 8_000_000), "hd": ("h264", "1280x720", 60, 6_000_000), "sd": ("bytevc1", "1280x720", 30, 2_000_000)}
+    only = watch_douyin.parse(douyin_body(mixed))
+    problems = []
+    for body in (douyin_body({k: ("h265", *v[1:]) for k, v in DOUYIN_TIERS.items()}), douyin_body(status=4),
+                 douyin_body({}), b'{"status_code": 4001038, "data": {}}', b"<html>"):
+        try:
+            watch_douyin.parse(body)
+            problems.append(None)
+        except watch_douyin.DouyinError as e:
+            problems.append((type(e).__name__, str(e)))
+    out["抖音：只要 H.264 的档；一档都没有、没开播、没给地址、回的不是房间数据：说明原因（页面显示退路）"] = (
+        [q["id"] for q in only["qualities"]] == ["hd"] and only["rate"] == "hd"
+        and problems[0][0] == "DouyinError" and "H.264" in problems[0][1] and problems[1][0] == "NotLive"
+        and problems[2] == ("DouyinError", "抖音没给视频地址") and "4001038" in problems[3][1] and problems[4] is not None)
+
+    asked, replies, page = [], {}, {"inner": "7001000000"}
+
+    def get(url, headers, limit=0, until=None, cookies=False):
+        if url.startswith("https://live.douyin.com/"):
+            asked.append("page")
+            if page["inner"] == "blocked":
+                raise live_status.StatusError("HTTP 403", 403)
+            return (DOUYIN_PAGE % page["inner"] if page["inner"] else "<html>没有</html>").encode("utf-8")
+        inner = url.split("room_id=")[1].split("&")[0]
+        asked.append(inner)
+        return replies[inner]
+
+    def run(rate=None):
+        asked.clear()
+        try:
+            return watch_douyin.resolve("800", rate, get)["rate"], list(asked)
+        except watch_douyin.DouyinError as e:
+            return type(e).__name__, list(asked)
+
+    live_status._douyin_inner.clear()
+    try:
+        replies.update({"7001000000": douyin_body(), "7002000000": douyin_body(small), "7000000000": douyin_body(status=4)})
+        fresh = run("hd")
+        live_status._douyin_inner["800"] = "7001000000"
+        known = run()
+        out["抖音：查开播状态时记着这一场的内部房间号就只问接口一次；没记着先开直播间网页"] = (
+            fresh == ("hd", ["page", "7001000000"]) and known == ("uhd", ["7001000000"]))
+        live_status._douyin_inner["800"] = "7000000000"
+        page["inner"] = "7002000000"
+        restarted = run()
+        page["inner"] = "7000000000"
+        ended = run()
+        out["抖音：记着的那一场结束了，开网页看有没有新的一场：有就播新的，没有说没开播"] = (
+            restarted == ("origin", ["7000000000", "page", "7002000000"]) and ended == ("NotLive", ["7000000000", "page"]))
+        live_status._douyin_inner.clear()
+        page["inner"] = ""
+        missing = run()
+        page["inner"] = "blocked"
+        blocked = run()
+        out["抖音：网页里读不出房间、被拦住：说明原因，不出错"] = (
+            missing == ("DouyinError", ["page"]) and blocked == ("DouyinError", ["page"]))
+    finally:
+        live_status._douyin_inner.clear()
+    out["抖音：打印地址时不带口令"] = "secret" not in watch_douyin.mask(found["url"]) and "douyincdn.com" in watch_douyin.mask(found["url"])
+
+
+class FakeDouyin:
+    """假的"抖音取地址"：页面直接连平台的那一种（DIRECT）。"""
+    DIRECT = True
+
+    def __init__(self):
+        self.asked = []
+
+    def resolve(self, room, rate=None):
+        self.asked.append((room, rate))
+        return {"url": "https://pull-q5.douyincdn.com/thirdgame/stream-1_x.flv?sign=s", "rate": rate or "uhd", "ttl": None,
+                "qualities": [{"id": "uhd", "name": "蓝光 1080P60"}, {"id": "hd", "name": "超清 720P60"}]}
+
+
 class FakeDouyu:
     """假的"斗鱼取地址"：记下被问了什么，视频连接是这里给的。"""
 
@@ -369,7 +490,8 @@ def panel_checks(out):
     now = datetime.now().astimezone()
     players = [{"id": "douyu-520013", "name": "Kite", "team": "甲队", "platform": "douyu", "room": "520013"},
                {"id": "douyu-520014", "name": "Hex", "team": "甲队", "platform": "douyu", "room": "520014"},
-               {"id": "bilibili-6", "name": "Sol", "team": "甲队", "platform": "bilibili", "room": "6"}]
+               {"id": "bilibili-6", "name": "Sol", "team": "甲队", "platform": "bilibili", "room": "6"},
+               {"id": "douyin-800", "name": "Rei", "team": "甲队", "platform": "douyin", "room": "800"}]
     event = {"id": "live", "name": "联赛", "type": "联赛", "stage": "", "start": (now - timedelta(hours=1)).isoformat(),
              "end": (now + timedelta(hours=3)).isoformat(), "teams": ["甲队"]}
 
@@ -386,16 +508,17 @@ def panel_checks(out):
     panel_app.app.config["DB"] = str(db)
     client = panel_app.app.test_client()
     token = panel_app.app.config["TOKEN"]
-    fake = FakeDouyu()
+    fake, fake_douyin = FakeDouyu(), FakeDouyin()
     real = panel_esports.PLAYERS
-    panel_esports.PLAYERS = {"douyu": fake}
+    panel_esports.PLAYERS = {"douyu": fake, "douyin": fake_douyin}
     try:
         serve()
         page = client.get("/esports/live/watch").get_data(as_text=True)
         data = json.loads(page.split('id="watch-data">')[1].split("</script>")[0])
         plays = {p["id"]: p["play"] for p in data["players"]}
-        out["看直播页：斗鱼选手带着问清晰度的接口，B站的没有（用官方播放器）；播放器从面板自己的文件加载，不联网"] = (
-            plays == {"douyu-520013": "/esports/play/douyu-520013", "douyu-520014": "/esports/play/douyu-520014", "bilibili-6": None}
+        out["看直播页：斗鱼、抖音选手带着问清晰度的接口，B站的没有（用官方播放器）；播放器从面板自己的文件加载，不联网"] = (
+            plays == {"douyu-520013": "/esports/play/douyu-520013", "douyu-520014": "/esports/play/douyu-520014", "bilibili-6": None,
+                      "douyin-800": "/esports/play/douyin-800"}
             and data["mpegts_url"] == "/static/vendor/mpegts.js")
         script = client.get("/static/vendor/mpegts.js")
         out["mpegts.js 和它的许可证随面板一起发，类型是脚本"] = (
@@ -447,6 +570,21 @@ def panel_checks(out):
             hevc.status_code == 502 and hevc.get_json()["reason"] == "not_h264"
             and dead.status_code == 502 and dead.get_json()["reason"] == "upstream")
 
+        direct = client.get("/esports/play/douyin-800").get_json()
+        named = client.get("/esports/play/douyin-800?q=hd").get_json()
+        shouted = client.get("/esports/play/douyin-800?q=HD!").get_json()
+        out["抖音：给页面的是抖音自己的视频地址（页面直接连），清晰度用档名选；写得不对的当作没选"] = (
+            direct["ok"] and direct["stream"] == "https://pull-q5.douyincdn.com/thirdgame/stream-1_x.flv?sign=s"
+            and direct["applied"] == "uhd" and [q["id"] for q in direct["qualities"]] == ["uhd", "hd"]
+            and named["applied"] == "hd" and shouted["applied"] == "uhd"
+            and fake_douyin.asked == [("800", None), ("800", "hd"), ("800", None)])
+        fake.bodies = [Body(data_one)]
+        out["抖音不经过本机中转：中转的接口不认它"] = (
+            client.get(f"/esports/stream/douyin-800?q=hd&t={token}").status_code == 404 and len(fake.bodies) == 1)
+        serve({"douyin": False})
+        out["抖音的平台开关关了：不给地址"] = (
+            client.get("/esports/play/douyin-800").status_code == 404 and len(fake_douyin.asked) == 3)
+
         serve({"douyu": False})
         fake.bodies = [Body(data_one)]
         out["平台开关关了：不给地址、不中转（页面改成去平台看）"] = (
@@ -458,11 +596,12 @@ def panel_checks(out):
 
 
 def main():
-    print("在 Evo 窗口里播斗鱼（FLV 拆标签和接续、斗鱼取地址、面板的两个接口）")
+    print("在 Evo 窗口里播斗鱼、抖音（FLV 拆标签和接续、斗鱼取地址、抖音取地址、面板的两个接口）")
     out = {}
     demux_checks(out)
     relay_checks(out)
     douyu_checks(out)
+    douyin_checks(out)
     panel_checks(out)
     return report(out)
 

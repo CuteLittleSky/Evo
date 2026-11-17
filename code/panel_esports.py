@@ -13,8 +13,10 @@
 - 左边：返回、赛事名、播放器、选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点
 - 页面上先把名单画好，谁在播由脚本问 GET /esports/<赛事>/status：页面开着、看得见时每 60 秒问一次
   （这里 50 秒内不重查，开播、下播后 2 分钟内页面跟着变）。顺便带上平台开关（esports.json 10 分钟内下载过就不重下）
-- 能在窗口里播的平台：配置里有 embed_url 的用平台官方的嵌入播放器（现在是 B站）；配置里 player 是 flv 的用 Evo 自己的
-  播放器（mpegts.js，现在是斗鱼）。别的平台、平台开关关了的显示退路"去 X 看"。抖音、虎牙的播放后面几步做
+- 能在窗口里播的平台：配置里有 embed_url 的用平台官方的嵌入播放器（现在是 B站）；配置里 player 是 flv（斗鱼，经过
+  本机中转）、direct（抖音、登录了的 B站，页面直接连平台的视频服务器）的用 Evo 自己的播放器（mpegts.js）。
+  别的平台、平台开关关了的显示退路"去 X 看"。虎牙的播放后面做
+- 抖音：不登录，取地址在 watch_douyin.py（只要 H.264 的档；没选过清晰度时要码率不超过配置里那个数的最好一档）
 - B站：没登录的用官方嵌入播放器（最高 720p）；玩家扫码登录了 B站（bili_login.py，登录信息加密存在本机）以后改用
   Evo 自己的播放器播原画，页面直接连 B站的视频服务器，不经过本机中转（watch_bilibili.py）。
   登录：POST /esports/login/bilibili/start 要二维码（回画好的 SVG）、…/poll 问扫了没有、…/logout 退出；都要带面板的口令
@@ -40,6 +42,7 @@ import game_detect
 import live_status
 import qr
 import watch_bilibili
+import watch_douyin
 import watch_douyu
 
 bp = Blueprint("esports", __name__)
@@ -48,13 +51,13 @@ STATUS_SECONDS = 60        # 赛事页：这么久以内查过开播状态就不
 WATCH_STATUS_SECONDS = 50  # 看直播页：页面每 60 秒问一次，每次都查新的（留 10 秒给同时开着的另一页）
 WATCH_DATA_SECONDS = 600   # 看直播页开着时，这么久重新下载一次 esports.json（平台开关关了以后最慢这么久生效）
 EMBED = {key: platform["embed_url"] for key, platform in live_status.PLATFORMS.items() if platform.get("embed_url")}
-# 用 Evo 自己的播放器播的平台 → 取地址的模块。模块里 DIRECT 是 True 的（B站）：页面直接连平台的视频服务器；
+# 用 Evo 自己的播放器播的平台 → 取地址的模块。模块里 DIRECT 是 True 的（B站、抖音）：页面直接连平台的视频服务器；
 # 别的（斗鱼）：经过本机中转（/esports/stream）
-PLAYERS = {"douyu": watch_douyu, "bilibili": watch_bilibili}
+PLAYERS = {"douyu": watch_douyu, "bilibili": watch_bilibili, "douyin": watch_douyin}
 PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFORMS[key].get("player") in ("flv", "direct")}
 # 要玩家登录了才用 Evo 自己的播放器的平台 → 管登录的模块（没登录的用平台官方的嵌入播放器）
 LOGINS = {"bilibili": bili_login}
-RATE_RE = re.compile(r"-?\d{1,5}")
+RATE_RE = re.compile(r"-?\d{1,5}|[a-z]{1,12}")  # 清晰度：斗鱼、B站是编号，抖音是档名（origin、uhd、hd……）
 _playing = {"relay": None}  # 正在中转的那一路（一次只播一路）
 _playing_lock = threading.Lock()
 log = logging.getLogger("evo")
@@ -209,7 +212,7 @@ def _player(player_id):
 
 
 def _rate():
-    """网址里的 q（清晰度编号）；没写、写得不对是 None（要最好的）。"""
+    """网址里的 q（清晰度的编号或档名）；没写、写得不对是 None（没选过：由取地址的模块定要哪一档）。"""
     wanted = request.args.get("q", "")
     return wanted if RATE_RE.fullmatch(wanted) else None
 

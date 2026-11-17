@@ -4,7 +4,8 @@
    左边：赛事名、播放器、正在看的选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
    名单先由服务器画好（都不能点）；谁在播由下面的脚本每 60 秒问一次 /esports/<赛事>/status，再把在播的点亮。
    能在窗口里播的：配置里有嵌入播放器的平台（B站，放它官方的播放器），和用 Evo 自己的播放器的平台（斗鱼：
-   mpegts.js 连面板的本机中转，控制条是自己的：播放 / 暂停、音量、清晰度、全屏）。别的显示"去 X 看"的退路。
+   mpegts.js 连面板的本机中转；抖音：mpegts.js 直接连抖音的视频服务器。控制条是自己的：播放 / 暂停、音量、
+   清晰度、全屏）。别的显示"去 X 看"的退路。
    B站不登录最高 720p：选手那一行有"登录 B站看原画"，扫码登录以后 B站也改用 Evo 自己的播放器（直接连 B站，不经过中转） #}
 {% block wrap_class %} watch-wrap{% endblock %}
 {% block top %}{% endblock %}
@@ -345,7 +346,7 @@
       $("watch-mates-list").replaceChildren.apply($("watch-mates-list"), mates);
     }
 
-    // ---------- Evo 自己的播放器（斗鱼）：mpegts.js 连面板的本机中转 ----------
+    // ---------- Evo 自己的播放器：mpegts.js 连面板的本机中转（斗鱼），或者直接连平台的视频服务器（抖音、登录了的 B站）----------
     var ICONS = {
       play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"></path>',
       pause: '<path d="M9 6v12M15 6v12"></path>',
@@ -530,7 +531,8 @@
           });
           return item;
         }));
-        // 选了一档、平台给的却是另一档（斗鱼不登录不给原画）：说明白，不让人以为选了没反应
+        // 选了一档、平台给的却是另一档（斗鱼不登录不给原画）：说明白，不让人以为选了没反应。
+        // 选的那一档这个房间根本没有（抖音有的房间没有蓝光）：不说，按钮上写着现在是哪一档
         if (wanted && names[wanted] && wanted !== info.applied) {
           menu.append(el("p", "watch-quality-note", p.platform_name + "没给「" + names[wanted] + "」（多半要登录），现在是「" + (names[info.applied] || "默认") + "」。"));
         }
@@ -548,7 +550,7 @@
           { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: false, autoCleanupSourceBuffer: true, stashInitialSize: 128 });
         st.player = player;
         player.on(mpegts.Events.ERROR, function (type, detail) { failed(detail || type); });
-        // 中转那头结束了（接不上了，或者主播下播）：不自动重连，写明白，给一个按钮
+        // 视频那头结束了（中转接不上了、平台断开了，或者主播下播）：不自动重连，写明白，给一个按钮
         player.on(mpegts.Events.LOADING_COMPLETE, function () {
           if (seq !== st.playSeq) return;
           wait.hidden = false;
@@ -660,7 +662,7 @@
     function autoSelect() {
       if (st.sel || st.closed || !st.status) return;
       var live = data.players.filter(function (p) { return isLive(p.id); });
-      var pick = live.filter(canEmbed)[0] || live[0];
+      var pick = live.filter(function (p) { return canPlay(p) || canEmbed(p); })[0] || live[0];
       if (pick) select(pick.id);
     }
 
