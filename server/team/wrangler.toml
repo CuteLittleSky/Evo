@@ -9,6 +9,10 @@ routes = [
   { pattern = "team.evotracker.cn", custom_domain = true },
 ]
 
+# 定时任务：每 3 分钟从 Liquipedia 抓一步（每次最多 1 个请求，一小时最多 20 次，见 lpsync.js）
+[triggers]
+crons = ["*/3 * * * *"]
+
 # 成员和以后的赛事数据都存在这个不公开的存储桶里（不是放安装包的 evotracker，那个是公开的）
 [[r2_buckets]]
 binding = "DATA"

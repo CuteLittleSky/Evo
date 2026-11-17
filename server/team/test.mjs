@@ -22,5 +22,7 @@ if (args[0] === "--build") {
   await import("./test_members.mjs");
   console.log("\n选手库、赛程、发布");
   await import("./test_esports.mjs");
+  console.log("\nLiquipedia 定时抓取");
+  await import("./test_lp.mjs");
   process.exit(summary());
 }

@@ -29,6 +29,10 @@ import {
   renameTeam, saveEvent, savePlayer, teamsOf,
 } from "./data.js";
 import { preview, publish, setPlatform } from "./publish.js";
+import { liquipediaPage } from "./pages_lp.js";
+import {
+  addTracked, confirmMatch, index, pending, progress, rejectMatch, rejects, removeTracked, requestRefresh, state, tick, tracked,
+} from "./lpsync.js";
 
 const MAX_FORM = 64 * 1024;  // 从 Excel 粘贴一大张表也够
 
@@ -88,6 +92,8 @@ const OK = {
   added: "加好了", saved: "保存好了", deleted: "删掉了", renamed: "队名改好了，赛程里也跟着改了",
   test: "测试文件发好了（写进去以后读回来核对过，一字不差）", official: "正式文件发好了：玩家下次打开 Evo 的赛事页就能看到",
   platform: "平台开关改好了",
+  tracked: "收录了：几分钟内开始抓（每 3 分钟抓一步）", untracked: "不再收录了", refresh: "排上了：几分钟内开始新的一轮",
+  matched: "填好了：选手库里记上了 Liquipedia 页面名", rejected: "记下了：以后不再这样建议",
 };
 
 function okText(params) {
@@ -149,10 +155,12 @@ export async function handle(request, env, now = Date.now()) {
     return redirect("/", { "Set-Cookie": clearCookie() });
   }
   if (path === "/" && method === "GET") {
-    const [playerItems, eventItems, recent, last] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
-      published(bucket)]);
+    const [playerItems, eventItems, recent, last, idx, no] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
+      published(bucket), index(bucket), rejects(bucket)]);
+    const pend = pending(playerItems, idx, no);
     return respond(homePage(me, { now, recent, stats: { players: playerItems.length, teams: teamsOf(playerItems).size,
-      events: eventItems.length, published: last } }));
+      events: eventItems.length, published: last, lpPlayers: Object.values(idx.players).filter((x) => !x.missing).length,
+      pending: pend.suggestions.length + pend.missing.length } }));
   }
   if (path === "/log" && method === "GET") return respond(logPage(me, await recentLog(bucket), now));
   const notFound = () => respond(messagePage("没有这个页面", "地址可能写错了。", me), { status: 404 });
@@ -228,6 +236,42 @@ export async function handle(request, env, now = Date.now()) {
     }
   }
 
+  // ---------- Liquipedia ----------
+  if (path === "/liquipedia" || path.startsWith("/liquipedia/")) {
+    const show = async (options = {}, status = 200) => {
+      const [trackedItems, idx, s, playerItems, no] = await Promise.all([tracked(bucket), index(bucket), state(bucket), players(bucket),
+        rejects(bucket)]);
+      return respond(liquipediaPage(me, { tracked: trackedItems, idx, progress: progress(s, now), pend: pending(playerItems, idx, no),
+        keySet: Boolean(String(env.LIQUIPEDIA_API_KEY ?? "").trim()), now, ...options }), { status });
+    };
+    if (method === "GET") return path === "/liquipedia" ? show({ ok: okText(url.searchParams) }) : notFound();
+    if (!can(me, "edit")) return readOnly();
+    try {
+      const form = await readFields(request);
+      if (path === "/liquipedia/track") {
+        await addTracked(bucket, me, form.page, now);
+        return redirect("/liquipedia?ok=tracked");
+      }
+      if (path === "/liquipedia/untrack") {
+        await removeTracked(bucket, me, form.page ?? "", now);
+        return redirect("/liquipedia?ok=untracked");
+      }
+      if (path === "/liquipedia/refresh") {
+        await requestRefresh(bucket);
+        return redirect("/liquipedia?ok=refresh");
+      }
+      if (path === "/liquipedia/match") {
+        if (form.answer === "yes") await confirmMatch(bucket, me, form.player ?? "", form.page ?? "", now);
+        else await rejectMatch(bucket, me, form.player ?? "", form.page ?? "", now);
+        return redirect(`/liquipedia?ok=${form.answer === "yes" ? "matched" : "rejected"}#confirm`);
+      }
+      return notFound();
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      return show({ error: error.message }, 400);
+    }
+  }
+
   // ---------- 发布 ----------
   if (path === "/publish" || path.startsWith("/publish/")) {
     const show = async (options = {}, status = 200) => {
@@ -300,6 +344,10 @@ export async function handle(request, env, now = Date.now()) {
 }
 
 export default {
+  // 定时任务（wrangler.toml 的 crons，每 3 分钟）：从 Liquipedia 抓一步（lpsync.js）
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(tick(env, Date.now()));
+  },
   async fetch(request, env) {
     try {
       return await handle(request, env);
