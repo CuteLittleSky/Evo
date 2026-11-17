@@ -50,6 +50,7 @@ import test_source_run
 import test_stats_page
 import test_summary_page
 import test_teammates
+import test_team_publish
 import test_telemetry
 import test_testers_1104
 import test_traditional
@@ -85,6 +86,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "总览页的地图轮换（下载、中文名、倒计时、过了点、连不上、设置页的开关）": test_map_rotation,
          "开发者公告（和检查新版本共用开关、读公告、显示规则、托盘提醒、提示条）": test_notice,
          "赛事数据（赛事文件的格式和下载、查开播状态、抖音签名、发赛事数据的脚本）": test_esports,
+         "协作网页生成的赛事文件和 tools/esports.py 的一模一样（要 Node.js，没有就跳过）": test_team_publish,
          "赛事页（导航、三块、没读到、几位选手在播）": test_esports_page,
          "看直播页（页面、名单、给脚本的数据、开播状态接口、Apex 接口）": test_esports_watch,
          "在 Evo 窗口里播斗鱼（FLV 拆标签和接续、斗鱼取地址、面板的两个接口）": test_watch_play,

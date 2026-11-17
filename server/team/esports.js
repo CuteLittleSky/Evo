@@ -1,0 +1,372 @@
+// 赛事数据的规则：怎么检查选手库和赛程、怎么生成 Evo 赛事页读的 esports.json（2026-11-17 第 2 步）。
+// 照搬 tools/esports.py（check_players / check_events / build）和 code/esports_data.py（clean），两边要一样：
+// tests/test_team_publish.py 拿同一份数据让两边各生成一次，逐项比；平台名单也和 config/watch.json 比。
+// 那两个文件改了规则，这里跟着改（找「赛事页和看直播」那个窗口商量过：格式 version 1 不变）。
+
+import { Refuse } from "./store.js";
+
+// 同 config/watch.json 的 platforms（顺序也一样）
+export const PLATFORMS = {
+  douyu: { name: "斗鱼", room: "https://www.douyu.com/{room}" },
+  huya: { name: "虎牙", room: "https://www.huya.com/{room}" },
+  bilibili: { name: "B站", room: "https://live.bilibili.com/{room}" },
+  douyin: { name: "抖音", room: "https://live.douyin.com/{room}" },
+};
+export const TYPES = { 联赛: "league", 训练赛: "scrim", 杯赛: "cup" };
+export const TEAM_SIZE = 3;
+export const USUAL_TEAMS = 20;
+export const RECENT_DAYS = 7;
+export const EXAMPLE = "示例";
+export const VERSION = 1;
+const ROOM = /^\d{1,24}$/;
+const ID = /^[A-Za-z0-9_-]{1,40}$/;
+const MAX_PLAYERS = 2000;   // Evo 读的时候只看前这么多（esports_data.clean）
+const MAX_EVENTS = 200;
+const MAX_EVENT_TEAMS = 60;
+const DAY = 24 * 3600 * 1000;
+const HOUR = 3600 * 1000;
+
+export function roomUrl(platform, room) {
+  return PLATFORMS[platform]?.room.replace("{room}", room) ?? "";
+}
+
+// ---------- 文字、时间 ----------
+
+// 去掉两头空格、中间连续的空白并成一个（同 esports_data._text 和 tools/esports.py 读表时的做法）
+export function squash(value) {
+  return String(value ?? "").split(/\s+/).filter(Boolean).join(" ");
+}
+
+export function length(text) {
+  return [...text].length;  // 按字算（同 Python 的 len），不按 UTF-16
+}
+
+const TIME = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})[\sT]+(\d{1,2})[:：](\d{2})(?::\d{2})?$/;
+
+// "2026-11-17 19:00"（北京时间；Excel 改成 2026/11/17 19:00、网页上的 2026-11-17T19:00 也认）→ 毫秒；写错了 null
+export function parseBeijing(text) {
+  const found = TIME.exec(squash(text));
+  if (!found) return null;
+  const [y, mo, d, h, mi] = found.slice(1).map(Number);
+  const ms = Date.UTC(y, mo - 1, d, h - 8, mi);
+  const back = new Date(ms + 8 * HOUR);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d || h > 23 || mi > 59) return null;
+  return ms;
+}
+
+// 毫秒 → "2026-11-17T19:00:00+08:00"（同 Python 带时区的 isoformat）
+export function isoBeijing(ms) {
+  return new Date(ms + 8 * HOUR).toISOString().slice(0, 19) + "+08:00";
+}
+
+// "2026-11-17T19:00:00+08:00" → 毫秒（带时区的才认，同 esports_data.parse_time）
+export function parseIso(text) {
+  if (typeof text !== "string" || !/(Z|[+-]\d{2}:\d{2})$/.test(text)) return null;
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+export function beijingText(ms) {
+  return new Date(ms + 8 * HOUR).toISOString().slice(0, 16).replace("T", " ");
+}
+
+// ---------- 一条选手、一场赛事（保存时就查，错了不让存） ----------
+
+function required(value, label, max) {
+  const text = squash(value);
+  if (!text) throw new Refuse(`「${label}」不能空着`);
+  if (length(text) > max) throw new Refuse(`「${label}」最多 ${max} 个字`);
+  return text;
+}
+
+// 平台写中文名或英文都认
+export function platformKey(value) {
+  const text = squash(value);
+  if (Object.hasOwn(PLATFORMS, text)) return text;
+  const found = Object.entries(PLATFORMS).find(([, p]) => p.name === text || p.name.toLowerCase() === text.toLowerCase());
+  return found ? found[0] : null;
+}
+
+export function cleanPlayerFields(form) {
+  const name = required(form.name, "选手", 40);
+  const team = required(form.team, "战队", 40);
+  const platform = platformKey(form.platform);
+  if (!platform) throw new Refuse(`平台「${squash(form.platform)}」不认识，只能是 ${Object.values(PLATFORMS).map((p) => p.name).join(" / ")}`);
+  const room = squash(form.room);
+  if (!ROOM.test(room)) throw new Refuse(`房间号「${room}」只能是数字（直播间地址最后那串数字；虎牙要数字房间号）`);
+  const liquipedia = squash(form.liquipedia);
+  if (length(liquipedia) > 100) throw new Refuse("Liquipedia 页面名最多 100 个字");
+  return { name, team, platform, room, liquipedia };
+}
+
+export function cleanEventFields(form, knownTeams) {
+  const name = required(form.name, "名称", 80);
+  const stage = squash(form.stage);
+  if (length(stage) > 80) throw new Refuse("「阶段」最多 80 个字");
+  const type = squash(form.type);
+  if (!Object.hasOwn(TYPES, type)) throw new Refuse(`类型「${type}」不认识，只能是 ${Object.keys(TYPES).join(" / ")}`);
+  const start = parseBeijing(form.start);
+  const end = parseBeijing(form.end);
+  if (start === null) throw new Refuse(`开始「${squash(form.start)}」要写成 2026-11-17 19:00（北京时间）`);
+  if (end === null) throw new Refuse(`结束「${squash(form.end)}」要写成 2026-11-17 19:00（北京时间）`);
+  if (end <= start) throw new Refuse("结束要晚于开始");
+  const teams = [];
+  for (const raw of form.teams ?? []) {
+    const team = squash(raw);
+    if (!team) continue;
+    if (teams.includes(team)) throw new Refuse(`队伍「${team}」写了两次`);
+    if (knownTeams && !knownTeams.includes(team)) throw new Refuse(`队伍「${team}」不在选手库里${closest(team, knownTeams)}`);
+    teams.push(team);
+  }
+  if (!teams.length) throw new Refuse("至少要选一支队伍");
+  if (teams.length > MAX_EVENT_TEAMS) throw new Refuse(`一场最多 ${MAX_EVENT_TEAMS} 支队`);
+  return { name, type, stage, start: isoBeijing(start), end: isoBeijing(end), teams };
+}
+
+// "（是不是「星火电竞」？）"：只找很像的（同 tools/esports.py 用 difflib 的意思，这里用编辑距离）
+export function closest(text, options) {
+  let best = null;
+  let bestScore = 0;
+  for (const option of options) {
+    const score = similarity(text, option);
+    if (score > bestScore) [best, bestScore] = [option, score];
+  }
+  return best && bestScore >= 0.6 ? `（是不是「${best}」？）` : "";
+}
+
+function similarity(a, b) {
+  const x = [...a];
+  const y = [...b];
+  const row = Array.from({ length: y.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= x.length; i++) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= y.length; j++) {
+      const saved = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (x[i - 1] === y[j - 1] ? 0 : 1));
+      previous = saved;
+    }
+  }
+  return 1 - row[y.length] / Math.max(x.length, y.length, 1);
+}
+
+// ---------- 整张表的检查（发布前；选手库页上也显示） ----------
+
+// 选手库：同 check_players（一个选手只能在一支队、同一个平台房间不能重复、一支队正好 3 个人）
+export function checkPlayers(players) {
+  const errors = [];
+  const names = new Map();
+  const rooms = new Map();
+  const teams = new Map();
+  for (const p of players) {
+    if (names.has(p.name)) errors.push(`选手「${p.name}」写了两次（一个选手只能在一支队）`);
+    names.set(p.name, p);
+    const key = `${p.platform}-${p.room}`;
+    if (rooms.has(key)) errors.push(`${PLATFORMS[p.platform]?.name ?? p.platform} 房间 ${p.room} 写了两次（「${rooms.get(key).name}」和「${p.name}」）`);
+    rooms.set(key, p);
+    if (!teams.has(p.team)) teams.set(p.team, []);
+    teams.get(p.team).push(p);
+  }
+  for (const [team, members] of teams) {
+    if (members.length !== TEAM_SIZE) errors.push(`战队「${team}」有 ${members.length} 个人，要正好 ${TEAM_SIZE} 个`);
+  }
+  return { errors, teams: [...teams.keys()] };
+}
+
+// 赛程：同 check_events（队伍都在选手库里、不重复）；一般 20 支队，不是的只提醒
+export function checkEvents(events, knownTeams) {
+  const errors = [];
+  const notes = [];
+  for (const e of events) {
+    for (const team of new Set(e.teams)) {
+      if (e.teams.filter((t) => t === team).length > 1) errors.push(`「${e.name}」：队伍「${team}」写了两次`);
+      if (!knownTeams.includes(team)) errors.push(`「${e.name}」：队伍「${team}」不在选手库里${closest(team, knownTeams)}`);
+    }
+    if (e.teams.length !== USUAL_TEAMS) notes.push(`「${e.name}」有 ${e.teams.length} 支队（一般是 ${USUAL_TEAMS} 支），没写错就不用管`);
+  }
+  return { errors, notes };
+}
+
+// ---------- 生成 esports.json（同 tools/esports.py 的 build） ----------
+
+// players、events 是网页存的样子（按添加的顺序）；switches 是线上现在的平台开关；now 毫秒
+export function build(players, events, switches, now) {
+  const errors = [];
+  const notes = [];
+  const roster = checkPlayers(players);
+  errors.push(...roster.errors);
+  const schedule = checkEvents(events, roster.teams);
+  errors.push(...schedule.errors);
+  notes.push(...schedule.notes);
+
+  const indexed = events.map((e, line) => ({ e, line, start: parseIso(e.start), end: parseIso(e.end) }));
+  const old = indexed.filter((x) => now - x.end > RECENT_DAYS * DAY);
+  if (old.length) notes.push(`${old.length} 场赛事结束超过 ${RECENT_DAYS} 天，不放进去（可以在赛程页删掉）：${old.map((x) => `「${x.e.name}」`).join("、")}`);
+  const kept = [];
+  const ids = new Set();
+  for (const x of indexed.filter((y) => !old.includes(y)).sort((a, b) => a.start - b.start || a.line - b.line)) {
+    const base = `${isoBeijing(x.start).slice(0, 16).replace(/[-:]/g, "").replace("T", "-")}-${TYPES[x.e.type]}`;
+    let id = base;
+    for (let n = 2; ids.has(id); n++) id = `${base}-${n}`;  // 同一时刻开始的同类赛事：后面的加 -2、-3
+    ids.add(id);
+    kept.push({ id, name: x.e.name, type: x.e.type, stage: x.e.stage, start: isoBeijing(x.start), end: isoBeijing(x.end),
+                teams: [...x.e.teams] });
+  }
+  const used = new Set(kept.flatMap((e) => e.teams));
+  const data = {
+    version: VERSION,
+    updated: isoBeijing(Math.floor(now / 1000) * 1000),
+    platforms: Object.fromEntries(Object.keys(PLATFORMS).map((key) => [key, switches?.[key] !== false])),
+    players: players.filter((p) => used.has(p.team)).map((p) => ({ id: `${p.platform}-${p.room}`, name: p.name, team: p.team,
+      platform: p.platform, room: p.room, liquipedia: p.liquipedia ?? "" })),
+    events: kept,
+  };
+  const examples = [...data.players.map((p) => p.name), ...data.events.map((e) => e.name)].filter((t) => t.includes(EXAMPLE));
+  if (examples.length) errors.push(`还有示例数据（${examples.slice(0, 5).join("、")}），删掉再发布`);
+  if (!kept.length) errors.push("没有可以发布的赛事（赛程是空的，或者都结束超过 7 天了）");
+  if (!errors.length) {
+    const checked = clean(data);  // Evo 读的时候会不会去掉哪一条
+    if (checked.players.length !== data.players.length || checked.events.length !== data.events.length) {
+      errors.push("生成的文件里有 Evo 会去掉的条目（名字里有特别的字符？），告诉 Claude 查一下");
+    }
+  }
+  return { data, errors, notes };
+}
+
+// ---------- Evo 读的时候怎么筛（同 esports_data.clean） ----------
+
+function text(value, limit, mandatory = true) {
+  if (typeof value !== "string") return mandatory ? null : "";
+  const t = squash(value);
+  if (length(t) > limit || (mandatory && !t)) return null;
+  return t;
+}
+
+function cleanPlayer(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const name = text(raw.name, 40);
+  const team = text(raw.team, 40);
+  if (typeof raw.id !== "string" || !ID.test(raw.id) || name === null || team === null) return null;
+  if (!Object.hasOwn(PLATFORMS, raw.platform) || typeof raw.room !== "string" || !ROOM.test(raw.room)) return null;
+  return { id: raw.id, name, team, platform: raw.platform, room: raw.room, liquipedia: text(raw.liquipedia, 100, false) || "" };
+}
+
+function cleanEvent(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const name = text(raw.name, 80);
+  const stage = text(raw.stage, 80, false);
+  const start = parseIso(raw.start);
+  const end = parseIso(raw.end);
+  if (typeof raw.id !== "string" || !ID.test(raw.id) || name === null || stage === null) return null;
+  if (!Object.hasOwn(TYPES, raw.type) || start === null || end === null || end <= start || !Array.isArray(raw.teams)) return null;
+  const teams = [];
+  for (const t of raw.teams) {
+    const team = text(t, 40);
+    if (team !== null && !teams.includes(team)) teams.push(team);
+  }
+  return { id: raw.id, name, type: raw.type, stage, start: raw.start, end: raw.end, teams: teams.slice(0, MAX_EVENT_TEAMS) };
+}
+
+function unique(items, check) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of items) {
+    const item = check(raw);
+    if (item && !seen.has(item.id)) {
+      out.push(item);
+      seen.add(item.id);
+    }
+  }
+  return out;
+}
+
+// 整个文件不对（不是这个格式）返回 null
+export function clean(data) {
+  if (!data || typeof data !== "object" || data.version !== VERSION) return null;
+  if (!Array.isArray(data.players) || !Array.isArray(data.events)) return null;
+  const switches = data.platforms && typeof data.platforms === "object" ? data.platforms : {};
+  return {
+    version: VERSION,
+    updated: parseIso(data.updated) !== null ? data.updated : null,
+    platforms: Object.fromEntries(Object.keys(PLATFORMS).map((key) => [key, switches[key] !== false])),
+    players: unique(data.players.slice(0, MAX_PLAYERS), cleanPlayer),
+    events: unique(data.events.slice(0, MAX_EVENTS), cleanEvent),
+  };
+}
+
+// 进行中 / 即将开始 / 已结束
+export function status(event, now) {
+  if (now < parseIso(event.start)) return "upcoming";
+  return now < parseIso(event.end) ? "live" : "ended";
+}
+
+export const STATUS_WORDS = { live: "进行中", upcoming: "即将开始", ended: "已结束" };
+
+// ---------- 从 Excel 粘贴（或 CSV） ----------
+
+// 一段表格文字 → 二维数组。Excel 复制出来是用 Tab 隔开的；CSV 用逗号。格子里有引号、换行时按 CSV 的规矩处理
+export function parseTable(input) {
+  const source = String(input ?? "").replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+  const first = source.split("\n", 1)[0];
+  const sep = first.includes("\t") || !first.includes(",") ? "\t" : ",";
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (quoted) {
+      if (c === '"' && source[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"' && cell === "") quoted = true;
+    else if (c === sep) { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += c;
+  }
+  row.push(cell);
+  rows.push(row);
+  return rows.map((r) => r.map(squash)).filter((r) => r.some(Boolean));
+}
+
+export const PLAYER_COLUMNS = ["选手", "战队", "平台", "房间号", "Liquipedia页面名"];
+export const EVENT_COLUMNS = ["名称", "类型", "阶段", "开始", "结束", "队伍"];
+
+// 第一行是表头（和现在的 CSV 一样）就跳过
+function body(rows, columns) {
+  return rows.length && rows[0][0] === columns[0] && rows[0][1] === columns[1] ? rows.slice(1) : rows;
+}
+
+// 粘贴的选手 → [{行号, 字段}]；有错的行把错写进 errors（"第 3 行：……"）
+export function importPlayers(input) {
+  const errors = [];
+  const out = [];
+  for (const [i, cells] of body(parseTable(input), PLAYER_COLUMNS).entries()) {
+    const [name, team, platform, room, liquipedia = ""] = cells;
+    try {
+      out.push({ line: i + 1, ...cleanPlayerFields({ name, team, platform, room, liquipedia }) });
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      errors.push(`第 ${i + 1} 行：${error.message}`);
+    }
+  }
+  return { rows: out, errors };
+}
+
+// 粘贴的赛程（队伍用顿号「、」隔开） → [{行号, 字段}]
+export function importEvents(input, knownTeams) {
+  const errors = [];
+  const out = [];
+  for (const [i, cells] of body(parseTable(input), EVENT_COLUMNS).entries()) {
+    const [name, type, stage, start, end, teamText = ""] = cells;
+    const teams = teamText.split("、").map(squash).filter(Boolean);
+    try {
+      if (teams.length === 1 && /[，,;；/]/.test(teams[0])) throw new Refuse("队伍要用顿号「、」隔开");
+      out.push({ line: i + 1, ...cleanEventFields({ name, type, stage, start, end, teams }, knownTeams) });
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      errors.push(`第 ${i + 1} 行：${error.message}`);
+    }
+  }
+  return { rows: out, errors };
+}

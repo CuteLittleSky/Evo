@@ -14,5 +14,10 @@ routes = [
 binding = "DATA"
 bucket_name = "evo-team"
 
+# 放安装包的公开存储桶（https://dl.evotracker.cn/）：发布时写 esports.json、esports_test.json 这两个文件，别的一律不碰（publish.js）
+[[r2_buckets]]
+binding = "PUBLIC"
+bucket_name = "evotracker"
+
 [observability]
 enabled = false  # 不记请求日志（里面会有 IP 地址）

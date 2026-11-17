@@ -22,8 +22,15 @@ import {
   sessionCookie, setRole, validId, whoami,
 } from "./auth.js";
 import { APP_JS, homePage, invitePage, layout, loginPage, membersPage, messagePage } from "./pages.js";
+import { eventsPage, logPage, playersPage, publishPage } from "./pages_esports.js";
+import { importEvents, importPlayers } from "./esports.js";
+import {
+  addEvent, addPlayer, deleteEvent, deletePlayer, events, importEventRows, importPlayerRows, players, published, recentLog,
+  renameTeam, saveEvent, savePlayer, teamsOf,
+} from "./data.js";
+import { preview, publish, setPlatform } from "./publish.js";
 
-const MAX_FORM = 8 * 1024;
+const MAX_FORM = 64 * 1024;  // 从 Excel 粘贴一大张表也够
 
 const SECURITY = {
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:; "
@@ -58,6 +65,38 @@ async function readForm(request) {
     return typeof value === "string" ? value : "";
   };
   return { name: get("name"), role: get("role"), publish: get("publish") === "1" };
+}
+
+// 选手、赛事的表单：每一项原样拿出来（勾选的队伍是一串）
+async function readFields(request) {
+  const length = Number(request.headers.get("Content-Length") ?? 0);
+  if (length > MAX_FORM) throw new Refuse("提交的内容太长了：一次少粘贴一些");
+  const out = { teams: [] };
+  if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") ?? "")) return out;
+  const form = await request.formData();
+  for (const [key, value] of form.entries()) {
+    if (typeof value !== "string") continue;
+    if (key === "teams") out.teams.push(value);
+    else out[key] = value;
+  }
+  if ((out.table ?? "").length > MAX_FORM) throw new Refuse("提交的内容太长了：一次少粘贴一些");
+  return out;
+}
+
+// 改好以后回到列表页上显示的那句话（地址里只放代号，不放原话）
+const OK = {
+  added: "加好了", saved: "保存好了", deleted: "删掉了", renamed: "队名改好了，赛程里也跟着改了",
+  test: "测试文件发好了（写进去以后读回来核对过，一字不差）", official: "正式文件发好了：玩家下次打开 Evo 的赛事页就能看到",
+  platform: "平台开关改好了",
+};
+
+function okText(params) {
+  if (params.get("ok") === "imported") {
+    const added = Number.parseInt(params.get("added"), 10) || 0;
+    const changed = Number.parseInt(params.get("changed"), 10) || 0;
+    return `导入好了：新加 ${added} 条，更新 ${changed} 条`;
+  }
+  return OK[params.get("ok")] ?? "";
 }
 
 export async function handle(request, env, now = Date.now()) {
@@ -109,7 +148,112 @@ export async function handle(request, env, now = Date.now()) {
     await logout(bucket, who.sessionHash);
     return redirect("/", { "Set-Cookie": clearCookie() });
   }
-  if (path === "/" && method === "GET") return respond(homePage(me));
+  if (path === "/" && method === "GET") {
+    const [playerItems, eventItems, recent, last] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
+      published(bucket)]);
+    return respond(homePage(me, { now, recent, stats: { players: playerItems.length, teams: teamsOf(playerItems).size,
+      events: eventItems.length, published: last } }));
+  }
+  if (path === "/log" && method === "GET") return respond(logPage(me, await recentLog(bucket), now));
+  const notFound = () => respond(messagePage("没有这个页面", "地址可能写错了。", me), { status: 404 });
+  const readOnly = () => respond(messagePage("不能改", "只读的身份只能看，要改请找管理员。", me), { status: 403 });
+
+  // ---------- 选手库 ----------
+  if (path === "/players" || path.startsWith("/players/") || path === "/teams/rename") {
+    const show = async (options = {}, status = 200) => respond(playersPage(me, await players(bucket), { now, ...options }), { status });
+    if (method === "GET") return path === "/players" ? show({ ok: okText(url.searchParams) }) : notFound();
+    if (!can(me, "edit")) return readOnly();
+    let form = {};
+    try {
+      form = await readFields(request);
+      if (path === "/players/add") {
+        await addPlayer(bucket, me, form, now);
+        return redirect("/players?ok=added");
+      }
+      if (path === "/players/import") {
+        const { rows, errors } = importPlayers(form.table);
+        if (errors.length) throw new Refuse(`没有导入，有 ${errors.length} 处要改：\n${errors.join("\n")}`);
+        if (!rows.length) throw new Refuse("没读到任何一行：在 Excel 里选中表格、复制，再粘贴进来");
+        const result = await importPlayerRows(bucket, me, rows, now);
+        return redirect(`/players?ok=imported&added=${result.added}&changed=${result.changed}`);
+      }
+      if (path === "/teams/rename") {
+        await renameTeam(bucket, me, form.from, form.to, now);
+        return redirect("/players?ok=renamed");
+      }
+      const action = path.match(/^\/players\/([0-9a-f]{8})\/(save|delete)$/);
+      if (!action) return notFound();
+      if (action[2] === "save") await savePlayer(bucket, me, action[1], form, now);
+      else await deletePlayer(bucket, me, action[1], now);
+      return redirect(`/players?ok=${action[2] === "save" ? "saved" : "deleted"}`);
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      return show({ error: error.message, draft: path === "/players/add" ? form : null,
+                    draftTable: path === "/players/import" ? form.table : "" }, 400);
+    }
+  }
+
+  // ---------- 赛程 ----------
+  if (path === "/events" || path.startsWith("/events/")) {
+    const show = async (options = {}, status = 200) => {
+      const [eventItems, playerItems] = await Promise.all([events(bucket), players(bucket)]);
+      return respond(eventsPage(me, eventItems, playerItems, { now, ...options }), { status });
+    };
+    if (method === "GET") return path === "/events" ? show({ ok: okText(url.searchParams) }) : notFound();
+    if (!can(me, "edit")) return readOnly();
+    let form = {};
+    try {
+      form = await readFields(request);
+      if (path === "/events/add") {
+        await addEvent(bucket, me, form, now);
+        return redirect("/events?ok=added");
+      }
+      if (path === "/events/import") {
+        const known = [...teamsOf(await players(bucket)).keys()];
+        const { rows, errors } = importEvents(form.table, known);
+        if (errors.length) throw new Refuse(`没有导入，有 ${errors.length} 处要改：\n${errors.join("\n")}`);
+        if (!rows.length) throw new Refuse("没读到任何一行：在 Excel 里选中表格、复制，再粘贴进来");
+        const result = await importEventRows(bucket, me, rows, now);
+        return redirect(`/events?ok=imported&added=${result.added}&changed=${result.changed}`);
+      }
+      const action = path.match(/^\/events\/([0-9a-f]{8})\/(save|delete)$/);
+      if (!action) return notFound();
+      if (action[2] === "save") await saveEvent(bucket, me, action[1], form, now);
+      else await deleteEvent(bucket, me, action[1], now);
+      return redirect(`/events?ok=${action[2] === "save" ? "saved" : "deleted"}`);
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      return show({ error: error.message, draft: path === "/events/add" ? form : null,
+                    draftTable: path === "/events/import" ? form.table : "" }, 400);
+    }
+  }
+
+  // ---------- 发布 ----------
+  if (path === "/publish" || path.startsWith("/publish/")) {
+    const show = async (options = {}, status = 200) => {
+      const [view, last] = await Promise.all([preview(env, now), published(bucket)]);
+      return respond(publishPage(me, view, last, { now, ...options }), { status });
+    };
+    if (method === "GET") return path === "/publish" ? show({ ok: okText(url.searchParams) }) : notFound();
+    try {
+      if (path === "/publish/test" || path === "/publish/official") {
+        if (!can(me, "publish")) return respond(messagePage("不能发布", "发布要找管理员（或者请管理员给你开发布）。", me), { status: 403 });
+        const target = path.slice("/publish/".length);
+        await publish(env, me, target, now);
+        return redirect(`/publish?ok=${target}`);
+      }
+      if (path === "/publish/platform") {
+        if (me.role !== "admin") return respond(messagePage("不能改", "平台开关只有管理员能改。", me), { status: 403 });
+        const form = await readFields(request);
+        await setPlatform(env, me, form.target, form.platform, form.on === "1", now);
+        return redirect("/publish?ok=platform");
+      }
+      return notFound();
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      return show({ error: error.message }, 400);
+    }
+  }
 
   // ---------- 成员（只有管理员） ----------
   if (path === "/members" || path.startsWith("/members/") || path.startsWith("/invites/")) {
@@ -152,7 +296,7 @@ export async function handle(request, env, now = Date.now()) {
     }
   }
 
-  return respond(messagePage("没有这个页面", "地址可能写错了。", me), { status: 404 });
+  return notFound();
 }
 
 export default {

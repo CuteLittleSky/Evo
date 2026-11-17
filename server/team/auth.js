@@ -10,6 +10,8 @@
 // 改文件用 R2 的 etag 做条件写入：两个人同时改，后写的那个重新读一遍再改，不会冲掉别人的改动。
 // tools/team.py 在命令行里改同一个文件（第一次生成管理员链接），格式要和这里一样。
 
+import { Refuse, randomHex, readDoc, updateDoc } from "./store.js";
+
 export const ROLES = { admin: "管理员", editor: "编辑", viewer: "只读" };
 export const COOKIE = "__Host-evo_team";
 export const KEY = "members.json";
@@ -24,12 +26,7 @@ const NAME_MAX = 20;
 const ID = /^[0-9a-f]{8}$/;
 const TOKEN = /^[A-Za-z0-9_-]{32}$/;
 
-// 给页面看的错误（"至少要留一个管理员"这类），worker.js 把 message 原样显示出来
-export class Refuse extends Error {}
-
-function randomHex(bytes) {
-  return [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+export { Refuse };
 
 // 链接里的口令：24 个随机字节，写成 32 个字母数字（base64url）
 export function newToken() {
@@ -55,26 +52,13 @@ function empty() {
 }
 
 // 读 members.json；还没有这个文件（刚部署）就当作没有人
-export async function load(bucket) {
-  const object = await bucket.get(KEY);
-  if (!object) return { data: empty(), etag: null };
-  const data = JSON.parse(await object.text());
-  data.members ??= [];
-  data.invites ??= [];
-  return { data, etag: object.etag };
+export function load(bucket) {
+  return readDoc(bucket, KEY, empty);
 }
 
-// 读 → change(data) 改 → 写回去；中间有别人写过（etag 变了）就从头再来。change 的返回值原样返回
-export async function update(bucket, change) {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const { data, etag } = await load(bucket);
-    const result = await change(data);
-    const options = { httpMetadata: { contentType: "application/json; charset=utf-8" } };
-    if (etag) options.onlyIf = { etagMatches: etag };
-    const written = await bucket.put(KEY, JSON.stringify(data), options);
-    if (written) return result;
-  }
-  throw new Refuse("刚才有几个人同时在改，没保存上，请再试一次");
+// 读 → change(data) 改 → 写回去（见 store.js）
+export function update(bucket, change) {
+  return updateDoc(bucket, KEY, empty, change);
 }
 
 // 过期的邀请、过期的登录顺手清掉

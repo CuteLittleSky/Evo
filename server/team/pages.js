@@ -52,7 +52,7 @@ p { margin: 0; }
 .brand svg { width: 28px; height: 28px; flex: none; }
 .brand b { font-weight: 700; font-size: 20px; letter-spacing: 3px; }
 .brand span { color: var(--muted); font-size: 14px; }
-.nav { display: flex; gap: 4px; }
+.nav { display: flex; flex-wrap: wrap; gap: 4px; }
 .nav a { display: flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 6px; color: var(--muted); text-decoration: none; }
 .nav a:hover { color: var(--text); }
 .nav a[aria-current="page"] { background: var(--nav-on-bg); color: var(--text); font-weight: 600; }
@@ -138,6 +138,46 @@ details.act[open] { flex: 1 1 100%; }
   details.act[open] { flex: none; }
   details.act[open] > .panel { position: absolute; right: 0; z-index: 5; width: 360px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 }
+
+h3 { font-size: 15px; margin: 4px 0 0; color: var(--muted); font-weight: 600; }
+.badge-warn { border-color: var(--warn-border); color: var(--warn-text); background: var(--warn-bg); }
+.badge-live { border-color: var(--ok-border); color: var(--ok-text); background: var(--ok-bg); }
+.badge-upcoming { border-color: var(--info-border); color: var(--info-text); }
+.badge-ended { color: var(--muted); }
+.warn { color: var(--warn-text); }
+.grow { flex: 1; }
+.plain { margin: 6px 0 0; padding-left: 20px; }
+.note b { font-weight: 600; }
+textarea.input { min-height: 120px; resize: vertical; line-height: 1.5; }
+select.input { appearance: auto; }
+.two { display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 560px) { .two { grid-template-columns: 1fr 1fr; } }
+.fold { padding: 0; }
+.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px;
+  min-height: 56px; padding: 0 20px; font-weight: 600; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after { content: "+"; margin-left: auto; font-size: 20px; color: var(--muted); }
+.fold[open] > summary::after { content: "−"; }
+.fold > form, .fold > div { padding: 0 20px 20px; }
+.inline-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.option-inline { padding: 8px 14px; align-items: center; min-height: 44px; }
+.picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; margin-top: 6px; }
+.pick { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.pick:has(input:checked) { border-color: var(--info-border); background: var(--info-bg); }
+.pick input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--accent); }
+.pick span:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.team-head { margin-bottom: 4px; }
+.team-head h2 { margin: 0; }
+.list.compact .row { padding: 10px 0; }
+.switches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn-small { min-height: 36px; padding: 0 12px; font-size: 14px; }
+.btn[disabled] { opacity: .6; cursor: not-allowed; }
+.tile-count { font-size: 14px; color: var(--text); }
+@media (min-width: 720px) {
+  .fold > summary { padding: 0 24px; }
+  .fold > form, .fold > div { padding: 0 24px 24px; }
+  details.act[open] > .panel-wide { width: min(640px, 90vw); }
+}
 `;
 
 // 复制按钮（微信里复制不了时提示长按）。放在单独的 /app.js：网页只许运行本站的脚本
@@ -200,9 +240,10 @@ export function abilities(member) {
 // ---------- 外框 ----------
 
 export function layout({ title, me = null, current = "", body, narrow = false }) {
+  const link = (href, key, text) => `<a href="${href}"${current === key ? ' aria-current="page"' : ""}>${text}</a>`;
   const nav = me ? `<nav class="nav" aria-label="主导航">
-      <a href="/"${current === "home" ? ' aria-current="page"' : ""}>首页</a>
-      ${me.role === "admin" ? `<a href="/members"${current === "members" ? ' aria-current="page"' : ""}>成员</a>` : ""}
+      ${link("/", "home", "首页")}${link("/players", "players", "选手库")}${link("/events", "events", "赛程")}${link("/publish", "publish", "发布")}
+      ${me.role === "admin" ? link("/members", "members", "成员") : ""}
     </nav>
     <div class="me"><span class="me-name" title="${escape(me.name)}">${escape(me.name)}</span>${roleBadge(me.role)}
       <form method="post" action="/logout"><button class="btn btn-quiet" type="submit">退出</button></form></div>` : "";
@@ -250,7 +291,7 @@ export function invitePage(invite, action) {
   <h1>加入 Evo 赛事数据</h1>
   ${who}
   <form method="post" action="${escape(action)}"><button class="btn btn-primary btn-wide" type="submit">进入</button></form>
-  <p class="muted small">点了以后这个链接就作废了；这台设备的浏览器会记住你 ${SESSION_DAYS} 天。在微信里打开的话，以后也要在微信里打开这个网址。</p>
+  <p class="muted small">点了以后这个链接就作废了；这个浏览器会记住你 ${SESSION_DAYS} 天，以后用同一个浏览器打开 team.evotracker.cn 就行。建议用 Chrome 这类常用的浏览器，不要在微信里直接点开。</p>
 </section>` });
 }
 
@@ -263,24 +304,39 @@ export function messagePage(title, text, me = null) {
 </section>` });
 }
 
-const TILES = [
-  ["选手库", "职业选手、战队和直播间"],
-  ["赛程", "联赛、训练赛、杯赛"],
+const SOON = [
   ["Liquipedia 资料", "自动抓来的选手资料、战队经历和成绩"],
   ["待确认", "名字对不上、两个来源说法不一样的地方，等人点一下"],
 ];
 
-export function homePage(me) {
-  const tiles = TILES.map(([name, text]) => `<div class="tile" aria-disabled="true">
-      <div class="tile-head">${escape(name)}<span class="badge badge-soon">还没上线</span></div><p>${escape(text)}</p></div>`).join("");
-  const members = me.role === "admin" ? `<a class="tile" href="/members">
-      <div class="tile-head">成员<span aria-hidden="true">›</span></div><p>邀请人、改身份、移出</p></a>` : "";
+// 改动记录（首页最近几条、改动记录页）
+export function logList(items, now) {
+  if (!items.length) return `<p class="muted">还没有改动。</p>`;
+  return `<ul class="list compact">${items.map((x) => `<li class="row"><div class="row-main"><div>${escape(x.text)}</div>
+    <div class="row-meta"><span>${escape(x.by)}</span><span>${escape(ago(x.at, now))}</span><span>${escape(beijing(x.at))}</span></div></div></li>`).join("")}</ul>`;
+}
+
+// stats：{players, teams, events, published}，recent：最近几条改动
+export function homePage(me, { stats, recent, now }) {
+  const tile = (href, name, text, count) => `<a class="tile" href="${href}">
+      <div class="tile-head">${escape(name)}<span aria-hidden="true">›</span></div><p>${escape(text)}</p>${count ? `<p class="tile-count">${escape(count)}</p>` : ""}</a>`;
+  const last = stats.published?.official;
+  const tiles = [
+    tile("/players", "选手库", "职业选手、战队和直播间", `${stats.players} 位选手、${stats.teams} 支队`),
+    tile("/events", "赛程", "联赛、训练赛、杯赛", `${stats.events} 场赛事`),
+    tile("/publish", "发布", "生成 Evo 赛事页读的文件", last ? `正式文件：${last.by} ${ago(last.at, now)}发的` : "正式文件还没从这里发过"),
+    me.role === "admin" ? tile("/members", "成员", "邀请人、改身份、移出", "") : "",
+    ...SOON.map(([name, text]) => `<div class="tile" aria-disabled="true">
+      <div class="tile-head">${escape(name)}<span class="badge badge-soon">还没上线</span></div><p>${escape(text)}</p></div>`),
+  ].join("");
   return layout({ title: "首页", me, current: "home", body: `
 <section class="stack">
   <div class="title-row"><h1>你好，${escape(me.name)}</h1>${roleBadge(me.role)}</div>
   <p class="muted">你能做的：${escape(abilities(me))}。</p>
 </section>
-<section class="tiles" aria-label="各个部分">${members}${tiles}</section>` });
+<section class="tiles" aria-label="各个部分">${tiles}</section>
+<section class="card"><div class="title-row"><h2>最近的改动</h2><span class="grow"></span><a class="small" href="/log">全部</a></div>
+  ${logList(recent, now)}</section>` });
 }
 
 function roleFields(name, role, publish) {
@@ -306,8 +362,8 @@ function createdCard(created, origin) {
     <button class="btn btn-primary" type="button" data-copy="invite-link">复制</button></div>
   <ul class="hints">
     <li>用微信发给对方就行。${INVITE_DAYS} 天内有效，打开以后点"进入"就作废，转发给别人也用不了。</li>
+    <li>建议对方把链接复制到 Chrome 这类常用的浏览器里打开：在哪个浏览器里点"进入"，以后就用哪个浏览器打开这个网页。</li>
     <li>链接只显示这一次。没发出去就关掉了的话，在下面"还没用的邀请"里作废它，再生成一个。</li>
-    <li>在微信里点开如果被拦，让对方点右上角"在浏览器中打开"。</li>
   </ul>
 </section>`;
 }

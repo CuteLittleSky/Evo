@@ -68,8 +68,10 @@ SECTIONS = [
         ("server/stats/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
                           "wrangler.toml 部署配置"),
         ("server/team/", "赛事数据的协作网页 team.evotracker.cn（Cloudflare Worker + 不公开的 R2）：worker.js 路由，"
-                         "auth.js 成员、邀请链接、登录，pages.js 页面，test.mjs 测试（node server/team/test.mjs），"
-                         "wrangler.toml 部署配置")]),
+                         "auth.js 成员、邀请链接、登录，store.js 读写存储桶里的 JSON，data.js 选手库、赛程、改动记录，"
+                         "esports.js 检查和生成 esports.json（照 tools/esports.py），publish.js 发布、平台开关，"
+                         "pages.js / pages_esports.js 页面，test.mjs 测试（node server/team/test.mjs；testkit、"
+                         "test_members、test_esports），wrangler.toml 部署配置")]),
     ("测试工具（给玩家的 Evo测试工具.exe）", None, [
         "code/evo_tester.py", "code/tester_window.py", "code/tester_capture.py", "code/tester_info.py",
         "code/tester_projects.py", "code/tester_answers.py"]),
