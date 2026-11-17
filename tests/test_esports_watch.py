@@ -116,7 +116,7 @@ def main():
     out["给脚本的数据：直播间地址按配置拼；只有 B站有嵌入播放器的地址；带上平台开关和两个接口的地址"] = (
         list(by_id) == [f"{p}-{n}" for p in ("douyin", "douyu", "bilibili") for n in (1, 2, 3)]
         and by_id["douyu-1"]["url"] == "https://www.douyu.com/101" and by_id["douyu-3"]["url"] == "https://www.huya.com/103"
-        and by_id["bilibili-2"]["embed"] == "https://www.bilibili.com/blackboard/live/live-activity-player.html?cid=102&quality=0"
+        and by_id["bilibili-2"]["embed"] == "https://www.bilibili.com/blackboard/live/live-activity-player.html?cid=102&quality=1"
         and [p["id"] for p in by_id.values() if p["embed"]] == ["bilibili-1", "bilibili-2"]
         and data["platforms"] == {"douyu": True, "huya": True, "bilibili": True, "douyin": False}
         and data["status_url"] == "/esports/live/status" and data["game_url"] == "/esports/game")
