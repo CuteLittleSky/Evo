@@ -1207,7 +1207,16 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-quality-item.on { background: rgb(236 238 242 / 0.16); font-weight: 600; }
 .watch-quality-item.on::after { content: "✓"; margin-left: auto; padding-left: 12px; }
 .watch-quality-note { margin: 4px 4px 2px; font-size: 12px; line-height: 1.5; color: #B4BAC6; white-space: normal; }
-.watch-stage-box:fullscreen { max-width: none; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
+/* 全屏（播放器那一块占满窗口）。2026-11-17 用户在 Evo 窗口里试：全屏以后控制条和左上角的标记看不见、但点得到。
+   画面上下有黑边，控制条和标记正好都在黑边里：Windows 上的浏览器内核会把"全屏、带黑边的视频"连黑边一起直接交给显卡画，
+   盖住了黑边位置上别的东西（推断的，Claude 这边没重现出来）。所以全屏时：
+   - 播放器缩成居中的 16:9 一块，控制条和标记都压在画面上，不放在黑边里
+   - 黑边不用纯黑（#050506，看起来一样）、视频不完全不透明（0.999）：都是为了不让它走"直接交给显卡"那条路 */
+.watch-stage-box:fullscreen { max-width: none; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; background: #050506; }
+.watch-stage-box:fullscreen .watch-screen { display: flex; align-items: center; justify-content: center; }
+.watch-stage-box:fullscreen .watch-player { position: relative; inset: auto; flex: none; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); }
+.watch-stage-box:fullscreen .watch-video { opacity: 0.999; }
+.watch-stage-box:fullscreen .watch-chips { top: calc((100vh - min(100vh, 100vw * 9 / 16)) / 2 + 12px); left: calc((100vw - min(100vw, 100vh * 16 / 9)) / 2 + 12px); }
 
 .watch-info { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .watch-avatar { width: 44px; height: 44px; font-size: 17px; }
