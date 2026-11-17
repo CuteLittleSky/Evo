@@ -1075,3 +1075,49 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .curve-caption { margin: 8px 0 0 48px; color: var(--muted); font-size: 12px; }
 .curve-plot svg { animation: evo-wipe 800ms cubic-bezier(0.4, 0, 0.2, 1) 100ms backwards; }  /* 和总览页的走势图一样从左往右画出来 */
 .curve-end { animation: evo-pop 300ms cubic-bezier(0.3, 1.6, 0.6, 1) 800ms backwards; }
+
+/* ---------- 赛事页（panel_esports.py、esports.html，2026-11-17 用户定的；样子照用户给的样稿）----------
+   颜色都用上面的变量。"进行中"的红字用 --bad（浅色主题下 --accent 在淡红底上不到 4.5:1），
+   "看直播"按钮用 --p1-bg / --p1-fg（深色主题下白字在 --accent 上只有 3.1:1） */
+.es-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.es-section > h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.es-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.es-live-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 900px) { .es-live-grid { grid-template-columns: minmax(0, 1fr); } }
+.es-card { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.es-card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.es-live-tag { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 600;
+  color: var(--bad); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.es-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.es-tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; color: var(--muted); }
+.es-when { margin-left: auto; font-size: 13px; color: var(--muted); }
+.es-card h3 { margin: 0; font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.es-card-sub { margin: 2px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+/* "几位选手在播"晚一点才到：这一行的高度由按钮定，字到了卡片不变高 */
+.es-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 38px; }
+.es-count { font-size: 13px; color: var(--muted); }
+.es-count .num { color: var(--text); }
+.watch-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 20px; border-radius: 6px;
+  background: var(--p1-bg); color: var(--p1-fg); font-size: 14px; font-weight: 600; white-space: nowrap; transition: filter 0.15s; }
+.watch-btn:hover { filter: brightness(1.08); }
+.watch-btn:active { transform: translateY(1px); }
+.watch-btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.es-none { margin: 0; padding: 20px 24px; color: var(--muted); border-style: dashed; border-color: var(--dashed); }
+.es-list { margin: 0; padding: 0; list-style: none; }
+.es-row { display: grid; grid-template-columns: 128px minmax(0, 1fr) 120px 160px; align-items: center; gap: 16px; padding: 14px 24px; border-top: 1px solid var(--row-border); }
+.es-row:first-child { border-top: 0; }
+.es-row-day { font-size: 12px; color: var(--muted); }
+.es-row-time { display: block; font-size: 18px; }
+.es-row-main { min-width: 0; }
+.es-row-name { font-weight: 600; }
+.es-row-sub, .es-row-teams, .es-row-note { font-size: 13px; color: var(--muted); }
+.es-row-teams .num { color: inherit; }
+.es-row-note { text-align: right; }
+.es-ended { color: var(--muted); }  /* 最近结束：整行灰色（--muted 在卡片上深色 7:1、浅色 5.9:1） */
+@media (max-width: 760px) {
+  .es-row { grid-template-columns: 96px minmax(0, 1fr); }
+  .es-row-teams, .es-row-note { grid-column: 2; text-align: left; }
+}
+.es-foot { margin: 0; font-size: 12px; color: var(--muted); }
+.es-empty-title { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: var(--text); }
+.es-empty-title + .small { margin: 0; }

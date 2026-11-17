@@ -51,7 +51,7 @@ SECTIONS = [
     ("页面", "程序", [
         "code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/radar.py",
         "code/global_stats.py", "code/map_rotation.py"]),
-    ("页面", "赛事、看直播", ["code/esports_data.py", "code/live_status.py", "code/abogus.py"]),
+    ("页面", "赛事、看直播", ["code/panel_esports.py", "code/esports_data.py", "code/live_status.py", "code/abogus.py"]),
     ("页面", "模板（panel/templates/）", ["panel/templates/*.html", "panel/templates/share/*.svg"]),
     ("页面", "图片、字体", [
         ("panel/static/", "样式表 style.css、字体，图标（legends/ 传奇头像由 tools/legend_icons.py 生成、ranks/ 段位、"

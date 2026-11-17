@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ event.name }} · Evo{% endblock %}
+
+{# 看直播页（panel_esports.py）：下一步做。现在只是占位：能从赛事页点进来、点回去 #}
+{% block content %}
+<a class="back-link" href="{{ url_for('esports.page') }}">← 赛事</a>
+<section class="card empty-card">
+  <p class="es-empty-title">{{ event.name }}{% if event.stage %} · {{ event.stage }}{% endif %}</p>
+  <p class="small">看直播页还在做，做好以后从这里看选手的第一视角直播。</p>
+</section>
+{% endblock %}

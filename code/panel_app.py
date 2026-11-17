@@ -1,5 +1,6 @@
 """本地面板：用浏览器查看和修正战绩。只在本机（127.0.0.1）运行；会联网的只有"检查更新"和公告（update_check.py、
-notice_check.py，共用一个开关，可以关掉）、你点了才下载的一键更新（updater.py），和你同意了才发送的匿名统计（telemetry.py）。
+notice_check.py，共用一个开关，可以关掉）、你点了才下载的一键更新（updater.py）、你同意了才发送的匿名统计（telemetry.py），
+和你打开"赛事"页时下载的赛程、查名单里的直播间在不在播（esports_data.py、live_status.py，不发送任何战绩）。
 
 运行：python code/panel_app.py                    读正式数据库 data/evo.db
 演示：python code/panel_app.py --db data/demo.db   读伪数据（先运行 python tools/demo_data.py 生成）
@@ -36,6 +37,7 @@ import global_stats
 import map_rotation
 import mirrorchyan
 import notice_check
+import panel_esports
 import panel_seasons
 import radar
 import ranks
@@ -62,7 +64,8 @@ for _type, _ext in (("text/css", ".css"), ("text/javascript", ".js"), ("font/wof
 
 PER_PAGE = 20
 # 顶部导航：(页面, 显示名)。顺序也决定切换页面时，选中标签的底色从哪边滑过来
-NAV = (("overview", "总览"), ("matches", "战绩"), ("stats", "数据"), ("seasons.page", "赛季"), ("settings", "设置"))
+NAV = (("overview", "总览"), ("matches", "战绩"), ("stats", "数据"), ("seasons.page", "赛季"), ("esports.page", "赛事"),
+       ("settings", "设置"))
 MODES ={"ranked": "排位", "pubs": "匹配", "other": "其他"}
 # 修正表单里可以改的字段：(显示名, 最小值, 最大值)
 EDITABLE = {
@@ -204,6 +207,7 @@ app.config["DB"] = storage.DB_PATH
 if panel_cloud is not None:
     app.register_blueprint(panel_cloud.bp)  # 设置页"微信小程序"：绑定、解绑、立即同步（panel_cloud.py）
 app.register_blueprint(panel_seasons.bp)  # "赛季"页面：录入历史赛季数据（panel_seasons.py）
+app.register_blueprint(panel_esports.bp)  # "赛事"页面：赛事列表，从这里进看直播页（panel_esports.py）
 
 
 # ---------- 数据库连接：每次网页请求打开一次，请求结束时关闭 ----------

@@ -80,7 +80,8 @@ def main():
     client = panel_app.app.test_client()
     home = client.get("/").get_data(as_text=True)
     nav = re.findall(r'<nav class="nav".*?</nav>', home, re.S)[0]
-    out["导航里有\"赛季\"，在\"数据\"和\"设置\"之间"] = text(nav).split() == ["总览", "战绩", "数据", "赛季", "设置"]
+    out["导航里有\"赛季\"，在\"数据\"后面（再后面是 2026-11-17 加的\"赛事\"和\"设置\"）"] = (
+        text(nav).split() == ["总览", "战绩", "数据", "赛季", "赛事", "设置"])
     raw = client.get("/seasons").get_data(as_text=True)
     page = text(raw)
     out["还没有数据：写怎么开始，有\"开始录入\"按钮，没有\"待核对\"一节"] = (

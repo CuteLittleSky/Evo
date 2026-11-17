@@ -413,7 +413,7 @@ def main():
             raise Stop("没有可以上传的赛事（赛程是空的，或者都结束超过 7 天了）")
         if not confirm(args, data, name):
             return 1
-        print(f"\n发好了：玩家下次打开赛事页就能看到" + ("（测试文件，玩家的 Evo 不读）" if args.test else ""))
+        print("\n发好了：" + ("这是测试文件，玩家的 Evo 不读它" if args.test else "玩家下次打开赛事页就能看到"))
         return 0
     except Stop as e:
         print(f"\n❌ {e}")
