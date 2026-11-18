@@ -97,6 +97,28 @@ export function pageFromInput(input) {
 
 // ---------- 整理 ----------
 
+// 选手资料 links 里能直接当直播间用的（2026-11-18 实测 40 人：斗鱼 4、虎牙 1 给的是直播间地址；B站多是个人主页
+// space.bilibili.com、抖音多是 v.douyin.com 短链，那些不是直播间，不用；Twitch、YouTube Evo 不支持）
+const STREAM_LINKS = [
+  ["douyu", /^https?:\/\/(?:www\.)?douyu\.com\/(\d{1,24})\/?(?:[?#].*)?$/i],
+  ["huya", /^https?:\/\/(?:www\.)?huya\.com\/(\d{1,24})\/?(?:[?#].*)?$/i],
+  ["bilibili", /^https?:\/\/live\.bilibili\.com\/(\d{1,24})\/?(?:[?#].*)?$/i],
+  ["douyin", /^https?:\/\/live\.douyin\.com\/([A-Za-z0-9_]{1,24})\/?(?:[?#].*)?$/i],
+];
+
+export function streamsFromLinks(links) {
+  const urls = links && typeof links === "object" ? Object.values(links).filter((v) => typeof v === "string") : [];
+  const out = [];
+  for (const [platform, re] of STREAM_LINKS) {
+    for (const url of urls) {
+      const found = re.exec(url.trim());
+      const room = found ? (platform === "douyin" ? found[1].toLowerCase() : found[1]) : null;
+      if (room && !out.some((s) => s.platform === platform && s.room === room)) out.push({ platform, room });
+    }
+  }
+  return out;
+}
+
 // 选手资料。extradata 里 Apex 维基用到的键（2026-11 实测）：signatureLegend1..N、input（Controller / Mouse & Keyboard）
 export function normPlayer(row) {
   if (!row?.pagename) return null;
@@ -119,6 +141,7 @@ export function normPlayer(row) {
     earnings: num(row.earnings),
     input: String(extra.input ?? ""),
     legends,
+    streams: streamsFromLinks(row.links),  // 能直接用的直播间（加进选手库时自动填上）
   };
 }
 
@@ -176,7 +199,7 @@ export function normTournament(row) {
 
 // ---------- 几种请求（每种一次请求，一批页面一起问） ----------
 
-const PLAYER_COLS = "pagename,id,name,localizedname,nationality,nationality2,nationality3,birthdate,teampagename,status,earnings,extradata";
+const PLAYER_COLS = "pagename,id,name,localizedname,nationality,nationality2,nationality3,birthdate,teampagename,status,earnings,extradata,links";
 const SQUAD_COLS = "pagename,link,role,type,status,joindate,leavedate";
 const RESULT_COLS = "pagename,parent,tournament,date,placement,prizemoney,liquipediatier,liquipediatiertype,opponentname,opponentplayers,mode";
 const ROSTER_COLS = "pagename,parent,tournament,date,placement,opponentname,opponenttype,opponentplayers,mode";

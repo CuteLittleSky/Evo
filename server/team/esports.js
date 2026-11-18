@@ -53,6 +53,7 @@ export const NO_STREAM = "none";
 export const NO_STREAM_NAME = "不直播";
 
 export function platformName(key) {
+  if (!key) return "直播间待填";
   return key === NO_STREAM ? NO_STREAM_NAME : PLATFORMS[key]?.name ?? key;
 }
 
@@ -161,6 +162,7 @@ export function cleanPlayerFields(form) {
   const name = required(form.name, "选手", 40);
   const team = required(form.team, "战队", 40);
   const typedPlatform = squash(form.platform);
+  if (!typedPlatform) throw new Refuse("选一个平台（不开直播的选\"不直播\"）");
   const platform = [NO_STREAM, NO_STREAM_NAME].includes(typedPlatform) ? NO_STREAM : platformKey(typedPlatform);
   if (!platform) throw new Refuse(`平台「${typedPlatform}」不认识，只能是 ${[...Object.values(PLATFORMS).map((p) => p.name), NO_STREAM_NAME].join(" / ")}`);
   const raw = squash(form.room);
@@ -288,7 +290,8 @@ export function checkPlayers(players) {
     if (names.has(p.name)) errors.push(`选手「${p.name}」写了两次（一个选手只能在一支队）`);
     names.set(p.name, p);
     const key = `${p.platform}-${p.room}`;
-    if (p.platform !== NO_STREAM) {  // 不直播的没有房间，不查重复
+    if (!p.platform) errors.push(`「${p.name}」的直播间还没填（在选手库里补上，或者平台选"不直播"）`);
+    if (p.platform && p.platform !== NO_STREAM) {  // 不直播的没有房间、待填的还没有房间，都不查重复
       if (rooms.has(key)) errors.push(`${platformName(p.platform)} 房间 ${p.room} 写了两次（「${rooms.get(key).name}」和「${p.name}」）`);
       rooms.set(key, p);
     }
@@ -356,7 +359,7 @@ export function build(players, events, switches, now, teams = {}) {
     version: VERSION,
     updated: isoBeijing(Math.floor(now / 1000) * 1000),
     platforms: Object.fromEntries(Object.keys(PLATFORMS).map((key) => [key, switches?.[key] !== false])),
-    players: players.filter((p) => used.has(p.team)).map((p) => ({ id: playerId(p), name: p.name, team: p.team,
+    players: players.filter((p) => used.has(p.team) && p.platform).map((p) => ({ id: playerId(p), name: p.name, team: p.team,
       platform: p.platform, room: p.room, liquipedia: p.liquipedia ?? "" })),
     events: kept,
   };

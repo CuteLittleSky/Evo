@@ -67,7 +67,7 @@ export function teamsOf(items) {
 }
 
 function playerText(p) {
-  return `${p.name}（${p.team}，${p.platform === NO_STREAM ? "不直播" : `${platformName(p.platform)} ${p.room}`}）`;
+  return `${p.name}（${p.team}，${p.platform === NO_STREAM || !p.platform ? platformName(p.platform) : `${platformName(p.platform)} ${p.room}`}）`;
 }
 
 function stamp(item, by, now) {
@@ -93,7 +93,7 @@ function assertUniquePlayer(items, fields, selfId) {
   for (const other of items) {
     if (other.id === selfId) continue;
     if (other.name === fields.name) throw new Refuse(`已经有一个叫「${fields.name}」的选手了（在「${other.team}」）`);
-    if (fields.platform !== NO_STREAM && other.platform === fields.platform && other.room === fields.room) {
+    if (fields.platform && fields.platform !== NO_STREAM && other.platform === fields.platform && other.room === fields.room) {
       throw new Refuse(`${platformName(fields.platform)} 房间 ${fields.room} 已经是「${other.name}」的了`);
     }
   }
@@ -208,7 +208,7 @@ export async function importPlayerRows(bucket, by, rows, now) {
     }
     const rooms = new Map();
     for (const p of after) {
-      if (p.platform === NO_STREAM) continue;  // 不直播的没有房间
+      if (p.platform === NO_STREAM || !p.platform) continue;  // 不直播的、待填的没有房间
       const key = `${p.platform}-${p.room}`;
       if (rooms.has(key)) errors.push(`${platformName(p.platform)} 房间 ${p.room} 同时是「${rooms.get(key)}」和「${p.name}」的`);
       rooms.set(key, p.name);

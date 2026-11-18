@@ -30,6 +30,7 @@ import {
 } from "./data.js";
 import { preview, publish, setPlatform } from "./publish.js";
 import { liquipediaPage } from "./pages_lp.js";
+import { addFromLiquipedia, eventEntries, teamEntries } from "./lpimport.js";
 import { logoHref, logoPage } from "./pages_logos.js";
 import { LOGO_FILE, library, libraryKey, pickLogo, removeLogo, search, suggest, teamLogos, uploadLogo } from "./logos.js";
 import { proHref, proPage, prosPage, teamProfilePage } from "./pages_pros.js";
@@ -110,6 +111,11 @@ const OK = {
 };
 
 function okText(params) {
+  const count = (key) => Number.parseInt(params.get(key), 10) || 0;
+  if (params.get("ok") === "fromlp") {
+    return `从 Liquipedia 加进来 ${count("added")} 位${count("pending") ? `（${count("pending")} 位直播间待填：在下面补上，或者平台选"不直播"）` : ""}`
+      + `${count("skipped") ? `，跳过 ${count("skipped")} 位（选手库里已经有了）` : ""}`;
+  }
   if (params.get("ok") === "imported") {
     const added = Number.parseInt(params.get("added"), 10) || 0;
     const changed = Number.parseInt(params.get("changed"), 10) || 0;
@@ -312,6 +318,10 @@ export async function handle(request, env, now = Date.now()) {
         await removeTracked(bucket, me, form.page ?? "", now);
         return redirect("/liquipedia?ok=untracked");
       }
+      if (path === "/liquipedia/to-roster") {
+        const r = await addFromLiquipedia(bucket, me, await eventEntries(bucket, form.page ?? ""), `比赛 ${form.page ?? ""}`, now);
+        return redirect(`/players?ok=fromlp&added=${r.added}&pending=${r.pending}&skipped=${r.skipped}`);
+      }
       if (path === "/liquipedia/refresh") {
         await requestRefresh(bucket);
         return redirect("/liquipedia?ok=refresh");
@@ -353,6 +363,20 @@ export async function handle(request, env, now = Date.now()) {
       const d = await load();
       return respond(prosPage(me, { q: url.searchParams.get("q") ?? "", players: d.all, teams: d.teams, linkedBy: d.linkedBy, now }));
     }
+    const toRoster = path.match(/^\/teams\/([^/]+)\/to-roster$/);
+    if (toRoster) {
+      if (method !== "POST") return notFound();
+      if (!can(me, "edit")) return readOnly();
+      const page = decode(toRoster[1]);
+      try {
+        const d = await load();
+        const r = await addFromLiquipedia(bucket, me, teamEntries(d.idx, d.ov, page), `战队 ${page}`, now);
+        return redirect(`/players?ok=fromlp&added=${r.added}&pending=${r.pending}&skipped=${r.skipped}`);
+      } catch (error) {
+        if (!(error instanceof Refuse)) throw error;
+        return respond(messagePage("没有加", error.message, me), { status: 400 });
+      }
+    }
     const teamMatch = path.match(/^\/teams\/([^/]+)$/);
     if (teamMatch) {
       if (method !== "GET") return notFound();
@@ -369,7 +393,8 @@ export async function handle(request, env, now = Date.now()) {
         }
       }
       past.sort((a, b) => (b.s.leave || "").localeCompare(a.s.leave || ""));
-      return respond(teamProfilePage(me, { t, current, past, now }));
+      const inRoster = new Set((await players(bucket)).map((p) => p.liquipedia).filter(Boolean));
+      return respond(teamProfilePage(me, { t, current, past, now, inRoster }));
     }
     const pro = path.match(/^\/pros\/([^/]+)(?:\/(fix|unfix|resolve))?$/);
     const page = pro ? decode(pro[1]) : null;

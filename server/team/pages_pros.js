@@ -147,7 +147,7 @@ ${notes({ error, ok })}
 
 // ---------- 战队页 ----------
 
-export function teamProfilePage(me, { t, current, past, now }) {
+export function teamProfilePage(me, { t, current, past, now, inRoster = new Set() }) {
   const facts = [t.region, t.status === "disbanded" ? `已解散${t.disbanded ? `（${t.disbanded}）` : ""}` : "",
                  t.created ? `${t.created} 成立` : "", t.earnings ? `累计奖金 ${money(t.earnings)}` : ""].filter(Boolean);
   const person = (p, extra = "") => `<li class="row"><div class="row-main">
@@ -159,8 +159,13 @@ export function teamProfilePage(me, { t, current, past, now }) {
   ${facts.length ? `<p>${facts.map(escape).join(" · ")}</p>` : ""}
   <p class="small"><a href="${escape(lpUrl(t.page))}" target="_blank" rel="noopener noreferrer">在 Liquipedia 上看</a></p>
   <p class="small muted">资料 ${escape(ago(t.fetchedAt, now))}从 Liquipedia 抓的。</p></section>
-<section class="card"><h2>现役选手（${current.length}）</h2>
-  ${current.length ? `<ul class="list">${current.map((p) => person(p)).join("")}</ul>` : '<p class="muted">收录的选手里没有现在在这支队的。</p>'}</section>
+<section class="card stack"><h2>现役选手（${current.length}）</h2>
+  ${current.length ? `<ul class="list">${current.map((p) => person(p, inRoster.has(p.page) ? '<span class="badge">已在选手库</span>' : "")).join("")}</ul>`
+    : '<p class="muted">收录的选手里没有现在在这支队的。</p>'}
+  ${can(me, "edit") && current.some((p) => !inRoster.has(p.page)) ? `<form method="post" action="${teamHref(t.page)}/to-roster">
+    <button class="btn btn-primary" type="submit">把现役选手加进选手库（${current.filter((p) => !inRoster.has(p.page)).length} 人）</button></form>
+  <p class="small muted">选手名、队名、Liquipedia 页面名自动填好；Liquipedia 上有斗鱼、虎牙、B站、抖音直播间的，直播间也填好，没有的标"直播间待填"。
+    选手库里已经有的跳过。队名想用中文名，加完在选手库里"改队名"。</p>` : ""}</section>
 <section class="card"><h2>待过的选手（${past.length}）</h2>
   <p class="small muted">只算我们抓了资料的选手（收录的比赛里的人、选手库里连上的人）。</p>
   ${past.length ? `<ul class="list">${past.map(({ p, s }) => person(p, `<span>${escape(s.join || "？")} – ${escape(s.leave || "？")}</span>`)).join("")}</ul>` : '<p class="muted">没有。</p>'}</section>` });

@@ -7,6 +7,7 @@
 //   test_logos.mjs     队徽（队标库、挑选、上传、发布时带上）
 //   test_main.mjs      主舞台（赛事表单、导入第 7 列、发布时带上）
 //   test_nostream.mjs  不直播的选手
+//   test_lpimport.mjs  从 Liquipedia 一键加进选手库
 //
 // 另外几个用法（tests/test_team_publish.py 用，和 tools/esports.py 对照）：
 //   --build 输入.json          输入 {"players", "events", "switches", "now", "teams"}，打印生成的 esports.json 和检查结果
@@ -65,5 +66,7 @@ if (args[0] === "--build") {
   await import("./test_main.mjs");
   console.log("\n不直播的选手");
   await import("./test_nostream.mjs");
+  console.log("\n从 Liquipedia 加进选手库");
+  await import("./test_lpimport.mjs");
   process.exit(summary());
 }

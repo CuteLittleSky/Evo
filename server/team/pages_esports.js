@@ -31,9 +31,10 @@ function platformOptions(selected) {
   return Object.entries(PLATFORMS).map(([key, p]) => `<option value="${key}"${key === selected ? " selected" : ""}>${p.name}</option>`).join("");
 }
 
-// 选手的平台多一个"不直播"（主舞台不能选它）
+// 选手的平台多一个"不直播"（主舞台不能选它）；从 Liquipedia 加进来、直播间还没填的，先显示"请选平台"
 function playerPlatformOptions(selected) {
-  return platformOptions(selected) + `<option value="${NO_STREAM}"${selected === NO_STREAM ? " selected" : ""}>${NO_STREAM_NAME}</option>`;
+  return (selected ? "" : '<option value="" selected>请选平台</option>') + platformOptions(selected)
+    + `<option value="${NO_STREAM}"${selected === NO_STREAM ? " selected" : ""}>${NO_STREAM_NAME}</option>`;
 }
 
 function playerForm(action, p, teamNames, submit) {
@@ -84,7 +85,7 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
     const rows = members.map((p) => `<li class="row">
       <div class="row-main">
         <div class="row-name">${escape(p.name)}</div>
-        <div class="row-meta">${p.platform === NO_STREAM ? '<span class="badge">不直播</span>'
+        <div class="row-meta">${!p.platform ? '<span class="badge badge-warn">直播间待填</span>' : p.platform === NO_STREAM ? '<span class="badge">不直播</span>'
           : `<a href="${escape(roomUrl(p.platform, p.room))}" target="_blank" rel="noopener noreferrer">${PLATFORMS[p.platform].name} ${escape(p.room)}</a>`}
           ${p.liquipedia ? `<span>Liquipedia：${escape(p.liquipedia)}</span>` : ""}<span>${by(p, now)}</span></div>
       </div>

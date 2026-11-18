@@ -71,9 +71,9 @@ SECTIONS = [
                          "auth.js 成员、邀请链接、登录，store.js 读写存储桶里的 JSON，data.js 选手库、赛程、改动记录，"
                          "esports.js 检查和生成 esports.json（照 tools/esports.py），publish.js 发布、平台开关，"
                          "liquipedia.js 问 Liquipedia、整理数据，lpsync.js 定时抓（额度、失败重试）和待确认，"
-                         "overrides.js 手动修正 Liquipedia 的资料，logos.js 战队队徽（队标库、挑选、上传），"
+                         "overrides.js 手动修正 Liquipedia 的资料，lpimport.js 从 Liquipedia 一键加进选手库，logos.js 战队队徽（队标库、挑选、上传），"
                          "pages.js / pages_esports.js / pages_lp.js / pages_pros.js / pages_logos.js 页面，test.mjs 测试（node server/team/test.mjs；"
-                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos、test_main、test_nostream），wrangler.toml 部署配置")]),
+                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos、test_main、test_nostream、test_lpimport），wrangler.toml 部署配置")]),
     ("测试工具（给玩家的 Evo测试工具.exe）", None, [
         "code/evo_tester.py", "code/tester_window.py", "code/tester_capture.py", "code/tester_info.py",
         "code/tester_projects.py", "code/tester_answers.py"]),
