@@ -2,7 +2,7 @@
 // 只读的人能看，看不到改的按钮；编辑能改；能发布的人（管理员、开了发布的编辑）才有发布按钮；平台开关只有管理员。
 
 import { can } from "./auth.js";
-import { EVENT_COLUMNS, MAIN_MAX, NO_STREAM, NO_STREAM_NAME, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TEAM_SIZE, TYPES, beijingText, checkPlayers, isoBeijing,
+import { EVENT_COLUMNS, MAIN_MAX, NO_STREAM, NO_STREAM_NAME, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TYPES, beijingText, checkPlayers, isoBeijing,
   parseBeijing, parseIso, roomUrl, status } from "./esports.js";
 import { teamsOf } from "./data.js";
 import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
@@ -75,8 +75,7 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
     ${playerForm("/players/add", draft ? { ...blank, ...draft, rev: undefined } : blank, teams, "添加")}</details>` : "";
   const sections = [...teams.keys()].map((team) => {
     const members = items.filter((p) => p.team === team);
-    const size = members.length === TEAM_SIZE ? `<span class="badge">${members.length} 人</span>`
-      : `<span class="badge badge-warn">${members.length} 人，要正好 ${TEAM_SIZE} 个</span>`;
+    const size = `<span class="badge">${members.length} 人</span>`;  // 一支队几个人不限（11-18 用户定的）
     const rename = editable ? `<details class="act"><summary class="btn">改队名</summary>
       <form class="panel" method="post" action="/teams/rename"><input type="hidden" name="from" value="${escape(team)}">
         <label class="field">新队名<span class="help">选手库和赛程里一起改</span>
@@ -101,7 +100,7 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
   }).join("");
   return layout({ title: "选手库", me, current: "players", body: `
 <div class="stack"><h1>选手库</h1>
-  <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队要正好 ${TEAM_SIZE} 个人（不开直播的也算上，平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p></div>
+  <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p></div>
 ${notes({ error, ok })}
 ${problems.length ? `<div class="note note-error"><b>发布前要改好：</b><ul class="plain">${problems.map((t) => `<li>${escape(t)}</li>`).join("")}</ul></div>` : ""}
 ${datalist}${add}
@@ -138,7 +137,7 @@ function eventForm(action, e, teams, submit) {
   const chosen = new Set(e.teams ?? []);
   const missing = [...chosen].filter((t) => !teams.has(t));  // 选手库里已经没有的（删了、改名了）也列出来，免得悄悄丢掉
   const boxes = [...teams.entries(), ...missing.map((t) => [t, 0])].map(([team, n]) => `<label class="pick"><input type="checkbox" name="teams" value="${escape(team)}"${chosen.has(team) ? " checked" : ""}>
-      <span>${escape(team)}</span><span class="${n === TEAM_SIZE ? "muted" : "warn"} small">${n ? `${n} 人` : "不在选手库里"}</span></label>`).join("");
+      <span>${escape(team)}</span><span class="${n ? "muted" : "warn"} small">${n ? `${n} 人` : "不在选手库里"}</span></label>`).join("");
   return `<form class="stack" method="post" action="${action}">
     ${e.rev ? `<input type="hidden" name="rev" value="${e.rev}">` : ""}
     <label class="field">名称<input class="input" name="name" value="${escape(e.name)}" maxlength="80" required autocomplete="off"></label>

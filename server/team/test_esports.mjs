@@ -100,7 +100,7 @@ check("名字里的 HTML 照字面显示", escaped.text.includes("&lt;b&gt;坏&l
 await editor.post(`/players/${playerList().find((x) => x.name === "<b>坏</b>").id}/delete`);
 
 r = await editor.get("/players");
-check("人数不对的队标出来", r.text.includes("2 人，要正好 3 个") && r.text.includes("发布前要改好"));
+check("一支队几个人都行：2 人的队不提示", r.text.includes("2 人</span>") && !r.text.includes("要正好"));
 
 // ---------- 修改、两个人同时改 ----------
 const kite = () => playerList().find((x) => x.name === "Kite");
@@ -178,14 +178,14 @@ r = await editor.post("/publish/test");
 check("没开发布的编辑不能发布", r.status === 403 && !env.PUBLIC.objects.has("esports_test.json"));
 await add(editor, "残四", "残队", "douyu", "404");
 r = await admin.get("/publish");
-check("人数不对 → 还不能发布、按钮灰着", r.text.includes("还不能发布") && r.text.includes("战队「残队」有 4 个人") && r.text.includes("disabled"));
-r = await admin.post("/publish/test");
-check("硬发也不行", r.status === 400 && r.text.includes("没有发布") && !env.PUBLIC.objects.has("esports_test.json"));
+check("一支队几个人都行：4 个人的队也能发布", r.text.includes("检查过了，可以发布") && !r.text.includes("要正好"));
 await editor.post(`/players/${playerList().find((x) => x.name === "残四").id}/delete`);
 const third = () => playerList().find((x) => x.team === "残队" && x.room === "403");
 await editor.post(`/players/${third().id}/save`, { name: "示例选手", team: "残队", platform: "douyu", room: "403" });
 r = await admin.get("/publish");
-check("还有示例数据 → 不能发布", r.text.includes("还有示例数据（示例选手）"));
+check("还有示例数据 → 不能发布、按钮灰着", r.text.includes("还有示例数据（示例选手）") && r.text.includes("disabled"));
+r = await admin.post("/publish/test");
+check("硬发也不行", r.status === 400 && r.text.includes("没有发布") && !env.PUBLIC.objects.has("esports_test.json"));
 await editor.post(`/players/${third().id}/save`, { name: "残三", team: "残队", platform: "douyu", room: "403" });
 r = await admin.get("/publish");
 check("改好了 → 可以发布、提醒队伍数和太早的赛事", r.text.includes("检查过了，可以发布") && r.text.includes("一般是 20 支")

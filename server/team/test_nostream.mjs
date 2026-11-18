@@ -1,5 +1,5 @@
 // 不直播的选手的测试（2026-11-18）。由 test.mjs 运行。和 tools/esports.py 逐项对照的在 tests/test_team_publish.py。
-// 走一遍：表单里有"不直播"、房间号可以空着、写了房间号要空着、两个不直播的不算重复、算进一支队 3 人、列表上标出来、
+// 走一遍：表单里有"不直播"、房间号可以空着、写了房间号要空着、两个不直播的不算重复、照样列在队里、列表上标出来、
 // 改成开直播 / 改成不直播、粘贴导入、发布时的编号（none-<选手名 sha256 前 12 位>）、Evo 读的时候不去掉、主舞台不能写不直播。
 
 import { createHash } from "node:crypto";
@@ -46,7 +46,7 @@ check("不直播还写了房间号 → 提示要空着", r.status === 400 && r.t
 r = await add("甲四", "别的队", "快手", "1");
 check("不认识的平台 → 提示里有不直播", r.status === 400 && r.text.includes("只能是 斗鱼 / 虎牙 / B站 / 抖音 / 不直播"));
 r = await editor.get("/players");
-check("列表上标着不直播、安静队 3 人不报人数不对", r.text.includes('<span class="badge">不直播</span>') && !r.text.includes("安静队」有"));
+check("列表上标着不直播", r.text.includes('<span class="badge">不直播</span>') && !r.text.includes("安静队」有"));
 check("改动记录写着不直播", env.DATA.json("log.json").items.some((x) => x.text === "添加选手 甲二（安静队，不直播）"));
 
 // 改成开直播、再改回不直播

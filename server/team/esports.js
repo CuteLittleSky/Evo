@@ -15,7 +15,6 @@ export const PLATFORMS = {
   douyin: { name: "抖音", room: "https://live.douyin.com/{room}", pattern: "[A-Za-z0-9_]{1,24}" },
 };
 export const TYPES = { 联赛: "league", 训练赛: "scrim", 杯赛: "cup" };
-export const TEAM_SIZE = 3;
 export const USUAL_TEAMS = 20;
 export const RECENT_DAYS = 7;
 export const EXAMPLE = "示例";
@@ -46,7 +45,7 @@ export function roomUrl(platform, room) {
 }
 
 // ---------- 不直播的选手（2026-11-18 用户定的做法一；Evo 那边 7fd0220）----------
-// 有的队员不开直播：平台选"不直播"（存成 none）、房间号空着；照样算进"一支队 3 人"，Evo 看直播页照样列出来、标"不直播"。
+// 有的队员不开直播：平台选"不直播"（存成 none）、房间号空着；照样列在队里，Evo 看直播页照样列出来、标"不直播"。
 // esports.json 里 {"id": "none-" + sha256(选手名)[:12], "platform": "none", "room": ""}（同 tools/esports.py 的 player_id）。
 // 主舞台不能写"不直播"（那里必须是真的直播间）。
 export const NO_STREAM = "none";
@@ -280,7 +279,8 @@ function similarity(a, b) {
 
 // ---------- 整张表的检查（发布前；选手库页上也显示） ----------
 
-// 选手库：同 check_players（一个选手只能在一支队、同一个平台房间不能重复、一支队正好 3 个人）
+// 选手库：同 check_players（一个选手只能在一支队、同一个平台房间不能重复）。
+// 一支队几个人不限（2026-11-18 用户定的："允许战队不足 3 人或者超过 3 人，不加 3 人的限制"）
 export function checkPlayers(players) {
   const errors = [];
   const names = new Map();
@@ -299,7 +299,6 @@ export function checkPlayers(players) {
     teams.get(p.team).push(p);
   }
   for (const [team, members] of teams) {
-    if (members.length !== TEAM_SIZE) errors.push(`战队「${team}」有 ${members.length} 个人，要正好 ${TEAM_SIZE} 个`);
   }
   return { errors, teams: [...teams.keys()] };
 }
