@@ -1,6 +1,6 @@
 """多账号：账号对照表（storage.py）和"检测到新的玩家名"弹窗（panel_app.py + base.html）。不用截图。
 
-- 对照表：第一个名字自动成为第一个账号；只差空格的算同一个名字；新名字先单独算一个账号、等回答；
+- 对照表：第一个名字自动成为第一个账号；只差空格、1 / l / I OCR 混淆的算同一个名字；新名字先单独算一个账号、等回答；
   合并后局数加在一起、显示最近一局用的名字；"另一个账号"保持单独；名字还没登记时回答也有效；
   旧数据库（版本 2）升级后有对照表
 - 弹窗（用 Flask 自带的测试客户端，不开浏览器）：有新名字时弹出，名字很像的账号排在前面；没有口令不能提交；
@@ -58,6 +58,13 @@ def table_checks():
     storage.insert_match(conn, {"player_name": "Alt2nd", "ended_at": "2026-10-17 21:00:00"})
     storage.answer_name(conn, "Alt2nd")  # 还没调用过 accounts()：名字还没登记进对照表，回答也要有效
     out["separate"] = summary(conn)
+    conn.close()
+
+    _, conn = new_db("ambiguous", [("Pilot1", "2026-10-16 21:00:00"), ("Pilotl", "2026-10-16 22:00:00")])
+    out["ambiguous"] = (summary(conn), storage.accounts(conn)[0]["names"])
+    storage.answer_name(conn, "Pilotl")  # 用户明确拆成两个账号以后，不再自动替用户合并
+    storage.insert_match(conn, {"player_name": "PilotI", "ended_at": "2026-10-16 23:00:00"})
+    out["ambiguous_conflict"] = summary(conn)
     conn.close()
 
     path = FOLDER / "v2.db"  # 版本 2 的数据库：有 player_name 列，没有对照表
@@ -149,6 +156,15 @@ def switch_checks():
     panel_app.app.config.update(DB=path)
     client = panel_app.app.test_client()
 
+    renamed = client.post("/accounts/display-name", data={"token": token, "account": str(ids["Main"]),
+                                                           "display_name": "我的主号"}, follow_redirects=True)
+    renamed_page = renamed.get_data(as_text=True)
+    main_match = storage.query_matches(conn, names=["Main"])[0][0]["match_id"]
+    out["display_name"] = ("账号展示名已改为 我的主号" in renamed_page and
+                           'value="我的主号"' in renamed_page and "识别名：Main" in renamed_page and
+                           "我的主号" in client.get(f"/share/match/{main_match}.svg").get_data(as_text=True) and
+                           summary(conn) == [("Main", 3, True), ("Alt", 2, True)])
+
     def legends(page):
         return re.findall(r'<option value="([^"]+)"\s*>', page.split('name="legend"')[1].split("</select>")[0]) \
             if 'name="legend"' in page else []
@@ -179,6 +195,10 @@ def switch_checks():
     out["split"] = summary(conn)
     bad = client.post("/accounts/move", data={"token": token, "name": "Alt", "account": "999"}, follow_redirects=True)
     out["bad"] = "要并到的账号不存在" in bad.get_data(as_text=True) and summary(conn) == out["split"]
+    reset = client.post("/accounts/display-name", data={"token": token, "account": str(ids["Main"]),
+                                                         "display_name": ""}, follow_redirects=True)
+    out["display_reset"] = ("已恢复使用识别名 Main" in reset.get_data(as_text=True) and
+                            'value="Main"' in reset.get_data(as_text=True))
     conn.close()
     return out
 
@@ -257,6 +277,10 @@ def main():
     d = delete_checks()
     return report({
         f"第一个名字自动成为账号，只差空格的算同一个名字（{t['first']}）": t["first"] == [("Imperial Hzd", 2, True)],
+        f"1 / l / I 只差 OCR 易混字符时自动归到同一账号，原始识别名都保留（{t['ambiguous']}）":
+            t["ambiguous"] == ([("Pilotl", 2, True)], ["Pilotl", "Pilot1"]),
+        f"用户已确认成两个账号时，不强行重新合并（{t['ambiguous_conflict']}）":
+            t["ambiguous_conflict"] == [("Pilot1", 1, True), ("Pilotl", 1, True), ("PilotI", 1, False)],
         f"新名字先单独算一个账号，等回答（{t['pending']}）":
             t["pending"] == [("Imperial Hzd", 2, True), ("Yukinoshita", 1, False)],
         f"合并后局数相加，显示最近一局的名字（{t['merged']}，用过的名字 {t['names']}）":
@@ -283,6 +307,7 @@ def main():
         f"全部账号：所有局（含没认出玩家名的），段位和走势图提示选一个账号（{s['all']}）": s["all"] == (6, True),
         f"新开的窗口又默认看最近玩的账号（局数 {s['fresh_window']}）": s["fresh_window"] == 2,
         "设置页有\"账号\"一栏，每个名字一行": s["settings_card"],
+        "账号展示名可自定义；识别名和账号匹配不变；清空后恢复识别名": s["display_name"] and s["display_reset"],
         f"设置页：把小号并到主号（{s['moved']}），再拆回来（{s['split']}）":
             s["moved"] == [("Alt", 5, True)] and s["split"] == [("Main", 3, True), ("Alt", 2, True)],
         "设置页：并到不存在的账号，不保存": s["bad"],

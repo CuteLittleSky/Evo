@@ -194,6 +194,8 @@ def partner_qr():
 
 # ---- 多账号 ----
 SIMILAR_NAME = 0.6  # 新名字和某个账号的名字这么像，弹窗里提示"名字很像"（可能是识别误差，也可能是改名）
+ACCOUNT_DISPLAY_NAMES_KEY = "account_display_names"
+ACCOUNT_DISPLAY_NAME_MAX = 32
 
 app = Flask(__name__, template_folder=str(PANEL_DIR / "templates"), static_folder=str(PANEL_DIR / "static"))
 app.secret_key = secrets.token_hex(16)  # 每次启动随机生成，用于页面上的提示消息
@@ -296,7 +298,7 @@ def account_view():
     有 2 个以上时：这个窗口里选过就看选的那个；没选过（每次打开窗口）看最近玩过的账号——在小号上打完、打开 Evo 看到的就是小号。"""
     if "account_view" in g:
         return g.account_view
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     view = {"accounts": everyone, "current": None, "all": False, "names": None}
     if len(everyone) >= 2:
         choice = session.get("account")
@@ -309,6 +311,49 @@ def account_view():
     return view
 
 
+def account_display_names():
+    """当前数据库的账号编号 → 自定义展示名。按数据库文件名分开，演示数据不会串到正式数据。"""
+    all_names = app_settings.get(ACCOUNT_DISPLAY_NAMES_KEY, {})
+    if not isinstance(all_names, dict):
+        return {}
+    names = all_names.get(db_path().name, {})
+    return names if isinstance(names, dict) else {}
+
+
+def display_accounts(accounts):
+    """给账号加 display_name；识别名 name、names、raw 保持原样，继续用于匹配和筛选。"""
+    custom = account_display_names()
+    return [{**a, "display_name": custom.get(str(a["id"])) or a["name"]} for a in accounts]
+
+
+def display_player_name(name):
+    """一个识别名在界面上应显示的账号名；找不到所属账号时照原样显示。"""
+    if not name:
+        return name
+    key = storage.name_key(name)
+    for account in account_view()["accounts"]:
+        if any(storage.name_key(raw) == key for raw in account["raw"]):
+            return account["display_name"]
+    return name
+
+
+def set_account_display_name(account_id, name):
+    """保存或清除当前数据库中一个账号的展示名；name 为空表示恢复识别名。"""
+    all_names = app_settings.get(ACCOUNT_DISPLAY_NAMES_KEY, {})
+    all_names = dict(all_names) if isinstance(all_names, dict) else {}
+    db_names = all_names.get(db_path().name, {})
+    db_names = dict(db_names) if isinstance(db_names, dict) else {}
+    if name:
+        db_names[str(account_id)] = name
+    else:
+        db_names.pop(str(account_id), None)
+    if db_names:
+        all_names[db_path().name] = db_names
+    else:
+        all_names.pop(db_path().name, None)
+    app_settings.set_value(ACCOUNT_DISPLAY_NAMES_KEY, all_names)
+
+
 panel_seasons.account_names = lambda: account_view()["names"]  # "赛季"页面也只看选中的账号
 
 
@@ -317,7 +362,7 @@ def name_question():
     新名字的局在回答之前先单独算一个账号，不会丢。"""
     if session.get("names_later"):
         return None
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     pending = [a for a in everyone if not a["confirmed"]]
     known = [a for a in everyone if a["confirmed"]]
     if not pending:
@@ -328,7 +373,7 @@ def name_question():
         return None
     choices = [{
         "id": a["id"],
-        "name": a["name"],
+        "name": a["display_name"],
         "games": a["games"],
         "last": time_text(a["last"]),
         "similar": max(storage.name_similarity(n, new["name"]) for n in a["names"]) >= SIMILAR_NAME,
@@ -919,10 +964,13 @@ def share_time(ended_at):
 
 
 def share_player(rows):
-    """今日、概况卡片上写的游戏名：分账号时是这个账号的名字，不分时是最近一局认出的名字。"""
-    current = account_view()["current"]
+    """今日、概况卡片上写的名字：优先用账号展示名；看全部账号时用最近一局的识别名。"""
+    view = account_view()
+    current = view["current"]
     if current:
-        return current["name"]
+        return current["display_name"]
+    if len(view["accounts"]) == 1:
+        return view["accounts"][0]["display_name"]
     return next((r["player_name"] for r in reversed(rows) if r["player_name"]), None)
 
 
@@ -1104,7 +1152,7 @@ def matches():
             if r["show_detail"] and r["has_evidence"]:  # 截图的宽高：事先留好位置，下载完不把修改表单推下去
                 r["shot_size"] = screenshots.image_size(storage.get_match(db(), open_id)["evidence_path"])
             if not r["needs_review"]:
-                share = {"player": None if r["player_name"] == "—" else r["player_name"],
+                share = {"player": None if r["player_name"] == "—" else display_player_name(r["player_name"]),
                          "options": [{**share_options("match", match_id=r["id"]), "label": "单局战绩"}]}
 
     return render_template(
@@ -1353,7 +1401,7 @@ def share_match(match_id):
     row = storage.get_match(db(), match_id)
     if row is None:
         abort(404)
-    player = row["player_name"] if share_name_on() else None
+    player = display_player_name(row["player_name"]) if share_name_on() else None
     return share_svg("match", share_match_card(row, storage.teammates_of(db(), match_id), player))
 
 
@@ -1894,7 +1942,7 @@ def update_progress():
 def answer_name():
     """回答弹窗"是不是同一个人"：account = 要合并到的账号编号（同一个人改了名），或 "new"（另一个账号）。"""
     name, choice = request.form.get("name", ""), request.form.get("account", "")
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     new = next((a for a in everyone if not a["confirmed"] and storage.name_key(a["name"]) == storage.name_key(name)), None)
     if new is None:  # 已经回答过了（比如开着两个窗口）
         return back_to_page()
@@ -1907,7 +1955,8 @@ def answer_name():
         flash("没有保存：请选一项", "error")
         return back_to_page()
     storage.answer_name(db(), name, target["id"])
-    flash(f"已合并：{name} 和 {target['name']} 是同一个账号，共 {new['games'] + target['games']} 局", "ok")
+    set_account_display_name(new["id"], None)
+    flash(f"已合并：{name} 和 {target['display_name']} 是同一个账号，共 {new['games'] + target['games']} 局", "ok")
     return back_to_page()
 
 
@@ -1929,7 +1978,7 @@ def move_name():
     """设置页"账号"一栏：把一个名字改到别的账号下（account = 账号编号），或拆成单独一个账号（account = "new"）。
     弹窗里选错了，在这里改回来。"""
     name, choice = request.form.get("name", ""), request.form.get("account", "")
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     owner = next((a for a in everyone if any(storage.name_key(n) == storage.name_key(name) for n in a["names"])), None)
     if owner is None:
         abort(400)
@@ -1947,7 +1996,29 @@ def move_name():
         flash(f"{name} 本来就在这个账号下，没有改动", "ok")
     else:
         storage.answer_name(db(), name, target["id"])
-        flash(f"已把 {name} 并到 {target['name']} 的账号下", "ok")
+        if not any(a["id"] == owner["id"] for a in storage.accounts(db())):
+            set_account_display_name(owner["id"], None)
+        flash(f"已把 {name} 并到 {target['display_name']} 的账号下", "ok")
+    return redirect(url_for("settings"))
+
+
+@app.post("/accounts/display-name")
+def rename_account():
+    """只改账号在 Evo 里的展示名。识别名、账号归属和每局保存的 player_name 都不改。"""
+    target = next((a for a in storage.accounts(db()) if str(a["id"]) == request.form.get("account", "")), None)
+    if target is None:
+        flash("没有保存：账号不存在", "error")
+        return redirect(url_for("settings"))
+    name = " ".join(request.form.get("display_name", "").split())
+    if len(name) > ACCOUNT_DISPLAY_NAME_MAX:
+        flash(f"没有保存：展示名最多 {ACCOUNT_DISPLAY_NAME_MAX} 个字符", "error")
+        return redirect(url_for("settings"))
+    if not name or name == target["name"]:
+        set_account_display_name(target["id"], None)
+        flash(f"已恢复使用识别名 {target['name']}", "ok")
+    else:
+        set_account_display_name(target["id"], name)
+        flash(f"账号展示名已改为 {name}；识别和战绩匹配仍使用游戏里的名字", "ok")
     return redirect(url_for("settings"))
 
 
@@ -1956,7 +2027,7 @@ def delete_account():
     """设置页"账号"一栏的"删除一个账号"（2026-11-05 用户要的，比如不想要的小号）：account = 账号编号。
     删这个账号的所有记录（见 storage.delete_account），删前先把数据库备份一份（同"清空所有战绩"），
     这些局的截图也删（同战绩页删一局，用户决定）。只有 2 个以上账号时才有这一行（只有一个时用"清空所有战绩"）。"""
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     target = next((a for a in everyone if str(a["id"]) == request.form.get("account", "")), None)
     if target is None or len(everyone) < 2:
         flash("没有删除：请选一个账号", "error")
@@ -1964,11 +2035,12 @@ def delete_account():
     backup = db_path().with_name(f"{db_path().name}.bak-account-{datetime.now():%Y%m%d-%H%M%S}")
     storage.backup_db(db(), backup)
     rows, counts = storage.delete_account(db(), target["id"])
+    set_account_display_name(target["id"], None)
     shots = sum(screenshots.discard(db(), row, removing=True) for row in rows)  # 局已经删了：别的局还在用的截图照样不删
     if session.get("account") == target["id"]:  # 正在看的就是它：换回默认（最近玩过的账号）
         session.pop("account")
     also = "".join(f"、{n} {what}" for n, what in ((counts["lobby"], "次大厅段位"), (counts["seasons"], "条历史赛季数据")) if n)
-    flash(f"已删除账号 {target['name']} 的 {counts['matches']} 局战绩{also}" + ("和这些局的截图" if shots else "")
+    flash(f"已删除账号 {target['display_name']} 的 {counts['matches']} 局战绩{also}" + ("和这些局的截图" if shots else "")
           + f"。删除前的数据备份在 {backup}", "ok")
     return redirect(url_for("settings"))
 

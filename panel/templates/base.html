@@ -79,7 +79,7 @@
     <label class="account-label" for="account-select">账号</label>
     <select id="account-select" name="account" onchange="this.form.submit()">
       {% for a in account_view.accounts %}
-      <option value="{{ a.id }}" {{ 'selected' if account_view.current and account_view.current.id == a.id }}>{{ a.name }}{% if not a.confirmed %}（待确认）{% endif %}</option>
+      <option value="{{ a.id }}" {{ 'selected' if account_view.current and account_view.current.id == a.id }}>{{ a.display_name }}{% if not a.confirmed %}（待确认）{% endif %}</option>
       {% endfor %}
       <option value="all" {{ 'selected' if account_view.all }}>全部账号</option>
     </select>

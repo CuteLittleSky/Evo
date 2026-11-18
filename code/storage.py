@@ -513,6 +513,17 @@ def name_key(name):
     return "".join(name.split())
 
 
+def name_match_key(name):
+    """判断是不是同一个玩家名时用：空格不算，OCR 容易混淆的 1、l、I 也按同一个字符比较。
+    原始识别结果仍按 name_key 分开保存；这里只用于归账号、同一次记录和大厅校准。"""
+    return name_key(name).translate(str.maketrans({"1": "l", "I": "l"}))
+
+
+def same_name(a, b):
+    """两个玩家名是否相同（允许空格及 1 / l / I 的 OCR 差异）。"""
+    return name_match_key(a) == name_match_key(b)
+
+
 def name_similarity(a, b):
     """两个玩家名有多像（0 到 1，不管空格）。"""
     return SequenceMatcher(None, name_key(a), name_key(b)).ratio()
@@ -531,9 +542,20 @@ def truncated_of(a, b):
 
 def sync_names(conn):
     """把对局里出现过、对照表里还没有的名字登记进去，每个新名字先单独算一个账号。
+    如果新名字只在 1 / l / I 上和已有名字不同，当作同一个 OCR 名，自动归到已有账号；
     还没有任何已确认的账号时，最早出现的那个名字直接确认（第一个账号不用问）；
     之后的新名字等你在弹窗里回答"是不是同一个人"。"""
-    known = {r[0] for r in conn.execute("SELECT name_key FROM player_names")}
+    registered = list(conn.execute("SELECT name_key, account_id, confirmed FROM player_names"))
+    known = {r["name_key"] for r in registered}
+    matched, conflicts = {}, set()
+    for row in registered:
+        key = name_match_key(row["name_key"])
+        if key in matched and matched[key][0] != row["account_id"]:
+            conflicts.add(key)  # 用户已经把这类名字确认成不同账号，不替用户重新合并
+        else:
+            matched[key] = (row["account_id"], row["confirmed"])
+    for key in conflicts:
+        matched.pop(key, None)
     new = []
     for r in conn.execute("SELECT player_name, MIN(ended_at) AS first FROM matches WHERE player_name IS NOT NULL "
                           "GROUP BY player_name ORDER BY first"):
@@ -546,8 +568,14 @@ def sync_names(conn):
     next_id = conn.execute("SELECT COALESCE(MAX(account_id), 0) + 1 FROM player_names").fetchone()[0]
     have_confirmed = conn.execute("SELECT COUNT(*) FROM player_names WHERE confirmed = 1").fetchone()[0] > 0
     for key in new:
+        equivalent = matched.get(name_match_key(key))
+        if equivalent is not None:
+            conn.execute("INSERT INTO player_names (name_key, account_id, confirmed) VALUES (?, ?, ?)",
+                         (key, equivalent[0], equivalent[1]))
+            continue
         conn.execute("INSERT INTO player_names (name_key, account_id, confirmed) VALUES (?, ?, ?)",
                      (key, next_id, int(not have_confirmed)))
+        matched[name_match_key(key)] = (next_id, int(not have_confirmed))
         next_id, have_confirmed = next_id + 1, True
     conn.commit()
 
