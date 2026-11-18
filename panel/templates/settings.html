@@ -205,46 +205,85 @@
     </section>
 
     {% if accounts %}
-    {# 账号：展示名只改界面；每个识别名仍单独保留，可以改属于哪个账号（弹窗里选错了，在这里改回来） #}
+    {# 账号（2026-11-19 改成每个账号一块，玩家反馈每个名字一行、并过的名字也占一行，越堆越多）：
+       标题是展示名（没改过就是最近一局的名字），下面写局数和用过的名字；改展示名、把名字并到别的账号或拆开收在"改展示名、合并或拆开…"里。
+       待确认的账号（还没回答弹窗）展开着，只有一行"属于哪个账号"，几种写法一起处理（panel_app.move_name） #}
     <section class="card settings-card" aria-labelledby="h-accounts">
       <h2 id="h-accounts">账号</h2>
-      <p class="setting-desc accounts-intro">Evo 仍按识别到的游戏名匹配战绩；展示名只改变界面上的称呼，不会影响识别。认出新名字时会弹窗问你，选错了也可以在这里改。</p>
+      <p class="setting-desc accounts-intro">Evo 按游戏里显示的玩家名区分账号。只差战队标签（如 [DOGE]）、空格或 1 / l / I 的名字自动算同一个；改了名的，认出新名字时会弹窗问你，选错了在这里改。展示名只改 Evo 里的叫法，不影响识别。</p>
       {% for a in accounts %}
-      <form method="post" action="{{ url_for('rename_account') }}" class="setting name-row account-display-row">
-        <input type="hidden" name="token" value="{{ token }}">
-        <input type="hidden" name="account" value="{{ a.id }}">
+      <div class="account-block">
         <div class="setting-text">
-          <label class="setting-name" for="account-display-{{ a.id }}">展示名</label>
-          <div class="setting-desc">识别名：{{ a.names|join('、') }}{% if not a.confirmed %} · 待确认{% endif %}</div>
+          <div class="setting-name account-title"><span class="num">{{ a.display_name }}</span>{% if not a.confirmed %} <span class="tag-review">待确认</span>{% endif %}</div>
+          <div class="setting-desc"><span class="num">{{ a.games }}</span> 局 · 最近一局 {{ a.last_text }}</div>
+          {% if a.names|length > 1 or a.display_name != a.name %}
+          <div class="setting-desc account-names">游戏里的名字：{{ a.names|join('、') }}</div>
+          {% endif %}
         </div>
-        <div class="setting-actions inline">
-          <input type="text" id="account-display-{{ a.id }}" name="display_name" value="{{ a.display_name }}"
-                 maxlength="32" placeholder="{{ a.name }}" aria-label="账号 {{ a.name }} 的展示名">
-          <button type="submit" class="btn">保存</button>
-        </div>
-      </form>
-      {% for one in a.name_stats %}
-      <form method="post" action="{{ url_for('move_name') }}" class="setting name-row">
-        <input type="hidden" name="token" value="{{ token }}">
-        <input type="hidden" name="name" value="{{ one.name }}">
-        <div class="setting-text">
-          <div class="setting-name"><span class="num">{{ one.name }}</span>{% if not a.confirmed %} <span class="tag-review">待确认</span>{% endif %}</div>
-          <div class="setting-desc"><span class="num">{{ one.games }}</span> 局 · 最近一局 {{ one.last_text }}{% if a.names|length > 1 %} · 和 {{ a.names|reject('equalto', one.name)|join('、') }} 是同一个账号{% endif %}</div>
-        </div>
-        <div class="setting-actions">
-          <label class="name-move">
-            <span class="account-label">属于</span>
-            <select name="account" aria-label="{{ one.name }} 属于哪个账号">
-              {% for t in accounts if t.confirmed %}
-              <option value="{{ t.id }}" {{ 'selected' if t.id == a.id }}>{{ t.display_name }}</option>
-              {% endfor %}
-              <option value="new" {{ 'selected' if not a.confirmed }}>单独一个账号</option>
-            </select>
-          </label>
-          <button type="submit" class="btn">保存</button>
-        </div>
-      </form>
-      {% endfor %}
+        <details class="account-manage" {{ 'open' if not a.confirmed }}>
+          <summary>{{ '改展示名、合并或拆开…' if a.confirmed else '属于哪个账号…' }}</summary>
+          <div class="account-manage-body">
+            {% if a.confirmed %}
+            <form method="post" action="{{ url_for('rename_account') }}" class="setting name-row account-display-row">
+              <input type="hidden" name="token" value="{{ token }}">
+              <input type="hidden" name="account" value="{{ a.id }}">
+              <div class="setting-text">
+                <label class="setting-name" for="account-display-{{ a.id }}">展示名</label>
+                <div class="setting-desc">只改 Evo 里的叫法（账号切换、分享图），清空就用最近一局的名字</div>
+              </div>
+              <div class="setting-actions inline">
+                <input type="text" id="account-display-{{ a.id }}" name="display_name" value="{{ a.display_name }}"
+                       maxlength="32" placeholder="{{ a.name }}">
+                <button type="submit" class="btn">保存</button>
+              </div>
+            </form>
+            {% for one in a.name_stats %}
+            <form method="post" action="{{ url_for('move_name') }}" class="setting name-row">
+              <input type="hidden" name="token" value="{{ token }}">
+              <input type="hidden" name="name" value="{{ one.name }}">
+              <div class="setting-text">
+                <div class="setting-name"><span class="num">{{ one.name }}</span></div>
+                <div class="setting-desc"><span class="num">{{ one.games }}</span> 局 · 最近一局 {{ one.last_text }}</div>
+              </div>
+              <div class="setting-actions inline">
+                <label class="name-move">
+                  <span class="account-label">属于</span>
+                  <select name="account" aria-label="{{ one.name }} 属于哪个账号">
+                    {% for t in accounts if t.confirmed %}
+                    <option value="{{ t.id }}" {{ 'selected' if t.id == a.id }}>{{ t.display_name }}</option>
+                    {% endfor %}
+                    <option value="new">单独一个账号</option>
+                  </select>
+                </label>
+                <button type="submit" class="btn">保存</button>
+              </div>
+            </form>
+            {% endfor %}
+            {% else %}
+            <form method="post" action="{{ url_for('move_name') }}" class="setting name-row">
+              <input type="hidden" name="token" value="{{ token }}">
+              <input type="hidden" name="name" value="{{ a.name }}">
+              <div class="setting-text">
+                <div class="setting-name"><span class="num">{{ a.names|join('、') }}</span></div>
+                <div class="setting-desc">改了名就选原来的账号，另一个号选"单独一个账号"</div>
+              </div>
+              <div class="setting-actions inline">
+                <label class="name-move">
+                  <span class="account-label">属于</span>
+                  <select name="account" aria-label="{{ a.names|join('、') }} 属于哪个账号">
+                    {% for t in accounts if t.confirmed %}
+                    <option value="{{ t.id }}">{{ t.display_name }}</option>
+                    {% endfor %}
+                    <option value="new" selected>单独一个账号</option>
+                  </select>
+                </label>
+                <button type="submit" class="btn">保存</button>
+              </div>
+            </form>
+            {% endif %}
+          </div>
+        </details>
+      </div>
       {% endfor %}
       {% if accounts|length >= 2 %}
       {# 删除一个账号的所有记录（2026-11-05 用户要的，比如不想要的小号；panel_app.delete_account）：先选账号，"删除"才能点，

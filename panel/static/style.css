@@ -662,8 +662,16 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .setting-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .setting-actions.inline { flex-wrap: nowrap; flex-shrink: 0; }  /* 下拉框和"保存"按钮并排，不换行（说明文字长时让文字那一栏变窄） */
 .setting-actions form, .danger-zone form { margin: 0; }
-/* 设置页"账号"一栏：每个玩家名一行，右边选属于哪个账号 */
+/* 设置页"账号"一栏（2026-11-19 改成每个账号一块）：标题（展示名）、局数、用过的名字；改展示名、每个名字属于哪个账号
+   收在下面可展开的一栏里（链接样式的 summary 同"更改数据位置…"），展开的内容左边一条竖线，看得出属于上面那个账号 */
 .accounts-intro { margin: -8px 0 4px; line-height: 1.7; }
+.account-block { padding: 14px 0 10px; }
+.account-block + .account-block, .account-block + .setting { border-top: 1px solid var(--row-border); }
+.account-title { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.account-names { margin-top: 2px; overflow-wrap: anywhere; }
+.account-manage { margin-top: 4px; }
+.account-manage-body { margin: 2px 0 4px 2px; padding-left: 16px; border-left: 2px solid var(--row-border); }
+.account-manage-body .setting { padding: 10px 0; }
 .name-row { margin: 0; }
 .name-row .setting-name { overflow-wrap: anywhere; }
 .account-display-row input[type="text"] { width: 200px; max-width: 30vw; }
@@ -734,9 +742,9 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 
 /* 更改数据位置（设置页，data_move.py）：平时收起；检查过一次后展开、显示结果 */
 .move-data { padding: 4px 0 14px; }
-.move-data > summary { display: inline-flex; align-items: center; min-height: 36px; padding: 0 2px; cursor: pointer; color: var(--info-text); border-radius: 4px; }
-.move-data > summary:hover { text-decoration: underline; }
-.move-data > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.move-data > summary, .account-manage > summary { display: inline-flex; align-items: center; min-height: 36px; padding: 0 2px; cursor: pointer; color: var(--info-text); border-radius: 4px; }
+.move-data > summary:hover, .account-manage > summary:hover { text-decoration: underline; }
+.move-data > summary:focus-visible, .account-manage > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .move-data[open] > summary { margin-bottom: 4px; }
 .move-data > .setting-desc { margin: 4px 0 0; }
 .move-form { margin-top: 12px; }

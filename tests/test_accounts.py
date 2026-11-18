@@ -132,6 +132,21 @@ def variant_checks():
                      'id="name-dialog"' not in client.get("/matches").get_data(as_text=True),
                      "共 5 局" in done if case == "merge" else "（2 局）" in done)
         conn.close()
+
+    # 设置页里回答（点了"稍后再问"）：待确认账号只有一行"属于哪个账号"，并过去时两种写法一起走；待确认的账号不能改展示名
+    path, conn = new_db("variants_settings", [("Main", "2026-10-16 20:00:00"), ("Alt1", "2026-10-17 20:00:00"),
+                                              ("Altl", "2026-10-17 21:00:00")])
+    main_id, alt_id = [a["id"] for a in storage.accounts(conn)]
+    panel_app.app.config.update(DB=path)
+    client = panel_app.app.test_client()
+    settings = client.get("/settings").get_data(as_text=True)
+    pending_rows = settings.count('action="/accounts/move"') == 2 and settings.count('action="/accounts/display-name"') == 1
+    renamed = client.post("/accounts/display-name", data={"token": token, "account": str(alt_id), "display_name": "小号"},
+                          follow_redirects=True).get_data(as_text=True)
+    client.post("/accounts/move", data={"token": token, "name": "Altl", "account": str(main_id)})
+    out["settings"] = (pending_rows, "账号不存在" in renamed and panel_app.account_display_names() == {},
+                       [(sorted(a["names"]), a["games"], a["confirmed"]) for a in storage.accounts(conn)])
+    conn.close()
     return out
 
 
@@ -215,7 +230,7 @@ def switch_checks():
     renamed_page = renamed.get_data(as_text=True)
     main_match = storage.query_matches(conn, names=["Main"])[0][0]["match_id"]
     out["display_name"] = ("账号展示名已改为 我的主号" in renamed_page and
-                           'value="我的主号"' in renamed_page and "识别名：Main" in renamed_page and
+                           'value="我的主号"' in renamed_page and "游戏里的名字：Main" in renamed_page and
                            "我的主号" in client.get(f"/share/match/{main_match}.svg").get_data(as_text=True) and
                            summary(conn) == [("Main", 3, True), ("Alt", 2, True)])
 
@@ -242,9 +257,13 @@ def switch_checks():
 
     # 设置页：把小号的名字并到主号，再拆回来；并到不存在的账号
     settings = client.get("/settings").get_data(as_text=True)
-    out["settings_card"] = 'id="h-accounts"' in settings and settings.count('action="/accounts/move"') == 2
+    out["settings_card"] = ('id="h-accounts"' in settings and settings.count('class="account-block"') == 2 and
+                            settings.count('action="/accounts/move"') == 2)
     client.post("/accounts/move", data={"token": token, "name": "Alt", "account": str(ids["Main"])})
     out["moved"] = summary(conn)
+    settings = client.get("/settings").get_data(as_text=True)  # 并过的名字不再各占一块：一个账号一块，下面列出用过的名字
+    out["grouped"] = (settings.count('class="account-block"') == 1 and "游戏里的名字：Alt、Main" in settings and
+                      settings.count('action="/accounts/move"') == 2)
     client.post("/accounts/move", data={"token": token, "name": "Alt", "account": "new"})
     out["split"] = summary(conn)
     bad = client.post("/accounts/move", data={"token": token, "name": "Alt", "account": "999"}, follow_redirects=True)
@@ -358,6 +377,8 @@ def main():
             v["new"] == ([(["Main"], 3, True), (["Alt1", "Altl"], 2, True)], True, True),
         f"弹窗问 Alt1 / Altl 选\"同一个人\"：两种写法都并过去，提示共 5 局，不再弹（{v['merge']}）":
             v["merge"] == ([(["Alt1", "Altl", "Main"], 5, True)], True, True),
+        f"设置页回答待确认账号：只有一行，两种写法一起并过去；待确认的账号不能改展示名（{v['settings']}）":
+            v["settings"] == (True, True, [(["Alt1", "Altl", "Main"], 3, True)]),
         "面板：有新名字时弹窗": p["shown"],
         "弹窗：名字很像的账号排在最前，最后是\"另一个账号\"；只有很像的那个有提示": p["order"] and p["hint"],
         f"没有口令不能提交（状态码 {p['no_token']}）": p["no_token"] == 403,
@@ -375,10 +396,11 @@ def main():
         f"切换后回到原来的页面，去掉页码、展开的局和传奇筛选（{s['redirect']}）": s["redirect"] == "/matches?mode=ranked",
         f"全部账号：所有局（含没认出玩家名的），段位和走势图提示选一个账号（{s['all']}）": s["all"] == (6, True),
         f"新开的窗口又默认看最近玩的账号（局数 {s['fresh_window']}）": s["fresh_window"] == 2,
-        "设置页有\"账号\"一栏，每个名字一行": s["settings_card"],
+        "设置页有\"账号\"一栏，每个账号一块，每个名字一行可以改属于哪个账号": s["settings_card"],
         "账号展示名可自定义；识别名和账号匹配不变；清空后恢复识别名": s["display_name"] and s["display_reset"],
         f"设置页：把小号并到主号（{s['moved']}），再拆回来（{s['split']}）":
             s["moved"] == [("Alt", 5, True)] and s["split"] == [("Main", 3, True), ("Alt", 2, True)],
+        "设置页：并在一起的两个名字只占一块，写着用过的名字": s["grouped"],
         "设置页：并到不存在的账号，不保存": s["bad"],
         "设置页有\"删除一个账号\"，每个账号一项、写着局数": d["form"],
         f"删除账号：没有口令不能删（状态码 {d['no_token']}）；选了不存在的账号不删，有提示":
