@@ -589,7 +589,8 @@ class SeasonWatcher:
             name = self.page.name(frame)
             mine = {storage.untagged_key(k) for k in storage.known_names(self.conn)} | (
                 {storage.untagged_key(self.post.player_name)} if self.post.player_name else set())
-            own = name is not None and (not mine or storage.untagged_key(name) in mine)  # 数据页上的名字不带战队标签
+            own = name is not None and (not mine or any(
+                storage.same_name(storage.untagged_key(name), known) for known in mine))  # 数据页上的名字不带战队标签
             self.owner = (name, own, now)
             if not own:
                 self._say(("owner", name), now, f"数据页上是 {name or '（名字没读出来）'}，不是 Evo 认识的你的名字，不读"

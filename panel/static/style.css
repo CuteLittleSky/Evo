@@ -666,6 +666,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .accounts-intro { margin: -8px 0 4px; line-height: 1.7; }
 .name-row { margin: 0; }
 .name-row .setting-name { overflow-wrap: anywhere; }
+.account-display-row input[type="text"] { width: 200px; max-width: 30vw; }
 .name-move { display: flex; align-items: center; gap: 8px; }
 .name-move select, #delete-account-select { max-width: 200px; text-overflow: ellipsis; }
 .info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }

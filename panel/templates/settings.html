@@ -205,11 +205,24 @@
     </section>
 
     {% if accounts %}
-    {# 多账号：每个玩家名一行，属于哪个账号可以改（弹窗里选错了，在这里改回来）。只能并到已确认的账号 #}
+    {# 账号：展示名只改界面；每个识别名仍单独保留，可以改属于哪个账号（弹窗里选错了，在这里改回来） #}
     <section class="card settings-card" aria-labelledby="h-accounts">
       <h2 id="h-accounts">账号</h2>
-      <p class="setting-desc accounts-intro">Evo 按游戏里显示的玩家名区分账号，改过名的同一个人可以并在一起；账号显示最近一局用的名字。认出新名字时会弹窗问你，选错了在这里改。</p>
+      <p class="setting-desc accounts-intro">Evo 仍按识别到的游戏名匹配战绩；展示名只改变界面上的称呼，不会影响识别。认出新名字时会弹窗问你，选错了也可以在这里改。</p>
       {% for a in accounts %}
+      <form method="post" action="{{ url_for('rename_account') }}" class="setting name-row account-display-row">
+        <input type="hidden" name="token" value="{{ token }}">
+        <input type="hidden" name="account" value="{{ a.id }}">
+        <div class="setting-text">
+          <label class="setting-name" for="account-display-{{ a.id }}">展示名</label>
+          <div class="setting-desc">识别名：{{ a.names|join('、') }}{% if not a.confirmed %} · 待确认{% endif %}</div>
+        </div>
+        <div class="setting-actions inline">
+          <input type="text" id="account-display-{{ a.id }}" name="display_name" value="{{ a.display_name }}"
+                 maxlength="32" placeholder="{{ a.name }}" aria-label="账号 {{ a.name }} 的展示名">
+          <button type="submit" class="btn">保存</button>
+        </div>
+      </form>
       {% for one in a.name_stats %}
       <form method="post" action="{{ url_for('move_name') }}" class="setting name-row">
         <input type="hidden" name="token" value="{{ token }}">
@@ -223,7 +236,7 @@
             <span class="account-label">属于</span>
             <select name="account" aria-label="{{ one.name }} 属于哪个账号">
               {% for t in accounts if t.confirmed %}
-              <option value="{{ t.id }}" {{ 'selected' if t.id == a.id }}>{{ t.name }}</option>
+              <option value="{{ t.id }}" {{ 'selected' if t.id == a.id }}>{{ t.display_name }}</option>
               {% endfor %}
               <option value="new" {{ 'selected' if not a.confirmed }}>单独一个账号</option>
             </select>
@@ -246,7 +259,7 @@
           <select name="account" id="delete-account-select" aria-labelledby="delete-account-name">
             <option value="" selected>选一个账号</option>
             {% for a in accounts %}
-            <option value="{{ a.id }}" data-name="{{ a.name }}" data-games="{{ a.games }}">{{ a.name }}（{{ a.games }} 局）</option>
+            <option value="{{ a.id }}" data-name="{{ a.display_name }}" data-games="{{ a.games }}">{{ a.display_name }}（{{ a.games }} 局）</option>
             {% endfor %}
           </select>
           <button type="submit" class="btn btn-danger" id="delete-account-btn">删除</button>

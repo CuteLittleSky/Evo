@@ -322,7 +322,7 @@ class PostMatch:
         - 和之前的很像：当作识别误差，仍用之前的名字
         - 完全不一样：换了账号（用终端运行时，一次记录可能跨过重启游戏），之后的局记在新名字下"""
         old = self.player_name
-        if old is not None and storage.name_key(name) == storage.name_key(old):
+        if old is not None and storage.same_name(name, old):
             return
         full = storage.truncated_of(name, old) if old is not None else None
         if full is not None and len(storage.name_key(old if full == name else name)) >= TRUNCATED_NAME_MIN:

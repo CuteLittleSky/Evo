@@ -60,7 +60,7 @@ Point = namedtuple("Point", "time score tier match")
 
 
 def _same_player(row_name, name):
-    return name is None or row_name is None or storage.name_key(row_name) == storage.name_key(name)
+    return name is None or row_name is None or storage.same_name(row_name, name)
 
 
 def calibrate(conn, reading, log=print):
