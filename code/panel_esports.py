@@ -13,7 +13,7 @@
 - 左边：返回、赛事名、播放器、选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
   赛程里这场赛事写了主舞台（播导播视角的直播间）时，右边最上面多一栏"主舞台"，和队伍并列（2026-11-18 用户要的）
 - 页面上先把名单画好，谁在播由脚本问 GET /esports/<赛事>/status：页面开着、看得见时每 60 秒问一次
-  （这里 50 秒内不重查，开播、下播后 2 分钟内页面跟着变）。顺便带上平台开关（esports.json 10 分钟内下载过就不重下）
+  （这里 50 秒内不重查，开播、下播后 2 分钟内页面跟着变）。顺便带上平台开关（esports.json 5 分钟内下载过就不重下）
 - 能在窗口里播的平台：配置里有 embed_url 的用平台官方的嵌入播放器（现在是 B站）；配置里 player 是 flv（斗鱼，经过
   本机中转）、direct（抖音、登录了的 B站，页面直接连平台的视频服务器）的用 Evo 自己的播放器（mpegts.js）。
   别的平台（虎牙：用户 2026-11-18 定了不做）、平台开关关了的显示退路"去 X 看"
@@ -50,7 +50,8 @@ bp = Blueprint("esports", __name__)
 WEEKDAYS = "一二三四五六日"
 STATUS_SECONDS = 60        # 赛事页：这么久以内查过开播状态就不重查
 WATCH_STATUS_SECONDS = 50  # 看直播页：页面每 60 秒问一次，每次都查新的（留 10 秒给同时开着的另一页）
-WATCH_DATA_SECONDS = 600   # 看直播页开着时，这么久重新下载一次 esports.json（平台开关关了以后最慢这么久生效）
+WATCH_DATA_SECONDS = 300   # 看直播页开着时，这么久重新下载一次 esports.json（赛程改了、平台开关关了以后最慢这么久生效；
+                           # 原来是 10 分钟，2026-11-18 用户要改成 5 分钟）
 EMBED = {key: platform["embed_url"] for key, platform in live_status.PLATFORMS.items() if platform.get("embed_url")}
 # 用 Evo 自己的播放器播的平台 → 取地址的模块。模块里 DIRECT 是 True 的（B站、抖音）：页面直接连平台的视频服务器；
 # 别的（斗鱼）：经过本机中转（/esports/stream）
