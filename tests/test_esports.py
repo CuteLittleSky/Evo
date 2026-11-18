@@ -14,6 +14,7 @@
 """
 
 import http.server
+import hashlib
 import json
 import os
 import subprocess
@@ -120,6 +121,14 @@ def format_checks(out):
         and esports_data.event_main(staged, staged["events"][1]) == []
         and esports_data.find_stream(both, "douyu-1")["name"] == "示例选手"
         and esports_data.find_stream(both, "bilibili-7734200") == wanted[0] and esports_data.find_stream(both, "nobody") is None)
+    quiet = esports_data.clean(file([player(), player(pid="none-0123456789ab", platform="none", room=""),
+                                     player(pid="none-bbbbbbbbbbbb", platform="none", room="123"),
+                                     player(pid="none-cccccccccccc", platform="none", room=None),
+                                     player(pid="x9", platform="None", room="")]))
+    out["不开直播的选手（platform 是 none、房间号是空的）照样留在名单里；写了房间号的、写法不对的不要；数开直播的人时不算他"] = (
+        [(p["id"], p["platform"], p["room"]) for p in quiet["players"]] == [("douyu-1", "douyu", "1"), ("none-0123456789ab", "none", "")]
+        and [p["id"] for p in esports_data.streaming(quiet["players"])] == ["douyu-1"]
+        and len(esports_data.event_players(quiet, quiet["events"][0])) == 2)
     broken = 0
     for data in ([], {"version": 2, "players": [], "events": []}, {"version": 1, "players": []}, None):
         try:
@@ -421,6 +430,22 @@ def tool_checks(out):
     out["抖音大小写不同的同一个房间查得出来；带点的、别的平台写字母的照样不行"] = (
         code == 1 and data is None and "第 3 行：抖音 房间 xxfps 在第 2 行已经写过" in text
         and "第 4 行：房间号「a.b」只能是字母、数字、下划线" in text and "第 5 行：房间号「xxfps」只能是数字" in text)
+    quiet_event = [f"训练赛,训练赛,,{day(0, '19:00')},{day(0, '23:00')},安静队"]
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(folder, ["甲一,安静队,斗鱼,11,", "甲二,安静队,不直播,,", "甲三,安静队,不直播,,Jia3"], quiet_event)
+    hashed = "none-" + hashlib.sha256("甲二".encode("utf-8")).hexdigest()[:12]
+    out["选手库里平台写「不直播」、房间号空着：照样算队里的人（凑满 3 个），id 是 none- 加选手名的哈希；两个不直播的不算重复"] = (
+        code == 0 and data is not None and "不直播 2" in text
+        and [(p["id"], p["platform"], p["room"]) for p in data["players"]][:2] == [("douyu-11", "douyu", "11"), (hashed, "none", "")]
+        and data["players"][2]["id"].startswith("none-") and data["players"][2]["id"] != hashed
+        and data["players"][2]["liquipedia"] == "Jia3" and esports_data.clean(data)["players"] == data["players"])
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(folder, ["甲一,安静队,斗鱼,11,", "甲二,安静队,不直播,123,", "甲三,安静队,斗鱼,,"],
+                                    [quiet_event[0] + ",不直播 1 某台"], event_columns="名称,类型,阶段,开始,结束,队伍,主舞台")
+    out["不直播的选手写了房间号、开直播的没写房间号、主舞台写「不直播」：都指出来，不生成文件"] = (
+        code == 1 and data is None and "第 3 行：不直播的选手「房间号」要空着（现在是「123」）" in text
+        and "第 4 行：「房间号」是空的" in text and "主舞台的平台「不直播」不认识，只能写 斗鱼 / 虎牙 / B站 / 抖音" in text
+        and "第 3 行：「房间号」是空的" not in text)
     seven = "名称,类型,阶段,开始,结束,队伍,主舞台"
     with tempfile.TemporaryDirectory() as folder:
         code, text, data = run_tool(

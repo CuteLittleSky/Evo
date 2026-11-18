@@ -35,7 +35,7 @@ NOW = datetime.now().astimezone().replace(microsecond=0)
 TEAMS = ("甲队", "<b>乙队</b>", "丙队")
 
 
-def serve(folder, platforms=None, teams=None, main=None):
+def serve(folder, platforms=None, teams=None, main=None, off=False):
     players = []
     for team, platform in zip(TEAMS, ("douyu", "bilibili", "douyin")):
         players += [{"id": f"{platform}-{n}", "name": f"{team[:1]}{n}号" if n > 1 else "kite</script>", "team": team,
@@ -48,6 +48,8 @@ def serve(folder, platforms=None, teams=None, main=None):
                "teams": ["甲队"]}]
     if main:
         events[0]["main"] = main
+    if off:  # 甲队的第三个人不开直播
+        players[2].update(id="none-0123456789ab", platform="none", room="")
     path = Path(folder) / "esports.json"
     path.write_text(json.dumps({"version": 1, "updated": NOW.isoformat(), "players": players, "events": events,
                                 "platforms": platforms or {}, **({"teams": teams} if teams else {})}), encoding="utf-8")
@@ -210,6 +212,33 @@ def main():
     out["查开播状态时主舞台的直播间也查；赛事页\"几位选手在播\"不数主舞台"] = (
         asked_ids[:2] == ["bilibili-900", "douyin-xxfps"] and len(got["players"]) == 11
         and count["events"]["live"]["total"] == 9)
+    serve(folder, off=True)
+    quiet = client.get("/esports/live/watch").get_data(as_text=True)
+    quiet_data = page_data(quiet)
+    row = [b for b in re.findall(r'<button type="button" class="watch-p".*?</button>', quiet, re.S) if "none-0123456789ab" in b]
+    silent = {p["id"]: p for p in quiet_data["players"]}.get("none-0123456789ab", {})
+    out["不开直播的选手照样列在队里：一行、不能点，右边写\"不直播\"，没有平台的色点；不能在窗口里播、没有直播间地址"] = (
+        len(row) == 1 and " disabled" in row[0] and "不直播" in text(row[0]) and "es-dot" not in row[0]
+        and len(re.findall(r'<button type="button" class="watch-p"', quiet)) == 9
+        and silent.get("off") is True and silent.get("platform_name") == "不直播" and silent.get("url") is None
+        and silent.get("play") is None and silent.get("embed") is None
+        and sum(p["off"] for p in quiet_data["players"]) == 1
+        and page_data(client.get("/esports/live/watch?p=none-0123456789ab").get_data(as_text=True))["selected"] is None)
+    asked_ids = []
+    real_query = live_status.query
+    live_status.query = lambda players, get=None: (asked_ids.extend(p["id"] for p in players) or
+                                                   {p["id"]: live_status.result("offline") for p in players})
+    try:
+        panel_esports._status.update(at=0.0, found={})
+        got = client.get("/esports/live/status").get_json()
+        count = client.get("/esports/live").get_json()
+        gone = client.get("/esports/play/none-0123456789ab").status_code
+    finally:
+        live_status.query = real_query
+        panel_esports._status.update(at=0.0, found={})
+    out["不开直播的选手不去查开播状态，\"几位选手在播\"不数他，也问不到播放地址"] = (
+        "none-0123456789ab" not in asked_ids and len(asked_ids) == 8 and len(got["players"]) == 8
+        and count["events"]["live"]["total"] == 8 and gone == 404)
     serve(folder)
     home = client.get("/esports").get_data(as_text=True)
     out["别的页面照旧有顶部导航和主题按钮"] = '<nav class="nav"' in home and 'id="theme-toggle"' in home

@@ -10,7 +10,8 @@
     python tools/esports.py --init          esports/ 里还没有表时，建两张示例表和一份填写说明
 
 两张表在 E:\\Evo\\esports\\（不进 git：里面是别人的房间号），用 Excel 或 WPS 改，存成 CSV；GBK、UTF-8 都认。
-- 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名。平台只能写 斗鱼 / 虎牙 / B站 / 抖音；房间号只写数字（抖音的也可以写主播的抖音号：字母、数字、下划线，存的时候转成小写）；最后一列可以空
+- 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名。平台只能写 斗鱼 / 虎牙 / B站 / 抖音；房间号只写数字（抖音的也可以写主播的抖音号：字母、数字、下划线，存的时候转成小写）；最后一列可以空。
+  不开直播的选手也写进来（一支队要正好 3 个人）：平台写「不直播」，房间号空着
 - 赛程.csv：名称,类型,阶段,开始,结束,队伍。类型是 联赛 / 训练赛 / 杯赛；时间写北京时间 2026-11-17 19:00；
   队伍用顿号「、」隔开，每个队名都要在选手库里、正好 3 个人。
   可以多一列「主舞台」（第 7 列，没有这一列也行）：这场赛事播导播视角的直播间，写"平台 房间号 名字"，多路用顿号隔开，
@@ -23,6 +24,7 @@
 import argparse
 import csv
 import difflib
+import hashlib
 import io
 import json
 import re
@@ -45,6 +47,9 @@ MAIN_RE = re.compile(r"(\S+)\s+(\S+)\s+(.+)")  # 主舞台的一路：平台 房
 NAME, TEST_NAME = "esports.json", "esports_test.json"
 CONTENT_TYPE = "application/json; charset=utf-8"
 PLATFORM_KEYS = {name: key for key, name in live_status.NAMES.items()}  # {"斗鱼": "douyu", ...}
+NO_STREAM = esports_data.NO_STREAM_NAME  # 选手库里平台写"不直播"：这位选手不开直播，房间号空着
+PLAYER_PLATFORMS = {**PLATFORM_KEYS, NO_STREAM: esports_data.NO_STREAM}  # 选手能写的平台（主舞台不能写"不直播"）
+PLATFORM_NAMES = {**live_status.NAMES, esports_data.NO_STREAM: NO_STREAM}
 TYPE_KEYS = {"联赛": "league", "训练赛": "scrim", "杯赛": "cup"}
 TEAM_SIZE = 3
 USUAL_TEAMS = 20
@@ -54,7 +59,8 @@ GUIDE = """赛事数据怎么填（python tools/esports.py --init 生成的说�
 
 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名
   - 一个选手一行；一支队正好 3 个人；一个选手只能在一支队
-  - 平台只能写：斗鱼 / 虎牙 / B站 / 抖音
+  - 平台只能写：斗鱼 / 虎牙 / B站 / 抖音 / 不直播
+  - 不开直播的选手也要写进来（一支队要凑满 3 个人）：平台写「不直播」，房间号空着。Evo 里照样列在队里，标"不直播"
   - 房间号只写数字，就是直播间地址最后那串数字（虎牙要数字房间号，不要写英文别名）。
     抖音的地址 live.douyin.com/ 后面有的是字母（主播的抖音号，如 xxfps），照着写就行，大小写都可以
   - Liquipedia页面名可以空着
@@ -173,13 +179,16 @@ def check_players(rows, errors):
         name, team, platform, room = row["选手"], row["战队"], row["平台"], row["房间号"]
         bad = False
         for column in ("选手", "战队", "平台", "房间号"):
-            if not row[column]:
+            if not row[column] and not (column == "房间号" and platform == NO_STREAM):
                 errors.append(f"{where}：「{column}」是空的")
                 bad = True
-        if platform and platform not in PLATFORM_KEYS:
-            errors.append(f"{where}：平台「{platform}」不认识，只能写 {' / '.join(PLATFORM_KEYS)}")
+        if platform and platform not in PLAYER_PLATFORMS:
+            errors.append(f"{where}：平台「{platform}」不认识，只能写 {' / '.join(PLAYER_PLATFORMS)}")
             bad = True
-        if room and platform in PLATFORM_KEYS:
+        if room and platform == NO_STREAM:
+            errors.append(f"{where}：不直播的选手「房间号」要空着（现在是「{room}」）")
+            bad = True
+        elif room and platform in PLATFORM_KEYS:
             room, problem = check_room(platform, room)
             if problem:
                 errors.append(f"{where}：{problem}")
@@ -193,7 +202,7 @@ def check_players(rows, errors):
         if name and name in names:
             errors.append(f"{where}：选手「{name}」在第 {names[name]} 行已经写过（一个选手只写一行、只能在一支队）")
             bad = True
-        if not bad and (platform, room) in rooms:
+        if not bad and platform != NO_STREAM and (platform, room) in rooms:
             errors.append(f"{where}：{platform} 房间 {room} 在第 {rooms[(platform, room)]} 行已经写过")
             bad = True
         if name:
@@ -201,8 +210,9 @@ def check_players(rows, errors):
         if team:
             teams.setdefault(team, []).append(line)
         if not bad:
-            rooms[(platform, room)] = line
-            players.append({"line": line, "name": name, "team": team, "platform": PLATFORM_KEYS[platform],
+            if platform != NO_STREAM:
+                rooms[(platform, room)] = line
+            players.append({"line": line, "name": name, "team": team, "platform": PLAYER_PLATFORMS[platform],
                             "room": room, "liquipedia": row["Liquipedia页面名"]})
     for team, lines in teams.items():
         if len(lines) != TEAM_SIZE:
@@ -263,6 +273,13 @@ def load_tables(folder):
 
 # ---------- 转成 esports.json ----------
 
+def player_id(player):
+    """选手的 id：平台-房间号；不开直播的是 none- 加选手名（UTF-8）的 sha256 前 12 位（选手名在选手库里不重复，换队了也不变）。"""
+    if player["platform"] == esports_data.NO_STREAM:
+        return f"{esports_data.NO_STREAM}-{hashlib.sha256(player['name'].encode('utf-8')).hexdigest()[:12]}"
+    return f"{player['platform']}-{player['room']}"
+
+
 def build(players, events, switches, notes, now=None, teams=None):
     """teams：{队名: {"logo": 文件名}}（队徽；这个脚本不管队徽，上传时照线上现在的带上）。只留这次用到的队，一个都没有就不写这一项。"""
     now = now or now_beijing()
@@ -286,7 +303,7 @@ def build(players, events, switches, notes, now=None, teams=None):
     used = {team for event in kept for team in event["teams"]}
     data = {"version": esports_data.VERSION, "updated": now.isoformat(timespec="seconds"),
             "platforms": {key: switches.get(key) is not False for key in live_status.PLATFORMS},
-            "players": [{"id": f"{p['platform']}-{p['room']}", "name": p["name"], "team": p["team"],
+            "players": [{"id": player_id(p), "name": p["name"], "team": p["team"],
                          "platform": p["platform"], "room": p["room"], "liquipedia": p["liquipedia"]}
                         for p in players if p["team"] in used],
             "events": kept}
@@ -313,7 +330,7 @@ def describe(data, now=None):
     lines = ["  平台开关：" + "、".join(f"{live_status.NAMES[key]} {'开' if on else '关（改成去平台看）'}"
                                     for key, on in data["platforms"].items()),
              f"  {len(data['events'])} 场赛事，{len(teams)} 支队，{len(data['players'])} 位选手"
-             + (f"（{'、'.join(f'{live_status.NAMES[key]} {n}' for key, n in count.items())}）" if count else "")
+             + (f"（{'、'.join(f'{PLATFORM_NAMES[key]} {n}' for key, n in count.items())}）" if count else "")
              + (f"，更新于 {data['updated'][:16].replace('T', ' ')}" if data["updated"] else "")]
     for event in data["events"]:
         start, end = esports_data.parse_time(event["start"]), esports_data.parse_time(event["end"])
@@ -396,8 +413,11 @@ def init(folder):
 
 
 def check_rooms(players):
-    """把每个房间问一遍并打印。有不存在的房间返回 False。"""
-    print(f"\n把 {len(players)} 个房间问一遍（同时最多 {live_status.CONFIG['parallel']} 个请求）……")
+    """把每个房间问一遍并打印。有不存在的房间返回 False。不开直播的选手没有房间，不问。"""
+    silent = len(players) - len(esports_data.streaming(players))
+    players = esports_data.streaming(players)
+    print(f"\n把 {len(players)} 个房间问一遍（同时最多 {live_status.CONFIG['parallel']} 个请求）"
+          + (f"，另有 {silent} 位不直播的选手不用问" if silent else "") + "……")
     asked = [{"id": str(p["line"]), "platform": p["platform"], "room": p["room"]} for p in players]
     found = live_status.query(asked)
     marks = {live_status.LIVE: "🔴", live_status.OFFLINE: "⚪", live_status.MISSING: "❌", live_status.ERROR: "⚠"}

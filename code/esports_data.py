@@ -14,6 +14,8 @@ esports.json 由 tools/esports.py 从两张 CSV 表生成、上传：
      "teams": {"星火电竞": {"logo": "3fa9c1d2e4b5a6f7.webp"}}}
 - platforms：远程开关。某个平台是 false，Evo 就不在窗口里播它，改成"去 X 看"。没写的平台当作 true
 - players：id 只有字母、数字、- 和 _；platform 是 config/watch.json 里的四个之一；room 只能是数字，
+  **不开直播的选手**（2026-11-18 用户定的：也录进名单，页面上照样列在队里、标"不直播"）：platform 写 "none"、room 是空的，
+  id 是 "none-" + 选手名（UTF-8）的 sha256 前 12 位。不查他的开播状态，不算进"在播 N / M 人"（streaming()）。
   抖音的还可以是主播的抖音号（字母、数字、下划线；live_status.room_ok()）
 - events：type 是 联赛 / 训练赛 / 杯赛；start、end 带时区，end 晚于 start；teams 是队名，对应 players 里的 team。
   main（可以没有）：这场赛事的**主舞台**，就是播导播视角的直播间（官方直播、解说的直播间），最多 8 路，照写的顺序：
@@ -53,6 +55,8 @@ FRESH_SECONDS = 60     # 这么久以内下载过就不重下
 RECENT_DAYS = 7        # "最近结束"只留这么多天
 TYPES = ("联赛", "训练赛", "杯赛")
 ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
+NO_STREAM = "none"     # 选手的 platform 写这个：这位选手不开直播（room 是空的）
+NO_STREAM_NAME = "不直播"
 MAIN_MAX = 8           # 一场赛事的主舞台最多几路
 MAIN_TEAM = "主舞台"   # 主舞台的直播间在页面上"算哪支队"
 LOGO_RE = re.compile(r"[a-z0-9]{8,40}\.(png|webp)")  # 队徽的文件名：拼不出别的文件夹、别的网站
@@ -89,7 +93,10 @@ def clean_player(raw):
     platform, room = raw.get("platform"), raw.get("room")
     if not isinstance(pid, str) or not ID_RE.fullmatch(pid) or name is None or team is None:
         return None
-    if not isinstance(platform, str) or not live_status.room_ok(platform, room):
+    if platform == NO_STREAM:  # 不开直播的选手：没有房间
+        if room != "":
+            return None
+    elif not isinstance(platform, str) or not live_status.room_ok(platform, room):
         return None
     return {"id": pid, "name": name, "team": team, "platform": platform, "room": room,
             "liquipedia": _text(raw.get("liquipedia"), 100, required=False) or ""}
@@ -258,6 +265,11 @@ def event_teams(data, event):
 
 def event_players(data, event):
     return [player for _, players in event_teams(data, event) for player in players]
+
+
+def streaming(players):
+    """这些选手里开直播的（去掉 platform 是 "none" 的）：查开播状态、数"几位选手"时用。"""
+    return [player for player in players if player["platform"] != NO_STREAM]
 
 
 def event_main(data, event):

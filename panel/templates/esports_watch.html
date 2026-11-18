@@ -104,12 +104,16 @@
         </summary>
         <div class="watch-players">
           {% for p in team.players %}
-          {# 没开播的不能点（disabled）；在播的由脚本点亮 #}
+          {# 没开播的不能点（disabled）；在播的由脚本点亮。不开直播的选手照样列出来，右边写"不直播"，一直不能点 #}
           <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
             <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
             <span class="watch-p-name es-ell">{{ p.name }}</span>
+            {% if p.off %}
+            <span class="watch-p-time" data-time>{{ p.platform_name }}</span>
+            {% else %}
             <span class="watch-p-plat"><span class="es-dot pf-{{ p.platform }}" aria-hidden="true"></span>{{ p.platform_name }}</span>
             <span class="watch-p-time num" data-time>…</span>
+            {% endif %}
           </button>
           {% else %}
           <p class="watch-empty">名单里还没有这支队的选手</p>
@@ -208,7 +212,7 @@
           btn.setAttribute("aria-pressed", id === st.sel ? "true" : "false");
           setAvatar(btn.querySelector("[data-avatar]"), p, live ? s : null);
           var time = btn.querySelector("[data-time]");
-          time.textContent = !st.status ? "…" : live ? clock(s.since) : s && s.state === "error" ? "没查到" : "未开播";
+          time.textContent = p.off ? p.platform_name : !st.status ? "…" : live ? clock(s.since) : s && s.state === "error" ? "没查到" : "未开播";
           if (live) time.title = spoken(s.since); else time.removeAttribute("title");
         });
         var main = box.hasAttribute("data-main");
@@ -225,7 +229,7 @@
       $("watch-none").hidden = shown > 0;
       var count = $("watch-count");
       count.textContent = "";
-      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.filter(function (x) { return !x.main; }).length), " 人");
+      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.filter(function (x) { return !x.main && !x.off; }).length), " 人");
       else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
     }
 
@@ -337,7 +341,7 @@
       var mates = data.players.filter(function (x) { return x.team === p.team && !!x.main === !!p.main; }).map(function (m) {
         if (!isLive(m.id)) {
           var off = el("span", "watch-mate dis");
-          off.append(m.name, el("span", "watch-mate-sub", st.status ? "未开播" : "…"));
+          off.append(m.name, el("span", "watch-mate-sub", m.off ? m.platform_name : st.status ? "未开播" : "…"));
           return off;
         }
         var btn = el("button", "watch-mate" + (m.id === p.id ? " on" : ""));
