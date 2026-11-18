@@ -385,8 +385,8 @@ def name_question():
     if not pending:
         return None
     new = pending[0]
-    if not known:  # 原来的账号的局都删光了：没有可合并的，直接当作一个账号
-        storage.answer_name(db(), new["name"])
+    if not known:  # 原来的账号的局都删光了：没有可合并的，直接当作一个账号（几种写法一起）
+        storage.answer_account(db(), new["id"])
         return None
     choices = [{
         "id": a["id"],
@@ -2006,21 +2006,23 @@ def update_progress():
 
 @app.post("/accounts/answer")
 def answer_name():
-    """回答弹窗"是不是同一个人"：account = 要合并到的账号编号（同一个人改了名），或 "new"（另一个账号）。"""
+    """回答弹窗"是不是同一个人"：account = 要合并到的账号编号（同一个人改了名），或 "new"（另一个账号）。
+    这个待确认账号的几种写法（只差空格、战队标签、1 / l / I）一起处理（storage.answer_account），弹窗问的局数也是它们加起来的。"""
     name, choice = request.form.get("name", ""), request.form.get("account", "")
     everyone = display_accounts(storage.accounts(db()))
-    new = next((a for a in everyone if not a["confirmed"] and storage.name_key(a["name"]) == storage.name_key(name)), None)
+    new = next((a for a in everyone if not a["confirmed"] and
+                any(storage.name_key(n) == storage.name_key(name) for n in a["names"])), None)
     if new is None:  # 已经回答过了（比如开着两个窗口）
         return back_to_page()
     if choice == "new":
-        storage.answer_name(db(), name)
+        storage.answer_account(db(), new["id"])
         flash(f"已记为另一个账号：{name}（{new['games']} 局）", "ok")
         return back_to_page()
     target = next((a for a in everyone if a["confirmed"] and str(a["id"]) == choice), None)
     if target is None:
         flash("没有保存：请选一项", "error")
         return back_to_page()
-    storage.answer_name(db(), name, target["id"])
+    storage.answer_account(db(), new["id"], target["id"])
     set_account_display_name(new["id"], None)
     flash(f"已合并：{name} 和 {target['display_name']} 是同一个账号，共 {new['games'] + target['games']} 局", "ok")
     return back_to_page()
@@ -2042,18 +2044,23 @@ def select_account():
 @app.post("/accounts/move")
 def move_name():
     """设置页"账号"一栏：把一个名字改到别的账号下（account = 账号编号），或拆成单独一个账号（account = "new"）。
-    弹窗里选错了，在这里改回来。"""
+    弹窗里选错了，在这里改回来。还没回答的待确认账号：几种写法一起处理，同弹窗（storage.answer_account）。"""
     name, choice = request.form.get("name", ""), request.form.get("account", "")
     everyone = display_accounts(storage.accounts(db()))
     owner = next((a for a in everyone if any(storage.name_key(n) == storage.name_key(name) for n in a["names"])), None)
     if owner is None:
         abort(400)
+    whole = not owner["confirmed"]
+    label = "、".join(owner["names"]) if whole else name
     if choice == "new":
         if len(owner["names"]) == 1 and owner["confirmed"]:
             flash(f"{name} 本来就是单独一个账号，没有改动", "ok")
+        elif whole:
+            storage.answer_account(db(), owner["id"])
+            flash(f"已把 {label} 记为单独一个账号", "ok")
         else:
             storage.answer_name(db(), name)
-            flash(f"已把 {name} {'拆成' if owner['confirmed'] else '记为'}单独一个账号", "ok")
+            flash(f"已把 {name} 拆成单独一个账号", "ok")
         return redirect(url_for("settings"))
     target = next((a for a in everyone if a["confirmed"] and str(a["id"]) == choice), None)  # 只能并到已确认的账号
     if target is None:
@@ -2061,17 +2068,22 @@ def move_name():
     elif target["id"] == owner["id"]:
         flash(f"{name} 本来就在这个账号下，没有改动", "ok")
     else:
-        storage.answer_name(db(), name, target["id"])
+        if whole:
+            storage.answer_account(db(), owner["id"], target["id"])
+        else:
+            storage.answer_name(db(), name, target["id"])
         if not any(a["id"] == owner["id"] for a in storage.accounts(db())):
             set_account_display_name(owner["id"], None)
-        flash(f"已把 {name} 并到 {target['display_name']} 的账号下", "ok")
+        flash(f"已把 {label} 并到 {target['display_name']} 的账号下", "ok")
     return redirect(url_for("settings"))
 
 
 @app.post("/accounts/display-name")
 def rename_account():
-    """只改账号在 Evo 里的展示名。识别名、账号归属和每局保存的 player_name 都不改。"""
-    target = next((a for a in storage.accounts(db()) if str(a["id"]) == request.form.get("account", "")), None)
+    """只改账号在 Evo 里的展示名。识别名、账号归属和每局保存的 player_name 都不改。
+    只有已确认的账号能改：待确认的账号回答以后可能并进别的账号、编号空出来，展示名会留给以后的新账号。"""
+    target = next((a for a in storage.accounts(db())
+                   if a["confirmed"] and str(a["id"]) == request.form.get("account", "")), None)
     if target is None:
         flash("没有保存：账号不存在", "error")
         return redirect(url_for("settings"))

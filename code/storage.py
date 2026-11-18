@@ -520,17 +520,6 @@ def name_key(name):
     return "".join(name.split())
 
 
-def name_match_key(name):
-    """判断是不是同一个玩家名时用：空格不算，OCR 容易混淆的 1、l、I 也按同一个字符比较。
-    原始识别结果仍按 name_key 分开保存；这里只用于归账号、同一次记录和大厅校准。"""
-    return name_key(name).translate(str.maketrans({"1": "l", "I": "l"}))
-
-
-def same_name(a, b):
-    """两个玩家名是否相同（允许空格及 1 / l / I 的 OCR 差异）。"""
-    return name_match_key(a) == name_match_key(b)
-
-
 # 名字开头的战队标签，如 "[DOGE]"（识别时括号偶尔读成全角或圆括号）
 CLUB_TAG = re.compile(r"^[\[【［(（][^\]】］)）]{1,6}[\]】］)）]")
 
@@ -540,6 +529,19 @@ def untagged_key(name):
     不带（"Dogga"）。2026-11-13 测试员反馈录不了，就是这样对不上。只剩标签时照原样。"""
     key = name_key(name)
     return CLUB_TAG.sub("", key) or key
+
+
+def name_match_key(name):
+    """判断是不是同一个玩家名时用：空格不算；开头的战队标签不算（"[238] Evil Scholar"、"[248] Evil Scholar"、
+    "Evil Scholar" 是同一个名字：2026-11-19 玩家反馈标签一换就多一个"新名字"，要合并一次）；OCR 容易混淆的
+    1、l、I 也按同一个字符比较（2026-11-18 PR #12）。原始识别结果仍按 name_key 分开保存；这里只用于归账号、
+    同一次记录和大厅校准。"""
+    return untagged_key(name).translate(str.maketrans({"1": "l", "I": "l"}))
+
+
+def same_name(a, b):
+    """两个玩家名是否相同（不管空格、开头的战队标签和 1 / l / I 的 OCR 差异，见 name_match_key）。"""
+    return name_match_key(a) == name_match_key(b)
 
 
 def name_similarity(a, b):
@@ -559,21 +561,30 @@ def truncated_of(a, b):
 
 
 def sync_names(conn):
-    """把对局里出现过、对照表里还没有的名字登记进去，每个新名字先单独算一个账号。
-    如果新名字只在 1 / l / I 上和已有名字不同，当作同一个 OCR 名，自动归到已有账号；
+    """把对局里出现过、对照表里还没有的名字登记进去。
+    只差空格、开头的战队标签、1 / l / I 的几种写法（name_match_key 一样）算同一个名字：新写法自动归到已有的账号，不问；
     还没有任何已确认的账号时，最早出现的那个名字直接确认（第一个账号不用问）；
-    之后的新名字等你在弹窗里回答"是不是同一个人"。"""
-    registered = list(conn.execute("SELECT name_key, account_id, confirmed FROM player_names"))
+    其余新名字先单独算一个账号，等你在弹窗里回答"是不是同一个人"。
+    同一个名字的几种写法分在不同账号里时（老版本留下的、还没回答的待确认）：只在一个已确认的账号里，待确认的写法
+    都归到它下面；都还没确认，并成一个待确认账号（弹窗只问一次）；在两个以上已确认的账号里，是你拆开的，不动，
+    再出现新写法照样问。"""
+    registered = list(conn.execute("SELECT name_key, account_id, confirmed FROM player_names ORDER BY account_id"))
     known = {r["name_key"] for r in registered}
-    matched, conflicts = {}, set()
+    groups = {}
     for row in registered:
-        key = name_match_key(row["name_key"])
-        if key in matched and matched[key][0] != row["account_id"]:
-            conflicts.add(key)  # 用户已经把这类名字确认成不同账号，不替用户重新合并
-        else:
-            matched[key] = (row["account_id"], row["confirmed"])
-    for key in conflicts:
-        matched.pop(key, None)
+        groups.setdefault(name_match_key(row["name_key"]), []).append(row)
+    matched, changed = {}, False  # 同一个名字（name_match_key）→ (账号, 是否已确认)；拆开过的不在里面
+    for key, rows in groups.items():
+        confirmed = {r["account_id"] for r in rows if r["confirmed"]}
+        if len(confirmed) > 1:
+            continue  # 用户已经把这类名字确认成不同账号，不替用户重新合并
+        home = (confirmed.pop(), 1) if confirmed else (rows[0]["account_id"], 0)
+        matched[key] = home
+        for r in rows:
+            if (r["account_id"], r["confirmed"]) != home:
+                conn.execute("UPDATE player_names SET account_id = ?, confirmed = ? WHERE name_key = ?",
+                             (*home, r["name_key"]))
+                changed = True
     new = []
     for r in conn.execute("SELECT player_name, MIN(ended_at) AS first FROM matches WHERE player_name IS NOT NULL "
                           "GROUP BY player_name ORDER BY first"):
@@ -582,6 +593,8 @@ def sync_names(conn):
             known.add(key)
             new.append(key)
     if not new:
+        if changed:
+            conn.commit()
         return
     next_id = conn.execute("SELECT COALESCE(MAX(account_id), 0) + 1 FROM player_names").fetchone()[0]
     have_confirmed = conn.execute("SELECT COUNT(*) FROM player_names WHERE confirmed = 1").fetchone()[0] > 0
@@ -652,6 +665,14 @@ def answer_name(conn, name, account_id=None):
         if shared > 1:
             account_id = conn.execute("SELECT MAX(account_id) + 1 FROM player_names").fetchone()[0]
     conn.execute("UPDATE player_names SET account_id = ?, confirmed = 1 WHERE name_key = ?", (account_id, key))
+    conn.commit()
+
+
+def answer_account(conn, account_id, into=None):
+    """回答一个待确认账号"是不是同一个人"（弹窗、设置页）：它的几种写法（只差空格、战队标签、1 / l / I，见 sync_names）
+    一起处理，不会只并过去一种、剩下的再问一遍。into = 并到这个账号（同一个人改了名）；None = 确认成单独一个账号。"""
+    conn.execute("UPDATE player_names SET account_id = ?, confirmed = 1 WHERE account_id = ?",
+                 (account_id if into is None else into, account_id))
     conn.commit()
 
 

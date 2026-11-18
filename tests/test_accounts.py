@@ -81,6 +81,60 @@ def table_checks():
     return out
 
 
+def variant_checks():
+    """同一个名字的几种写法（只差战队标签、1 / l / I）：自动归到一起；老版本留下的待确认重复顺手归好；
+    弹窗回答时几种写法一起处理（PR #12 审查的"必须改"）。截短的名字照旧问。返回每一步看到的结果。"""
+    out = {}
+    # 战队标签换了（2026-11-19 玩家反馈的 [238] → [248] → [258]）、不带标签、标签加 1 / l 混淆：都是同一个账号
+    _, conn = new_db("tags", [("[238] Evil Scholar", "2026-10-25 16:18:00"), ("[248] Evil Scholar", "2026-11-07 17:17:00"),
+                              ("[258]Evil Scholar", "2026-11-15 21:39:00"), ("Evil Scholar", "2026-11-16 20:00:00"),
+                              ("【DOGE】Evi1 Scholar", "2026-11-16 21:00:00")])
+    out["tags"] = (summary(conn), len(storage.accounts(conn)[0]["names"]))
+    conn.close()
+
+    # 截短的名字（少读最后一个字）：分不出是读漏了还是另一个号，照旧问
+    _, conn = new_db("truncated", [("要公面前刀大关", "2026-11-12 15:00:00"), ("要公面前刀大", "2026-11-12 15:08:00")])
+    out["truncated"] = summary(conn)
+    conn.close()
+
+    def legacy(name, rows):
+        """老版本留下的对照表：rows = [(名字, 账号, 是否已确认), ...]，每个名字一局。"""
+        _, conn = new_db(name, [(n, f"2026-10-1{i} 20:00:00") for i, (n, _, _) in enumerate(rows)])
+        conn.executemany("INSERT INTO player_names (name_key, account_id, confirmed) VALUES (?, ?, ?)",
+                         [(storage.name_key(n), a, c) for n, a, c in rows])
+        conn.commit()
+        found = [(sorted(a["names"]), a["games"], a["confirmed"]) for a in storage.accounts(conn)]
+        conn.close()
+        return found
+
+    # 一种写法已确认、另一种还在待确认：归到已确认的账号，不再问
+    out["legacy_one"] = legacy("legacy_one", [("Pilotl", 1, 1), ("Pilot1", 2, 0)])
+    # 两种写法都还在待确认（各一个账号）：并成一个待确认账号，只问一次
+    out["legacy_pending"] = legacy("legacy_pending", [("Main", 1, 1), ("Alt1", 2, 0), ("Altl", 3, 0)])
+    # 两种写法都已确认、在不同账号：是用户拆开的，不动
+    out["legacy_split"] = legacy("legacy_split", [("[238] Evil Scholar", 1, 1), ("[248] Evil Scholar", 2, 1)])
+
+    # 弹窗：新号的 Alt1、Altl 是一个待确认账号；回答"另一个账号"或"同一个人"，两种写法都跟着走，弹窗不再出现
+    token = panel_app.app.config["TOKEN"]
+    for case in ("new", "merge"):
+        path, conn = new_db(f"variants_{case}", [("Main", "2026-10-16 20:00:00"), ("Main", "2026-10-16 21:00:00"),
+                                                  ("Main", "2026-10-16 22:00:00"), ("Alt1", "2026-10-17 20:00:00"),
+                                                  ("Altl", "2026-10-17 21:00:00")])
+        main_id = storage.accounts(conn)[0]["id"]
+        panel_app.app.config.update(DB=path)
+        client = panel_app.app.test_client()
+        page = client.get("/matches").get_data(as_text=True)
+        asked = re.search(r'id="name-dialog".*?name="name" value="([^"]+)"', page, re.S)
+        done = client.post("/accounts/answer", data={"token": token, "name": asked[1] if asked else "",
+                                                     "account": "new" if case == "new" else str(main_id)},
+                           follow_redirects=True).get_data(as_text=True)
+        out[case] = ([(sorted(a["names"]), a["games"], a["confirmed"]) for a in storage.accounts(conn)],
+                     'id="name-dialog"' not in client.get("/matches").get_data(as_text=True),
+                     "共 5 局" in done if case == "merge" else "（2 局）" in done)
+        conn.close()
+    return out
+
+
 def panel_checks():
     """用测试客户端走一遍弹窗。返回每一步看到的结果。"""
     path, conn = new_db("panel", [("ImperialHzd", "2026-10-16 21:00:00"), ("ImperialHzd", "2026-10-16 22:00:00"),
@@ -272,6 +326,7 @@ def delete_checks():
 def main():
     print("多账号：账号对照表、新玩家名的弹窗、切换账号")
     t = table_checks()
+    v = variant_checks()
     p = panel_checks()
     s = switch_checks()
     d = delete_checks()
@@ -289,6 +344,20 @@ def main():
             t["separate"] == [("Yukinoshita", 3, True), ("Alt2nd", 1, True)],
         f"版本 2 的数据库升级后有对照表（{t['upgraded']}）":
             t["upgraded"] == (storage.SCHEMA_VERSION, [("ImperialHzd", 1, True)]),
+        f"只差战队标签（换了、去掉、全角括号加 1 / l）的名字自动归到同一账号，每种写法都留着（{v['tags']}）":
+            v["tags"] == ([("【DOGE】Evi1 Scholar", 5, True)], 5),
+        f"截短的名字照旧等回答（{v['truncated']}）":
+            v["truncated"] == [("要公面前刀大关", 1, True), ("要公面前刀大", 1, False)],
+        f"老数据：一种写法已确认、另一种待确认，归到已确认的账号（{v['legacy_one']}）":
+            v["legacy_one"] == [(["Pilot1", "Pilotl"], 2, True)],
+        f"老数据：两种写法各是一个待确认账号，并成一个，只问一次（{v['legacy_pending']}）":
+            v["legacy_pending"] == [(["Main"], 1, True), (["Alt1", "Altl"], 2, False)],
+        f"老数据：两种写法都已确认、在不同账号（用户拆开的），不动（{v['legacy_split']}）":
+            v["legacy_split"] == [(["[238] Evil Scholar"], 1, True), (["[248] Evil Scholar"], 1, True)],
+        f"弹窗问 Alt1 / Altl 选\"另一个账号\"：两种写法一起成为一个账号，不再弹（{v['new']}）":
+            v["new"] == ([(["Main"], 3, True), (["Alt1", "Altl"], 2, True)], True, True),
+        f"弹窗问 Alt1 / Altl 选\"同一个人\"：两种写法都并过去，提示共 5 局，不再弹（{v['merge']}）":
+            v["merge"] == ([(["Alt1", "Altl", "Main"], 5, True)], True, True),
         "面板：有新名字时弹窗": p["shown"],
         "弹窗：名字很像的账号排在最前，最后是\"另一个账号\"；只有很像的那个有提示": p["order"] and p["hint"],
         f"没有口令不能提交（状态码 {p['no_token']}）": p["no_token"] == 403,
