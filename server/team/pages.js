@@ -133,6 +133,10 @@ a.tile:hover { border-color: var(--muted); }
 .logo-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; border: 1px solid var(--border);
   border-radius: 8px; text-align: center; overflow-wrap: anywhere; }
 .logo-item form { margin: 0; }
+.main-row { display: grid; grid-template-columns: 7em 1fr; gap: 6px; }
+.main-row + .main-row { margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.main-row input[name="main_name"] { grid-column: 1 / -1; }
+@media (min-width: 560px) { .main-row { grid-template-columns: 7em 10em 1fr; } .main-row input[name="main_name"] { grid-column: auto; } }
 .logo-link { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; color: var(--muted); text-decoration: none; }
 .logo-empty { color: #9AA3B2; font-size: 18px; }
 .search-row .input { flex: 1; min-width: 0; }

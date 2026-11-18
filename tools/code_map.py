@@ -73,7 +73,7 @@ SECTIONS = [
                          "liquipedia.js 问 Liquipedia、整理数据，lpsync.js 定时抓（额度、失败重试）和待确认，"
                          "overrides.js 手动修正 Liquipedia 的资料，logos.js 战队队徽（队标库、挑选、上传），"
                          "pages.js / pages_esports.js / pages_lp.js / pages_pros.js / pages_logos.js 页面，test.mjs 测试（node server/team/test.mjs；"
-                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos），wrangler.toml 部署配置")]),
+                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos、test_main），wrangler.toml 部署配置")]),
     ("测试工具（给玩家的 Evo测试工具.exe）", None, [
         "code/evo_tester.py", "code/tester_window.py", "code/tester_capture.py", "code/tester_info.py",
         "code/tester_projects.py", "code/tester_answers.py"]),

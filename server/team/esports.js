@@ -20,6 +20,7 @@ export const USUAL_TEAMS = 20;
 export const RECENT_DAYS = 7;
 export const EXAMPLE = "示例";
 export const VERSION = 1;
+export const MAIN_MAX = 8;  // 一场赛事的主舞台最多几路（同 esports_data.MAIN_MAX）
 const DIGITS = "\\d{1,24}";
 const LOGO = /^[a-z0-9]{8,40}\.(png|webp)$/;  // 同 esports_data.LOGO_RE
 const ROOM_RES = Object.fromEntries(Object.entries(PLATFORMS).map(([key, p]) => [key, new RegExp(`^(?:${p.pattern ?? DIGITS})$`)]));
@@ -120,6 +121,52 @@ export function cleanPlayerFields(form) {
   return { name, team, platform, room, liquipedia };
 }
 
+// ---------- 主舞台（2026-11-18 用户要的：有的主播播导播视角，Evo 看直播页队伍栏最上面一栏）----------
+// 每场赛事最多 8 路，每路 {platform, room, name}：房间号的规矩同选手（抖音可以是抖音号、转小写），名字 1–40 个字，
+// 同一场里同一个房间不写两次。规矩照 tools/esports.py 的 check_main / check_room（「赛事页和看直播」窗口 85508ef）。
+// 主舞台的主播不进选手库、不算哪支队。
+
+function checkStream(platformText, roomText, nameText) {
+  const platform = platformKey(platformText);
+  if (!platform) return { error: `主舞台的平台「${squash(platformText)}」不认识，只能写 ${Object.values(PLATFORMS).map((p) => p.name).join(" / ")}` };
+  const room = squash(roomText);
+  if (!roomOk(platform, room)) {
+    return { error: platform === "douyin" ? `主舞台的房间号「${room}」只能是字母、数字、下划线（直播间地址 live.douyin.com/ 后面那一段）`
+      : `主舞台的房间号「${room}」只能是数字（直播间地址最后那串数字）` };
+  }
+  const name = squash(nameText);
+  if (!name) return { error: "主舞台的名字不能空着（比如：官方直播）" };
+  if (length(name) > 40) return { error: "主舞台的名字最多 40 个字" };
+  return { stream: { platform, room: normalRoom(platform, room), name } };
+}
+
+// 一组 {platform, room, name}（表单里的几行，或者粘贴的那一格拆出来的）→ 主舞台；有错抛 Refuse（只报第一个）
+export function cleanMain(rows) {
+  const filled = rows.filter((r) => squash(r.platform) || squash(r.room) || squash(r.name));
+  if (filled.length > MAIN_MAX) throw new Refuse(`主舞台最多 ${MAIN_MAX} 路（现在 ${filled.length} 路）`);
+  const out = [];
+  for (const row of filled) {
+    const { stream, error } = checkStream(row.platform, row.room, row.name);
+    if (error) throw new Refuse(error);
+    if (out.some((s) => s.platform === stream.platform && s.room === stream.room)) {
+      throw new Refuse(`主舞台里 ${PLATFORMS[stream.platform].name} 房间 ${stream.room} 写了两次`);
+    }
+    out.push(stream);
+  }
+  return out;
+}
+
+// 赛程表格第 7 列「主舞台」：平台 房间号 名字，多路用顿号「、」隔开（同 tools/esports.py 的 MAIN_RE）
+export function parseMainText(text) {
+  const rows = [];
+  for (const entry of String(text ?? "").split("、").map(squash).filter(Boolean)) {
+    const found = /^(\S+)\s+(\S+)\s+(.+)$/.exec(entry);
+    if (!found) throw new Refuse(`主舞台「${entry}」要写成：平台 房间号 名字（如 B站 7734200 官方直播），多路用顿号「、」隔开`);
+    rows.push({ platform: found[1], room: found[2], name: found[3] });
+  }
+  return cleanMain(rows);
+}
+
 export function cleanEventFields(form, knownTeams) {
   const name = required(form.name, "名称", 80);
   const stage = squash(form.stage);
@@ -141,7 +188,8 @@ export function cleanEventFields(form, knownTeams) {
   }
   if (!teams.length) throw new Refuse("至少要选一支队伍");
   if (teams.length > MAX_EVENT_TEAMS) throw new Refuse(`一场最多 ${MAX_EVENT_TEAMS} 支队`);
-  return { name, type, stage, start: isoBeijing(start), end: isoBeijing(end), teams };
+  const main = Array.isArray(form.main) ? cleanMain(form.main) : [];
+  return { name, type, stage, start: isoBeijing(start), end: isoBeijing(end), teams, main };
 }
 
 // "（是不是「星火电竞」？）"：只找很像的（同 tools/esports.py 用 difflib 的意思，这里用编辑距离）
@@ -234,6 +282,15 @@ export function build(players, events, switches, now, teams = {}) {
     ids.add(id);
     kept.push({ id, name: x.e.name, type: x.e.type, stage: x.e.stage, start: isoBeijing(x.start), end: isoBeijing(x.end),
                 teams: [...x.e.teams] });
+    if (x.e.main?.length) {  // 主舞台：有才写这一项（同 tools/esports.py）
+      kept[kept.length - 1].main = x.e.main.map((m) => ({ id: `${m.platform}-${normalRoom(m.platform, m.room)}`, name: m.name,
+        platform: m.platform, room: normalRoom(m.platform, m.room) }));
+      // 和这场的选手是同一个直播间：Evo 看直播页会去掉这一路（按 id 认人），这里提醒一下
+      for (const m of kept[kept.length - 1].main) {
+        const same = players.find((p) => x.e.teams.includes(p.team) && `${p.platform}-${p.room}` === m.id);
+        if (same) notes.push(`「${x.e.name}」的主舞台「${m.name}」和选手「${same.name}」是同一个直播间：Evo 里不会多放这一路`);
+      }
+    }
   }
   const used = new Set(kept.flatMap((e) => e.teams));
   const data = {
@@ -250,12 +307,14 @@ export function build(players, events, switches, now, teams = {}) {
     if (typeof logo === "string" && LOGO.test(logo)) logos[team] = { logo };
   }
   if (Object.keys(logos).length) data.teams = logos;
-  const examples = [...data.players.map((p) => p.name), ...data.events.map((e) => e.name)].filter((t) => t.includes(EXAMPLE));
+  const examples = [...data.players.map((p) => p.name), ...data.events.map((e) => e.name),
+                    ...data.events.flatMap((e) => (e.main ?? []).map((m) => m.name))].filter((t) => t.includes(EXAMPLE));
   if (examples.length) errors.push(`还有示例数据（${examples.slice(0, 5).join("、")}），删掉再发布`);
   if (!kept.length) errors.push("没有可以发布的赛事（赛程是空的，或者都结束超过 7 天了）");
   if (!errors.length) {
-    const checked = clean(data);  // Evo 读的时候会不会去掉哪一条
-    if (checked.players.length !== data.players.length || checked.events.length !== data.events.length) {
+    const checked = clean(data);  // Evo 读的时候会不会去掉哪一条（主舞台的路数也要一样）
+    const streams = (found) => found.events.reduce((n, e) => n + (e.main?.length ?? 0), 0);
+    if (checked.players.length !== data.players.length || checked.events.length !== data.events.length || streams(checked) !== streams(data)) {
       errors.push("生成的文件里有 Evo 会去掉的条目（名字里有特别的字符？），告诉 Claude 查一下");
     }
   }
@@ -280,6 +339,15 @@ function cleanPlayer(raw) {
   return { id: raw.id, name, team, platform: raw.platform, room: raw.room, liquipedia: text(raw.liquipedia, 100, false) || "" };
 }
 
+// 主舞台的一路（同 esports_data.clean_stream）
+function cleanStream(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const name = text(raw.name, 40);
+  if (typeof raw.id !== "string" || !ID.test(raw.id) || name === null) return null;
+  if (typeof raw.platform !== "string" || !roomOk(raw.platform, raw.room)) return null;
+  return { id: raw.id, name, platform: raw.platform, room: raw.room };
+}
+
 function cleanEvent(raw) {
   if (!raw || typeof raw !== "object") return null;
   const name = text(raw.name, 80);
@@ -293,7 +361,10 @@ function cleanEvent(raw) {
     const team = text(t, 40);
     if (team !== null && !teams.includes(team)) teams.push(team);
   }
-  return { id: raw.id, name, type: raw.type, stage, start: raw.start, end: raw.end, teams: teams.slice(0, MAX_EVENT_TEAMS) };
+  const event = { id: raw.id, name, type: raw.type, stage, start: raw.start, end: raw.end, teams: teams.slice(0, MAX_EVENT_TEAMS) };
+  const main = Array.isArray(raw.main) ? unique(raw.main.slice(0, MAIN_MAX), cleanStream) : [];
+  if (main.length) event.main = main;
+  return event;
 }
 
 function unique(items, check) {
@@ -359,7 +430,7 @@ export function parseTable(input) {
 }
 
 export const PLAYER_COLUMNS = ["选手", "战队", "平台", "房间号", "Liquipedia页面名"];
-export const EVENT_COLUMNS = ["名称", "类型", "阶段", "开始", "结束", "队伍"];
+export const EVENT_COLUMNS = ["名称", "类型", "阶段", "开始", "结束", "队伍"];  // 后面可以多一列「主舞台」
 
 // 第一行是表头（和现在的 CSV 一样）就跳过
 function body(rows, columns) {
@@ -387,11 +458,11 @@ export function importEvents(input, knownTeams) {
   const errors = [];
   const out = [];
   for (const [i, cells] of body(parseTable(input), EVENT_COLUMNS).entries()) {
-    const [name, type, stage, start, end, teamText = ""] = cells;
+    const [name, type, stage, start, end, teamText = "", mainText = ""] = cells;
     const teams = teamText.split("、").map(squash).filter(Boolean);
     try {
       if (teams.length === 1 && /[，,;；/]/.test(teams[0])) throw new Refuse("队伍要用顿号「、」隔开");
-      out.push({ line: i + 1, ...cleanEventFields({ name, type, stage, start, end, teams }, knownTeams) });
+      out.push({ line: i + 1, ...cleanEventFields({ name, type, stage, start, end, teams }, knownTeams), main: cells.length >= 7 ? parseMainText(mainText) : undefined });
     } catch (error) {
       if (!(error instanceof Refuse)) throw error;
       errors.push(`第 ${i + 1} 行：${error.message}`);

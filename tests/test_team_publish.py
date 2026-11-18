@@ -4,6 +4,8 @@
 - 40 个字的名字（里面有表情这种占两个位置的字）两边都按 40 个字算，Evo 读的时候（esports_data.clean）一条都不去掉
 - 抖音的房间号可以写抖音号（字母、数字、下划线），两边都转成小写；XXFPS 和 xxfps 算同一个房间；带点的、斗鱼写字母的两边都不收
 - 队徽：同一份 {队名: {"logo"}} 给两边，只放这次用到、文件名写法对的队（多出来的键丢掉），键按队名排
+- 主舞台：同一格「主舞台」的写法两边拆出来一样（抖音号转小写、名字里可以有空格），生成的 main 一样（编号、放在 teams 后面）；
+  几种写错（超过 8 路、只有两段、不认识的平台、斗鱼写字母、抖音号带点、名字太长、重复）两边都不收
 - 平台名单（英文名、中文名、直播间地址、房间号的写法、顺序）和 config/watch.json 一样
 两边走的都是真实的流程：网页是"保存时的检查 → 生成"，Python 是 tools/esports.py 的 check_players → build
 要 Node.js（协作网页是 JavaScript）：电脑上没有 node 就跳过。
@@ -29,6 +31,7 @@ import esports as tool  # noqa: E402  tools/esports.py
 RUNNER = ROOT / "server" / "team" / "test.mjs"
 BEIJING = live_status.BEIJING
 NOW = datetime(2026, 11, 17, 20, 0, 5, tzinfo=BEIJING)
+MAIN = "B站 7734200 官方直播、 抖音  XXFPS  某某 解说"  # 赛程.csv 第 7 列的写法（「赛事页和看直播」窗口给的例子）
 LONG = "表情😀" * 13 + "x"  # 40 个字（Python 按字数算；JavaScript 里表情占两个位置）
 
 
@@ -53,15 +56,15 @@ def sample():
         for name, platform, room, liquipedia in people:
             players.append({"name": name, "team": team, "platform": platform, "room": room, "liquipedia": liquipedia})
     events = [
-        ("联赛 第 3 周", "联赛", "B 组对 C 组", at(17, 19), at(17, 23), ["北辰", "星火电竞"]),
+        ("联赛 第 3 周", "联赛", "B 组对 C 组", at(17, 19), at(17, 23), ["北辰", "星火电竞"], MAIN),
         ("同时的杯赛 一", "杯赛", "", at(18, 19), at(18, 21), ["北辰"]),
         ("训练赛", "训练赛", "", at(17, 10), at(17, 13), ["星火电竞"]),
         ("同时的杯赛 二", "杯赛", "决赛", at(18, 19), at(18, 22), ["星火电竞"]),
         ("正好 7 天前结束", "杯赛", "", at(10, 17), NOW.replace(day=10, second=5), ["北辰"]),
         ("8 天前结束", "杯赛", "", at(9, 10), at(9, 12), ["北辰"]),
     ]
-    events = [{"name": n, "type": t, "stage": s, "start": a.isoformat(), "end": b.isoformat(), "teams": teams}
-              for n, t, s, a, b, teams in events]
+    events = [{"name": e[0], "type": e[1], "stage": e[2], "start": e[3].isoformat(), "end": e[4].isoformat(), "teams": e[5],
+               "mainText": e[6] if len(e) > 6 else ""} for e in events]
     return players, events
 
 
@@ -86,7 +89,8 @@ def main():
     errors = []
     rows, _ = tool.check_players(table, errors)
     plans = [{"line": i + 2, "name": e["name"], "type": e["type"], "stage": e["stage"],
-              "start": datetime.fromisoformat(e["start"]), "end": datetime.fromisoformat(e["end"]), "teams": e["teams"]}
+              "start": datetime.fromisoformat(e["start"]), "end": datetime.fromisoformat(e["end"]), "teams": e["teams"],
+              "main": tool.check_main(" ".join(e["mainText"].split()), "赛程.csv", errors)}
              for i, e in enumerate(events)]
     python = tool.build(rows, plans, switches, [], now=NOW, teams=teams)
 
@@ -108,6 +112,26 @@ def main():
     checks.append(("队徽：只放用到、写法对的队，只留 logo", python.get("teams") == {"北辰": {"logo": "3fa9c1d2e4b5a6f7.webp"}}
                    and list(web["data"]).index("teams") > list(web["data"]).index("events"), python.get("teams")))
     checks.append(("Evo 读的时候队徽一条都不去掉", cleaned["teams"] == {"北辰": {"logo": "3fa9c1d2e4b5a6f7.webp"}}, cleaned.get("teams")))
+    league = next(e for e in web["data"]["events"] if e["name"] == "联赛 第 3 周")
+    checks.append(("主舞台：两路、抖音号转小写、名字里有空格、放在 teams 后面",
+                   league.get("main") == [{"id": "bilibili-7734200", "name": "官方直播", "platform": "bilibili", "room": "7734200"},
+                                          {"id": "douyin-xxfps", "name": "某某 解说", "platform": "douyin", "room": "xxfps"}]
+                   and list(league)[-2:] == ["teams", "main"], league))
+    checks.append(("Evo 读的时候主舞台一路都不去掉",
+                   next(e for e in cleaned["events"] if e["name"] == "联赛 第 3 周").get("main") == league["main"], None))
+
+    cases = {"超过 8 路": "、".join(f"B站 {9000 + i} 第{i}路" for i in range(9)), "只有两段": "只有两段 1", "不认识的平台": "快手 1 某某",
+             "斗鱼写字母": "斗鱼 abc 某某", "抖音号带点": "抖音 a.b 某某", "名字太长": "B站 1 " + "名" * 41,
+             "同一个抖音号大小写不同": "抖音 XXFPS 一、抖音 xxfps 二", "正常的一路": "虎牙 520 某某 解说"}
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "main.json"
+        path.write_text(json.dumps(list(cases.values()), ensure_ascii=False), encoding="utf-8")
+        web_main = node("--check-main", str(path))
+    for (text, value), web_result in zip(cases.items(), web_main):
+        python_errors = []
+        python_main = tool.check_main(value, "赛程.csv 第 2 行", python_errors)
+        same = bool(python_errors) == ("error" in web_result) and (python_errors or web_result["main"] == python_main)
+        checks.append((f"主舞台：{text}（{'不收' if python_errors else '收'}，两边一样）", same, {"网页": web_result, "Python": python_errors or python_main}))
     douyin = {p["name"]: (p["room"], p["id"]) for p in web["data"]["players"] if p["platform"] == "douyin"}
     checks.append(("抖音号转成小写，选手 id 跟着用小写", douyin == {"北一": ("xxfps", "douyin-xxfps"),
                                                        "北二": ("nova_tt1seven", "douyin-nova_tt1seven")}, douyin))

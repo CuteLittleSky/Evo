@@ -227,7 +227,8 @@ function eventText(e) {
   return `「${e.name}」（${e.type}，${e.start.slice(0, 16).replace("T", " ")}）`;
 }
 
-const EVENT_LABELS = { name: "名称", type: "类型", stage: "阶段", start: "开始", end: "结束", teams: "队伍" };
+const EVENT_LABELS = { name: "名称", type: "类型", stage: "阶段", start: "开始", end: "结束", teams: "队伍", main: "主舞台" };
+const mainText = (main) => (main?.length ? `${main.length} 路` : "没有");
 
 async function knownTeams(bucket) {
   return [...teamsOf(await players(bucket)).keys()];
@@ -241,7 +242,7 @@ export async function addEvent(bucket, by, form, now) {
     list.items.push(record);
     return record;
   });
-  await writeLog(bucket, by, now, `添加赛事${eventText(item)}，${item.teams.length} 支队`);
+  await writeLog(bucket, by, now, `添加赛事${eventText(item)}，${item.teams.length} 支队${item.main.length ? `，主舞台 ${item.main.length} 路` : ""}`);
   return item;
 }
 
@@ -252,12 +253,14 @@ export async function saveEvent(bucket, by, id, form, now) {
     checkRev(item, form.rev, `「${item.name}」`);
     // 选手库里已经没有的队（被删了、改名了），原来就在这场里的也算认识：不然一保存就报错
     const fields = cleanEventFields(form, [...known, ...item.teams]);
+    if (!Array.isArray(form.main)) fields.main = item.main ?? [];  // 表单里没有主舞台那几格（老页面）：照旧
     const when = (iso) => iso.slice(0, 16).replace("T", " ");
-    const before = { ...item, teams: `${item.teams.length} 支队`, start: when(item.start), end: when(item.end) };
+    const before = { ...item, teams: `${item.teams.length} 支队`, start: when(item.start), end: when(item.end), main: mainText(item.main) };
     const sameTeams = item.teams.join("\n") === fields.teams.join("\n");
+    const sameMain = JSON.stringify(item.main ?? []) === JSON.stringify(fields.main);
     Object.assign(item, fields);
     const after = { ...item, teams: sameTeams ? before.teams : `${item.teams.length} 支队（换过）`,
-                    start: when(item.start), end: when(item.end) };
+                    start: when(item.start), end: when(item.end), main: sameMain ? before.main : `${mainText(item.main)}（换过）` };
     const lines = changes(before, after, EVENT_LABELS);
     if (lines.length) stamp(item, by, now);
     return { name: item.name, lines };
@@ -281,9 +284,10 @@ export async function importEventRows(bucket, by, rows, now) {
     let changed = 0;
     for (const { line, ...fields } of rows) {
       const existing = list.items.find((e) => e.name === fields.name && e.start === fields.start);
+      if (fields.main === undefined) fields.main = existing?.main ?? [];  // 粘贴的表没有「主舞台」那一列：照旧
       if (existing) {
-        if (JSON.stringify([existing.type, existing.stage, existing.end, existing.teams])
-            !== JSON.stringify([fields.type, fields.stage, fields.end, fields.teams])) {
+        if (JSON.stringify([existing.type, existing.stage, existing.end, existing.teams, existing.main ?? []])
+            !== JSON.stringify([fields.type, fields.stage, fields.end, fields.teams, fields.main])) {
           Object.assign(existing, fields);
           stamp(existing, by, now);
           changed++;

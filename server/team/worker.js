@@ -84,10 +84,15 @@ async function readFields(request) {
   const out = { teams: [] };
   if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") ?? "")) return out;
   const form = await request.formData();
+  const lists = { main_platform: [], main_room: [], main_name: [] };
   for (const [key, value] of form.entries()) {
     if (typeof value !== "string") continue;
     if (key === "teams") out.teams.push(value);
+    else if (Object.hasOwn(lists, key)) lists[key].push(value);
     else out[key] = value;
+  }
+  if (form.has("main_platform")) {  // 赛事表单里主舞台的几行
+    out.main = lists.main_platform.map((platform, i) => ({ platform, room: lists.main_room[i] ?? "", name: lists.main_name[i] ?? "" }));
   }
   if ((out.table ?? "").length > MAX_FORM) throw new Refuse("提交的内容太长了：一次少粘贴一些");
   return out;

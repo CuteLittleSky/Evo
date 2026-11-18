@@ -2,7 +2,7 @@
 // 只读的人能看，看不到改的按钮；编辑能改；能发布的人（管理员、开了发布的编辑）才有发布按钮；平台开关只有管理员。
 
 import { can } from "./auth.js";
-import { EVENT_COLUMNS, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TEAM_SIZE, TYPES, beijingText, checkPlayers, isoBeijing,
+import { EVENT_COLUMNS, MAIN_MAX, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TEAM_SIZE, TYPES, beijingText, checkPlayers, isoBeijing,
   parseBeijing, parseIso, roomUrl, status } from "./esports.js";
 import { teamsOf } from "./data.js";
 import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
@@ -114,6 +114,18 @@ function asIso(text) {
   return ms === null ? "" : isoBeijing(ms);
 }
 
+// 主舞台：播导播视角的直播间（Evo 看直播页队伍栏最上面一栏）。已有的几行 + 空着的两行，最多 8 行
+function mainFields(main) {
+  const rows = [...main, ...Array.from({ length: Math.min(2, MAIN_MAX - main.length) }, () => ({ platform: "", room: "", name: "" }))];
+  const row = (m, i) => `<div class="main-row">
+      <select class="input" name="main_platform" aria-label="主舞台第 ${i + 1} 路的平台"><option value="">平台</option>${platformOptions(m.platform)}</select>
+      <input class="input" name="main_room" value="${escape(m.room)}" placeholder="房间号" aria-label="主舞台第 ${i + 1} 路的房间号" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input class="input" name="main_name" value="${escape(m.name)}" placeholder="名字，比如 官方直播" aria-label="主舞台第 ${i + 1} 路的名字" maxlength="40" autocomplete="off"></div>`;
+  return `<fieldset><legend>主舞台（可以空着）</legend>
+    <span class="help">播导播视角的直播间，Evo 里放在队伍栏最上面。最多 ${MAIN_MAX} 路，不进选手库；第一路在播的话，Evo 默认先看它。空着的行不用管</span>
+    ${rows.map(row).join("")}</fieldset>`;
+}
+
 function eventForm(action, e, teams, submit) {
   const typeOptions = Object.keys(TYPES).map((t) => `<label class="option option-inline"><input type="radio" name="type" value="${t}"${e.type === t ? " checked" : ""} required><b>${t}</b></label>`).join("");
   const chosen = new Set(e.teams ?? []);
@@ -130,6 +142,7 @@ function eventForm(action, e, teams, submit) {
       <label class="field">开始（北京时间）<input class="input" type="datetime-local" name="start" value="${datetimeValue(e.start)}" required></label>
       <label class="field">结束（北京时间）<input class="input" type="datetime-local" name="end" value="${datetimeValue(e.end)}" required></label>
     </div>
+    ${mainFields(e.main ?? [])}
     <fieldset><legend>参赛队伍</legend><span class="help">从选手库里勾；一般是 20 支</span>
       ${teams.size || missing.length ? `<div class="picks">${boxes}</div>` : `<p class="small warn">选手库里还没有队伍，先去加选手。</p>`}</fieldset>
     <div><button class="btn btn-primary" type="submit">${submit}</button></div>
@@ -151,7 +164,8 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
       <div class="row-name"><span class="badge badge-${status(e, now)}">${STATUS_WORDS[status(e, now)]}</span>${escape(e.name)}</div>
       <div class="row-meta"><span>${escape(e.type)}${e.stage ? ` · ${escape(e.stage)}` : ""}</span>
         <span>${escape(beijingText(parseIso(e.start)))}–${escape(beijingText(parseIso(e.end)).slice(11))}</span>
-        <span>${e.teams.length} 支队</span>${old ? '<span class="badge">结束超过 7 天，不会发布</span>' : ""}<span>${by(e, now)}</span></div>
+        <span>${e.teams.length} 支队</span>${e.main?.length ? `<span>主舞台 ${e.main.length} 路</span>` : ""}
+        ${old ? '<span class="badge">结束超过 7 天，不会发布</span>' : ""}<span>${by(e, now)}</span></div>
     </div>
     ${editable ? `<div class="row-actions">
       <details class="act"><summary class="btn">改</summary><div class="panel panel-wide">${eventForm(`/events/${e.id}/save`, e, teams, "保存")}</div></details>
@@ -162,7 +176,8 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
     <ul class="list">${groups[key].map(row).join("")}</ul></section>` : "");
   const blank = { name: "", type: "联赛", stage: "", start: "", end: "", teams: [] };
   // 添加出错时留着填的内容（时间是网页上的 2026-11-17T19:00，换成文件里的写法再显示）
-  const kept = draft ? { ...blank, ...draft, rev: undefined, start: asIso(draft.start), end: asIso(draft.end) } : blank;
+  const kept = draft ? { ...blank, ...draft, rev: undefined, start: asIso(draft.start), end: asIso(draft.end),
+                          main: (draft.main ?? []).filter((m) => m.platform || m.room || m.name).slice(0, MAIN_MAX) } : blank;
   const add = editable ? `<details class="card fold"${!items.length || draft ? " open" : ""}><summary class="fold-head"><span>添加赛事</span><span class="muted small">联赛、训练赛、杯赛</span></summary>
     ${eventForm("/events/add", kept, teams, "添加")}</details>` : "";
   return layout({ title: "赛程", me, current: "events", body: `
@@ -172,7 +187,7 @@ ${notes({ error, ok })}
 ${add}
 ${section("live", "进行中")}${section("upcoming", "即将开始")}${section("ended", "已结束")}
 ${items.length ? "" : `<p class="muted">还没有赛事。</p>`}
-${editable ? importBox("/events/import", EVENT_COLUMNS, "亚太北区职业联赛 第 3 周\t联赛\tB 组对 C 组\t2026-11-17 19:00\t2026-11-17 23:00\t星火电竞、北辰", draftTable) : ""}` });
+${editable ? importBox("/events/import", [...EVENT_COLUMNS, "主舞台（可以没有：平台 房间号 名字，多路用顿号隔开）"], "亚太北区职业联赛 第 3 周\t联赛\tB 组对 C 组\t2026-11-17 19:00\t2026-11-17 23:00\t星火电竞、北辰\tB站 7734200 官方直播", draftTable) : ""}` });
 }
 
 // ---------- 发布 ----------
