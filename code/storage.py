@@ -12,13 +12,14 @@
 
 import argparse
 import csv
+import re
 import sqlite3
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from paths import DB_PATH
 
-APP_VERSION = "0.5.4"
+APP_VERSION = "0.6.0"
 SCHEMA_VERSION = 9  # 表结构变了就加 1，并在 MIGRATIONS 里写上怎么从旧版本升级
 
 # 列名和类型，顺序也是导出 CSV 时的列顺序
@@ -413,6 +414,12 @@ def lobby_readings(conn, names=None):
     return [r for r in rows if r["player_name"] and name_key(r["player_name"]) in keys]
 
 
+def delete_lobby_reading(conn, reading_id):
+    """删掉一次大厅读数（读错了的，见 calibration.drop_misreads）。编号不会再用。"""
+    conn.execute("DELETE FROM lobby_readings WHERE reading_id = ?", (reading_id,))
+    conn.commit()
+
+
 def save_readings(conn, match_id, source, values, read_at, scores=None):
     """记下一个来源（如"淘汰画面"）对这一局读到的各项，同一来源同一项原来有的就覆盖。
     values：{项: 读到的值}，没读到的值为 None（"没读到"本身也记下）；scores：{项: 置信度}，没有的项不写。"""
@@ -524,6 +531,17 @@ def same_name(a, b):
     return name_match_key(a) == name_match_key(b)
 
 
+# 名字开头的战队标签，如 "[DOGE]"（识别时括号偶尔读成全角或圆括号）
+CLUB_TAG = re.compile(r"^[\[【［(（][^\]】］)）]{1,6}[\]】］)）]")
+
+
+def untagged_key(name):
+    """name_key 再去掉开头的战队标签：对局里、总结页上的名字带标签（"[DOGE] Dogga"），游戏里的数据页上
+    不带（"Dogga"）。2026-11-13 测试员反馈录不了，就是这样对不上。只剩标签时照原样。"""
+    key = name_key(name)
+    return CLUB_TAG.sub("", key) or key
+
+
 def name_similarity(a, b):
     """两个玩家名有多像（0 到 1，不管空格）。"""
     return SequenceMatcher(None, name_key(a), name_key(b)).ratio()
@@ -582,7 +600,7 @@ def sync_names(conn):
 
 def known_names(conn):
     """Evo 认识的、自己的玩家名（去掉空格的写法，见 name_key）：对局里出现过的所有名字。录入历史赛季数据时
-    用它分出数据页是不是自己的（好友资料页也是这一页）。"""
+    用它分出数据页是不是自己的（好友资料页也是这一页；比的时候去掉战队标签，见 untagged_key）。"""
     sync_names(conn)
     return {r[0] for r in conn.execute("SELECT name_key FROM player_names")}
 

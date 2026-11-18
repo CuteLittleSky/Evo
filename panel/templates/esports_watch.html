@@ -1,0 +1,748 @@
+{% extends "base.html" %}
+{% block title %}{{ event.name }} · Evo{% endblock %}
+{# 看直播页（panel_esports.py，2026-11-17 用户定的，样子照用户给的样稿）：占满整个窗口，没有顶部导航，只有"← 赛事"。
+   左边：赛事名、播放器、正在看的选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
+   名单先由服务器画好（都不能点）；谁在播由下面的脚本每 60 秒问一次 /esports/<赛事>/status，再把在播的点亮。
+   能在窗口里播的：配置里有嵌入播放器的平台（B站，放它官方的播放器），和用 Evo 自己的播放器的平台（斗鱼：
+   mpegts.js 连面板的本机中转；抖音：mpegts.js 直接连抖音的视频服务器。控制条是自己的：播放 / 暂停、音量、
+   清晰度、全屏）。别的显示"去 X 看"的退路。
+   B站不登录最高 720p：选手那一行有"登录 B站看原画"，扫码登录以后 B站也改用 Evo 自己的播放器（直接连 B站，不经过中转） #}
+{% block wrap_class %} watch-wrap{% endblock %}
+{% block top %}{% endblock %}
+
+{% block content %}
+<div class="watch">
+  <div class="watch-main">
+    <div class="watch-head">
+      <a class="watch-back" href="{{ url_for('esports.page') }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>赛事
+      </a>
+      <span class="watch-sep" aria-hidden="true"></span>
+      <h1 class="watch-title es-ell">{{ event.name }}</h1>
+      {% if event.stage %}<span class="watch-stage">{{ event.stage }}</span>{% endif %}
+      {# 没开始的赛事也能进来看选手赛前的直播：这里写什么时候开始，不写"进行中" #}
+      {% if event.state == 'live' %}
+      <span class="es-live-tag watch-mark"><span class="es-live-dot" aria-hidden="true"></span>{{ event.mark }}</span>
+      {% else %}
+      <span class="es-tag watch-mark">{{ event.mark }}</span>
+      {% endif %}
+    </div>
+
+    {# Apex 在运行、这里又正在播的时候才显示（脚本每 10 秒问一次 /esports/game） #}
+    <div class="watch-apex" id="watch-apex" role="status" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l9.5 17h-19z"></path><path d="M12 10v4.5M12 17.5v.5"></path></svg>
+      <span class="grow">Apex 正在运行。看直播会占用显卡，可能让游戏掉帧。</span>
+      <button type="button" class="btn" id="watch-apex-keep">继续看</button>
+      <button type="button" class="btn" id="watch-apex-close">关闭直播</button>
+    </div>
+
+    <div class="watch-stage-box">
+      {# 画面左上角一直标着平台和房间号（用户定的底线：不藏平台） #}
+      <div class="watch-chips" id="watch-chips" hidden>
+        <span class="watch-chip-live"><span class="watch-chip-live-dot" aria-hidden="true"></span>直播中</span>
+        <span class="watch-chip"><span class="es-dot" id="watch-chip-dot" aria-hidden="true"></span><span id="watch-chip-text"></span></span>
+      </div>
+      <div class="watch-screen" id="watch-screen">
+        <div class="watch-msg"><p class="watch-msg-title">正在看谁在播…</p></div>
+      </div>
+    </div>
+
+    <div class="watch-info" id="watch-info" hidden>
+      <span class="es-avatar watch-avatar" id="watch-avatar" aria-hidden="true"></span>
+      <div class="watch-who">
+        <div class="watch-who-line"><span class="watch-name" id="watch-name"></span><span class="watch-team" id="watch-team"></span></div>
+        <span class="watch-live-title es-ell" id="watch-live-title"></span>
+      </div>
+      {# 三个按钮都是用系统浏览器打开这位主播的直播间：发弹幕、送礼物要登录平台，玩家一般在浏览器里登录过 #}
+      {# 要登录才能看高画质的平台（B站）才显示：没登录写"登录 B站看原画"，登录了写"B站：昵称"（点开能退出登录） #}
+      <button type="button" class="btn watch-link watch-login" id="watch-login" hidden></button>
+      <a class="btn watch-link" id="watch-danmu" target="_blank" rel="noopener noreferrer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H10l-4 3.5V16H4z"></path><path d="M8 9.5h8M8 12.5h5"></path></svg>发送弹幕
+      </a>
+      <a class="btn watch-link" id="watch-gift" target="_blank" rel="noopener noreferrer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="8" width="17" height="4" rx="1"></rect><path d="M5.5 12v8h13v-8M12 8v12"></path><path d="M12 8C10.5 4.5 7 4.5 7 6.5S10 8 12 8zM12 8c1.5-3.5 5-3.5 5-1.5S14 8 12 8z"></path></svg>给主播送礼物
+      </a>
+      <a class="btn watch-link" id="watch-go" target="_blank" rel="noopener noreferrer">
+        <span id="watch-go-text">去平台看</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>
+      </a>
+    </div>
+
+    <div class="watch-mates" id="watch-mates" hidden>
+      <span class="watch-mates-label" id="watch-mates-label">同队视角</span>
+      <span class="watch-mates-list" id="watch-mates-list" role="group" aria-labelledby="watch-mates-label"></span>
+    </div>
+  </div>
+
+  <aside class="watch-side" aria-labelledby="h-watch-teams">
+    <div class="watch-side-head">
+      <div class="watch-side-title">
+        <h2 id="h-watch-teams">队伍</h2>
+        {# 一句完整的话，到了以后读屏软件念一次 #}
+        <span class="watch-count" id="watch-count" role="status" aria-atomic="true">正在看谁在播…</span>
+      </div>
+      <div class="watch-seg" role="group" aria-label="筛选队伍">
+        <button type="button" class="on" aria-pressed="true" data-filter="all">全部 <span class="num">{{ team_count }}</span> 支</button>
+        <button type="button" aria-pressed="false" data-filter="live">有人在播的</button>
+      </div>
+    </div>
+    <div class="watch-list" id="watch-list">
+      {% for team in teams %}
+      {# 主舞台（赛程里这场赛事写了播导播视角的直播间才有）：排在最前面，默认展开，和队伍一样的一栏 #}
+      <details class="watch-team-box{% if team.main %} watch-main-box{% endif %}" data-team="{{ team.key }}"{% if team.main %} data-main open{% endif %}>
+        <summary>
+          <svg class="watch-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          {# 队徽（赛程文件里有才有，图片放在 dl.evotracker.cn）；没有、加载不出来（下面的脚本换掉）就用队名的第一个字 #}
+          {% if team.main %}
+          <span class="watch-team-logo is-main" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M8 21h8M12 17v4"></path><path d="M10.5 8.8v4.4l3.6-2.2z" fill="currentColor" stroke="none"></path></svg></span>
+          {% elif team.logo %}
+          <span class="watch-team-logo has-img" aria-hidden="true" data-initial="{{ team.initial }}"><img src="{{ team.logo }}" alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"></span>
+          {% else %}
+          <span class="watch-team-logo" aria-hidden="true">{{ team.initial }}</span>
+          {% endif %}
+          <span class="watch-team-name es-ell">{{ team.name }}</span>
+          <span class="watch-team-live" data-team-live>…</span>
+        </summary>
+        <div class="watch-players">
+          {% for p in team.players %}
+          {# 没开播的不能点（disabled）；在播的由脚本点亮。不开直播的选手照样列出来，右边写"不直播"，一直不能点 #}
+          <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
+            <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
+            <span class="watch-p-name es-ell">{{ p.name }}</span>
+            {% if p.off %}
+            <span class="watch-p-time" data-time>{{ p.platform_name }}</span>
+            {% else %}
+            <span class="watch-p-plat"><span class="es-dot pf-{{ p.platform }}" aria-hidden="true"></span>{{ p.platform_name }}</span>
+            <span class="watch-p-time num" data-time>…</span>
+            {% endif %}
+          </button>
+          {% else %}
+          <p class="watch-empty">名单里还没有这支队的选手</p>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+      <p class="watch-empty" id="watch-none" hidden>现在没有队伍在播。</p>
+    </div>
+    <p class="watch-side-foot">开着这一页时每 60 秒刷新一次谁在播。</p>
+  </aside>
+</div>
+{# 平台的扫码登录（现在只有 B站；panel_esports.py 的 /esports/login/…）：二维码是 Evo 的后台向平台要来、自己画的，
+   白底（扫码要）。登录信息只存在这台电脑上，不交给这个页面 #}
+<dialog class="dialog watch-login-dialog" id="login-dialog" aria-labelledby="h-login" aria-describedby="login-status">
+  <div class="watch-login-body">
+    <h2 id="h-login" tabindex="-1" autofocus>扫码登录</h2>
+    <div class="watch-login-qr" id="login-qr-box" hidden><img id="login-qr" alt="登录二维码" width="220" height="220"></div>
+    <p class="watch-login-status" id="login-status" role="status"></p>
+    <p class="dialog-desc" id="login-note"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn-text" id="login-logout" hidden>退出登录</button>
+      <button type="button" class="btn" id="login-refresh" hidden>换一个二维码</button>
+      <button type="button" class="btn" id="login-close">关闭</button>
+    </div>
+  </div>
+</dialog>
+<script type="application/json" id="watch-data">{{ page_data|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var data = JSON.parse(document.getElementById("watch-data").textContent);
+    var byId = {};
+    data.players.forEach(function (p) { byId[p.id] = p; });
+    function $(id) { return document.getElementById(id); }
+    // status：上次问到的 {选手 id: {state, title, avatar, since}}，还没问到是 null；sel：正在看的选手；
+    // closed：点了"关闭直播"；apexOk：点了"继续看"（Apex 关掉以后重新算）
+    var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
+              apex: false, apexOk: false, stageKey: null, lastTry: 0,
+              player: null, playSeq: 0, playFailed: {},  // Evo 自己的播放器：现在的那个、第几次开播、哪些人没播成
+              accounts: data.accounts || {}};  // 要登录才能看高画质的平台：{平台: {logged_in, name}}
+    function saved(key, fallback) { try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; } }
+    function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+
+    function info(id) { return st.status ? st.status[id] : null; }
+    function isLive(id) { var s = info(id); return !!s && s.state === "live"; }
+    function canEmbed(p) { return !!p.embed && st.platforms[p.platform] !== false; }  // 平台官方的嵌入播放器，平台开关也开着
+    // Evo 自己的播放器：平台开关开着、刚才没播砸；要登录的平台（B站）还得登录了
+    function canPlay(p) {
+      return !!p.play && st.platforms[p.platform] !== false && !st.playFailed[p.id]
+        && (!data.login[p.platform] || !!(st.accounts[p.platform] && st.accounts[p.platform].logged_in));
+    }
+    function minutes(since) { return since ? Math.max(0, Math.floor((Date.now() / 1000 - since) / 60)) : null; }
+    function clock(since) {  // "2:14" = 开播 2 小时 14 分
+      var m = minutes(since);
+      return m === null ? "在播" : Math.floor(m / 60) + ":" + String(m % 60).padStart(2, "0");
+    }
+    function spoken(since) {
+      var m = minutes(since);
+      if (m === null) return "在播";
+      return "开播 " + (m >= 60 ? Math.floor(m / 60) + " 小时 " : "") + (m % 60) + " 分";
+    }
+    function el(tag, cls, text) {
+      var node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+    // 头像：平台给了就用（不带来源页），没有、加载不了就用名字的第一个字。地址没变不重画，免得每分钟闪一下
+    function setAvatar(node, p, s) {
+      var src = s && s.avatar ? s.avatar : "";
+      if (node.dataset.src === src) return;
+      node.dataset.src = src;
+      node.textContent = "";
+      if (!src) { node.textContent = p.initial; return; }
+      var img = document.createElement("img");
+      img.alt = "";
+      img.referrerPolicy = "no-referrer";
+      img.addEventListener("error", function () { node.dataset.src = ""; node.textContent = p.initial; });
+      img.src = src;
+      node.appendChild(img);
+    }
+
+    function renderList() {
+      var liveTotal = 0, shown = 0;
+      document.querySelectorAll(".watch-team-box").forEach(function (box) {
+        var n = 0;
+        box.querySelectorAll(".watch-p").forEach(function (btn) {
+          var id = btn.dataset.player, p = byId[id], s = info(id), live = isLive(id);
+          if (live) n++;
+          btn.disabled = !live;
+          btn.classList.toggle("live", live);
+          btn.classList.toggle("sel", id === st.sel);
+          btn.setAttribute("aria-pressed", id === st.sel ? "true" : "false");
+          setAvatar(btn.querySelector("[data-avatar]"), p, live ? s : null);
+          var time = btn.querySelector("[data-time]");
+          time.textContent = p.off ? p.platform_name : !st.status ? "…" : live ? clock(s.since) : s && s.state === "error" ? "没查到" : "未开播";
+          if (live) time.title = spoken(s.since); else time.removeAttribute("title");
+        });
+        var main = box.hasAttribute("data-main");
+        if (!main) liveTotal += n;
+        var tag = box.querySelector("[data-team-live]");
+        tag.textContent = "";
+        tag.classList.toggle("on", n > 0);
+        if (!st.status) tag.textContent = "…";
+        else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), main ? " 路在播" : " 人在播");
+        else tag.textContent = main ? "没在播" : "没人在播";
+        box.hidden = st.filter === "live" && !!st.status && n === 0;
+        if (!box.hidden) shown++;
+      });
+      $("watch-none").hidden = shown > 0;
+      var count = $("watch-count");
+      count.textContent = "";
+      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.filter(function (x) { return !x.main && !x.off; }).length), " 人");
+      else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
+    }
+
+    function message(title, text) {
+      var box = el("div", "watch-msg");
+      box.append(el("p", "watch-msg-title", title));
+      if (text) box.append(el("p", "watch-msg-text", text));
+      return box;
+    }
+
+    // 播放器那一块。只在"该显示什么"变了的时候重画：每分钟刷新状态时不能把正在播的画面重新加载一遍
+    function renderStage() {
+      var p = st.sel ? byId[st.sel] : null, s = p ? info(p.id) : null, live = !!p && isLive(p.id);
+      var anyLive = data.players.some(function (x) { return isLive(x.id); });
+      var key, build;
+      if (!st.status) {
+        key = st.failed ? "failed" : "loading";
+        build = function () { return st.failed ? message("没查到谁在播", "可能是网络连不上，一分钟后会再试。") : message("正在看谁在播…"); };
+      } else if (st.closed) {
+        key = "closed";
+        build = function () {
+          var box = message("直播已关闭", p ? "想接着看，点下面的按钮，或者在右边换一位选手。" : "在右边选一位在播的选手可以重新看。");
+          if (p && live) {
+            var again = el("button", "watch-primary", "继续看 " + p.name);
+            again.type = "button";
+            again.addEventListener("click", function () { st.closed = false; render(); });
+            box.append(again);
+          }
+          return box;
+        };
+      } else if (!p) {
+        key = anyLive ? "pick" : "nobody";
+        build = function () {
+          return anyLive ? message("在右边选一位在播的选手") : message("现在没有选手在播", "有选手开播以后，右边的名单会亮起来，最慢 2 分钟。");
+        };
+      } else if (!live) {
+        key = "offline:" + p.id + ":" + (s ? s.state : "");
+        build = function () {
+          return message(p.name + (s && s.state === "error" ? " 的直播间没查到" : " 现在没有开播"),
+                         anyLive ? "在右边选一位在播的选手。" : "有选手开播以后，右边的名单会亮起来，最慢 2 分钟。");
+        };
+      } else if (!canPlay(p) && canEmbed(p)) {  // 能用 Evo 自己的播放器就不用嵌入的（B站登录了以后）
+        key = "embed:" + p.id;
+        build = function () {
+          var frame = el("iframe", "watch-frame");
+          frame.title = p.name + " 的" + p.platform_name + "直播";
+          frame.allow = "autoplay; fullscreen";
+          frame.referrerPolicy = "no-referrer";
+          frame.src = p.embed;
+          return frame;
+        };
+      } else if (canPlay(p)) {
+        // 清晰度是玩家自己选的（记在这台电脑上，每个平台记一个）；换了清晰度要重新开播
+        key = "play:" + p.id + ":" + saved("evo-watch-q-" + p.platform, "");
+        build = function () { return buildPlayer(p); };
+      } else {
+        // 退路：平台开关关了、这个平台还不能在窗口里播，或者刚才没播成。按钮用玩家自己的默认浏览器打开直播间（2026-11-17 用户定的）
+        key = "fallback:" + p.id + ":" + (st.playFailed[p.id] ? "failed" : "");
+        build = function () {
+          var box = message(p.platform_name + "的直播暂时不能在 Evo 里直接播放", "可以去" + p.platform_name + "看 " + p.name + " 的直播，会用你的浏览器打开。");
+          var link = el("a", "watch-primary", "打开" + p.platform_name + "直播间");
+          link.href = p.url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          box.append(link);
+          if (st.playFailed[p.id]) {  // 刚才试过没播成（没取到地址、连不上视频服务器……）：可以再试一次
+            var retry = el("button", "watch-secondary", "再试一次");
+            retry.type = "button";
+            retry.addEventListener("click", function () { delete st.playFailed[p.id]; render(); });
+            box.append(retry);
+          }
+          return box;
+        };
+      }
+      if (key !== st.stageKey) {
+        st.stageKey = key;
+        stopPlayer();
+        $("watch-screen").replaceChildren(build());
+      }
+
+      var chips = $("watch-chips");
+      chips.hidden = !(live && !st.closed);
+      if (!chips.hidden) {
+        $("watch-chip-dot").className = "es-dot pf-" + p.platform;
+        $("watch-chip-text").textContent = canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
+      }
+
+      $("watch-info").hidden = !p;
+      $("watch-mates").hidden = !p;
+      if (!p) return;
+      setAvatar($("watch-avatar"), p, live ? s : null);
+      $("watch-name").textContent = p.name;
+      $("watch-team").textContent = p.team;
+      $("watch-live-title").textContent = live ? (s.title || p.platform_name + " 房间 " + p.room) : "未开播";
+      [["watch-danmu", "发弹幕"], ["watch-gift", "送礼物"], ["watch-go", "看直播"]].forEach(function (pair) {
+        var link = $(pair[0]);
+        link.href = p.url;
+        link.title = "用浏览器打开 " + p.name + " 的" + p.platform_name + "直播间" + pair[1];
+      });
+      $("watch-go-text").textContent = "去" + p.platform_name + "看";
+      var loginBtn = $("watch-login"), account = st.accounts[p.platform];
+      loginBtn.hidden = !data.login[p.platform];
+      if (!loginBtn.hidden) {
+        loginBtn.textContent = account && account.logged_in ? p.platform_name + "：" + (account.name || "已登录") : "登录" + p.platform_name + "看原画";
+        loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有 720p，用手机扫码登录以后能看原画";
+      }
+
+      $("watch-mates-label").textContent = p.main ? "主舞台" : "同队视角";
+      var mates = data.players.filter(function (x) { return x.team === p.team && !!x.main === !!p.main; }).map(function (m) {
+        if (!isLive(m.id)) {
+          var off = el("span", "watch-mate dis");
+          off.append(m.name, el("span", "watch-mate-sub", m.off ? m.platform_name : st.status ? "未开播" : "…"));
+          return off;
+        }
+        var btn = el("button", "watch-mate" + (m.id === p.id ? " on" : ""));
+        btn.type = "button";
+        btn.setAttribute("aria-pressed", m.id === p.id ? "true" : "false");
+        btn.append(el("span", "es-dot pf-" + m.platform), m.name, el("span", "watch-mate-sub", m.platform_name));
+        btn.addEventListener("click", function () { select(m.id); });
+        return btn;
+      });
+      $("watch-mates-list").replaceChildren.apply($("watch-mates-list"), mates);
+    }
+
+    // ---------- Evo 自己的播放器：mpegts.js 连面板的本机中转（斗鱼），或者直接连平台的视频服务器（抖音、登录了的 B站）----------
+    var ICONS = {
+      play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"></path>',
+      pause: '<path d="M9 6v12M15 6v12"></path>',
+      sound: '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"></path><path d="M16 9a4 4 0 0 1 0 6"></path>',
+      muted: '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
+      full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>'
+    };
+    function icon(name) {
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("width", "16");
+      svg.setAttribute("height", "16");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("aria-hidden", "true");
+      svg.innerHTML = ICONS[name];  // 只放上面写死的图形，不放任何外来的字
+      return svg;
+    }
+    function control(label, name) {
+      var btn = el("button", "watch-ctl");
+      btn.type = "button";
+      btn.setAttribute("aria-label", label);
+      btn.title = label;
+      btn.append(icon(name));
+      return btn;
+    }
+    var mpegtsLoading = null;
+    function loadMpegts() {  // 用到的时候才加载（270 KB）
+      if (!mpegtsLoading) {
+        mpegtsLoading = new Promise(function (resolve, reject) {
+          var script = document.createElement("script");
+          script.src = data.mpegts_url;
+          script.onload = resolve;
+          script.onerror = function () { mpegtsLoading = null; reject(new Error("播放器没加载出来")); };
+          document.head.appendChild(script);
+        });
+      }
+      return mpegtsLoading;
+    }
+    function stopPlayer() {
+      st.playSeq++;  // 晚到的回包、事件都不算数了
+      var player = st.player;
+      st.player = null;
+      if (!player) return;
+      try { player.pause(); player.unload(); player.detachMediaElement(); player.destroy(); } catch (e) {}
+    }
+
+    function buildPlayer(p) {
+      var box = el("div", "watch-player");
+      var video = el("video", "watch-video");
+      video.playsInline = true;
+      video.volume = Math.min(1, Math.max(0, parseInt(saved("evo-watch-volume", "70"), 10) / 100 || 0));
+      video.muted = saved("evo-watch-muted", "0") === "1";
+      var wait = el("div", "watch-wait", "正在连接" + p.platform_name + "…");
+      wait.setAttribute("role", "status");
+      var hint = el("button", "watch-hint");  // 一句提示：自动播放没有声音、有点卡
+      hint.type = "button";
+      hint.hidden = true;
+
+      var playBtn = control("暂停", "pause"), muteBtn = control("静音", "sound"), fullBtn = control("全屏", "full");
+      var volume = el("input", "watch-volume");
+      volume.type = "range";
+      volume.min = "0";
+      volume.max = "100";
+      volume.setAttribute("aria-label", "音量");
+      var quality = el("div", "watch-quality");
+      var qualityBtn = el("button", "watch-ctl watch-quality-btn", "清晰度");
+      qualityBtn.type = "button";
+      qualityBtn.setAttribute("aria-haspopup", "true");
+      qualityBtn.setAttribute("aria-expanded", "false");
+      qualityBtn.disabled = true;
+      var menu = el("div", "watch-quality-menu");
+      menu.setAttribute("role", "group");
+      menu.setAttribute("aria-label", "清晰度");
+      menu.hidden = true;
+      quality.append(qualityBtn, menu);
+      var bar = el("div", "watch-controls");
+      bar.append(playBtn, muteBtn, volume, el("span", "grow"), quality, fullBtn);
+      box.append(video, wait, hint, bar);
+
+      function showSound() {
+        var off = video.muted || video.volume === 0;
+        muteBtn.replaceChildren(icon(off ? "muted" : "sound"));
+        muteBtn.setAttribute("aria-label", off ? "打开声音" : "静音");
+        muteBtn.title = off ? "打开声音" : "静音";
+        volume.value = String(Math.round((video.muted ? 0 : video.volume) * 100));
+      }
+      function showPlay() {
+        playBtn.replaceChildren(icon(video.paused ? "play" : "pause"));
+        playBtn.setAttribute("aria-label", video.paused ? "播放" : "暂停");
+        playBtn.title = video.paused ? "播放" : "暂停";
+      }
+      function say(text, onClick) {
+        hint.textContent = text;
+        hint.hidden = !text;
+        hint.onclick = onClick || function () { hint.hidden = true; };
+      }
+      function setMenu(open) {
+        menu.hidden = !open;
+        qualityBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+      // 浏览器不让带声音自动播放时：先静音播，提示点一下打开声音
+      function tryPlay() {
+        var started = video.play();
+        if (started && started.catch) {
+          started.catch(function () {
+            video.muted = true;
+            showSound();
+            var again = video.play();
+            if (again && again.catch) again.catch(function () {});
+            say("点这里打开声音", function () { video.muted = false; save("evo-watch-muted", "0"); showSound(); hint.hidden = true; });
+          });
+        }
+      }
+
+      playBtn.addEventListener("click", function () { if (video.paused) tryPlay(); else video.pause(); });
+      muteBtn.addEventListener("click", function () {
+        video.muted = !(video.muted || video.volume === 0);
+        if (!video.muted && video.volume === 0) video.volume = 0.5;
+        save("evo-watch-muted", video.muted ? "1" : "0");
+        showSound();
+      });
+      volume.addEventListener("input", function () {
+        video.volume = parseInt(volume.value, 10) / 100;
+        video.muted = video.volume === 0;
+        save("evo-watch-volume", volume.value);
+        save("evo-watch-muted", video.muted ? "1" : "0");
+        showSound();
+      });
+      fullBtn.addEventListener("click", function () {
+        var stage = document.querySelector(".watch-stage-box");
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (stage.requestFullscreen) stage.requestFullscreen();
+      });
+      qualityBtn.addEventListener("click", function () { setMenu(menu.hidden); });
+      box.addEventListener("keydown", function (e) { if (e.key === "Escape" && !menu.hidden) { setMenu(false); qualityBtn.focus(); } });
+      document.addEventListener("click", function (e) { if (!menu.hidden && !quality.contains(e.target)) setMenu(false); });
+      video.addEventListener("play", showPlay);
+      video.addEventListener("pause", showPlay);
+      video.addEventListener("playing", function () { wait.hidden = true; });
+      // 连着卡了几次：提示可以换低一档（不替玩家改清晰度）
+      var stalls = [];
+      video.addEventListener("waiting", function () {
+        if (video.currentTime < 3) return;
+        var now = Date.now();
+        stalls = stalls.filter(function (t) { return now - t < 60000; });
+        stalls.push(now);
+        if (stalls.length >= 3 && menu.querySelectorAll("button").length > 1) {
+          stalls = [];
+          say("有点卡？右下角可以换低一档的清晰度");
+          setTimeout(function () { if (hint.textContent.indexOf("有点卡") === 0) hint.hidden = true; }, 10000);
+        }
+      });
+      showSound();
+      showPlay();
+
+      var seq = st.playSeq;  // 这次开播的编号：换了人、换了清晰度以后，晚到的回包和事件都不算数
+      function failed(detail) {
+        if (seq !== st.playSeq) return;
+        st.playFailed[p.id] = detail || "没播成";
+        render();
+      }
+      function fillMenu(info) {
+        var wanted = saved("evo-watch-q-" + p.platform, "");
+        var names = {};
+        info.qualities.forEach(function (q) { names[q.id] = q.name; });
+        qualityBtn.textContent = names[info.applied] || "清晰度";
+        qualityBtn.disabled = info.qualities.length < 2;
+        qualityBtn.title = info.qualities.length < 2 ? "这个直播间只有这一档" : "换清晰度";
+        menu.replaceChildren.apply(menu, info.qualities.map(function (q) {
+          var item = el("button", "watch-quality-item" + (q.id === info.applied ? " on" : ""), q.name);
+          item.type = "button";
+          item.setAttribute("aria-pressed", q.id === info.applied ? "true" : "false");
+          item.addEventListener("click", function () {
+            setMenu(false);
+            if (q.id === info.applied) return;
+            save("evo-watch-q-" + p.platform, q.id);
+            render();  // 清晰度变了 → 播放器那一块重画、重新开播
+          });
+          return item;
+        }));
+        // 选了一档、平台给的却是另一档（斗鱼不登录不给原画）：说明白，不让人以为选了没反应。
+        // 选的那一档这个房间根本没有（抖音有的房间没有蓝光）：不说，按钮上写着现在是哪一档
+        if (wanted && names[wanted] && wanted !== info.applied) {
+          menu.append(el("p", "watch-quality-note", p.platform_name + "没给「" + names[wanted] + "」（多半要登录），现在是「" + (names[info.applied] || "默认") + "」。"));
+        }
+      }
+
+      loadMpegts().then(function () {
+        if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) throw new Error("这个窗口放不了这种视频");
+        var wanted = saved("evo-watch-q-" + p.platform, "");
+        return fetch(p.play + (wanted ? "?q=" + encodeURIComponent(wanted) : ""), { cache: "no-store" }).then(function (r) { return r.json(); });
+      }).then(function (info) {
+        if (seq !== st.playSeq) return;
+        if (!info.ok) throw new Error(info.detail || "没取到播放地址");
+        fillMenu(info);
+        var player = mpegts.createPlayer({ type: "flv", isLive: true, url: info.stream },
+          { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: false, autoCleanupSourceBuffer: true, stashInitialSize: 128 });
+        st.player = player;
+        player.on(mpegts.Events.ERROR, function (type, detail) { failed(detail || type); });
+        // 视频那头结束了（中转接不上了、平台断开了，或者主播下播）：不自动重连，写明白，给一个按钮
+        player.on(mpegts.Events.LOADING_COMPLETE, function () {
+          if (seq !== st.playSeq) return;
+          wait.hidden = false;
+          wait.textContent = "直播断了。";
+          var again = el("button", "watch-primary", "重新连接");
+          again.type = "button";
+          again.addEventListener("click", function () { st.stageKey = null; render(); });
+          wait.append(again);
+        });
+        player.attachMediaElement(video);
+        player.load();
+        tryPlay();
+      }).catch(function (e) { failed(e && e.message); });
+      return box;
+    }
+
+    // ---------- 平台的扫码登录（B站：登录了才能看原画）----------
+    function loggedIn(platform) { return !!(st.accounts[platform] && st.accounts[platform].logged_in); }
+    function post(url, fields) {  // 改东西的请求都要带面板的口令
+      return fetch(url, { method: "POST", body: new URLSearchParams(Object.assign({ token: data.token }, fields || {})) })
+        .then(function (r) { return r.json(); });
+    }
+    var login = { platform: null, name: "", key: null, timer: null };
+    var loginDialog = $("login-dialog");
+    function loginShow(text, opts) {
+      opts = opts || {};
+      $("login-status").textContent = text;
+      $("login-qr-box").hidden = !opts.qr;
+      $("login-refresh").hidden = !opts.refresh;
+      $("login-logout").hidden = !opts.logout;
+    }
+    function loginAccount() {
+      loginShow("已登录：" + (st.accounts[login.platform].name || login.name + "用户") + "。播放器右下角可以选原画了。", { logout: true });
+    }
+    function loginPoll() {
+      if (!loginDialog.open || !login.key) return;
+      var key = login.key;
+      post(data.login[login.platform].poll, { key: key }).then(function (r) {
+        if (!loginDialog.open || login.key !== key) return;
+        if (r.state === "ok") {
+          login.key = null;
+          st.accounts[login.platform] = { logged_in: true, name: r.name };
+          delete st.playFailed[st.sel];
+          loginAccount();
+          render();  // 正在看这个平台的选手：马上换成 Evo 自己的播放器
+        } else if (r.state === "waiting" || r.state === "scanned") {
+          if (r.state === "scanned") loginShow("扫到了，请在手机上点确认。", { qr: true });
+          login.timer = setTimeout(loginPoll, 2000);
+        } else {
+          login.key = null;
+          loginShow(r.state === "expired" ? "二维码过期了，换一个再扫。" : "登录没成功，换一个二维码再试。", { refresh: true });
+        }
+      }).catch(function () { login.timer = setTimeout(loginPoll, 3000); });
+    }
+    function loginQr() {
+      clearTimeout(login.timer);
+      login.key = null;
+      loginShow("正在向" + login.name + "要二维码…");
+      post(data.login[login.platform].start).then(function (r) {
+        if (!loginDialog.open) return;
+        if (!r.ok) { loginShow("没要到二维码：" + (r.detail || "连不上"), { refresh: true }); return; }
+        login.key = r.key;
+        $("login-qr").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(r.svg);  // 当图片显示，不当网页的一部分
+        loginShow("请用" + login.name + " App 扫码：打开手机" + login.name + " → 我的 → 扫一扫。", { qr: true });
+        login.timer = setTimeout(loginPoll, 2000);
+      }).catch(function () { loginShow("没要到二维码：连不上 Evo。", { refresh: true }); });
+    }
+    function openLogin(platform, name) {
+      login.platform = platform;
+      login.name = name;
+      $("h-login").textContent = name + "扫码登录";
+      $("login-note").textContent = "登录以后能在 Evo 里看" + name + "的原画。登录信息只存在这台电脑上（加密保存），Evo 只用它向" + name + "要播放地址。";
+      loginDialog.showModal();
+      if (loggedIn(platform)) loginAccount(); else loginQr();
+    }
+    $("login-close").addEventListener("click", function () { loginDialog.close(); });
+    $("login-refresh").addEventListener("click", loginQr);
+    $("login-logout").addEventListener("click", function () {
+      post(data.login[login.platform].logout).catch(function () { return null; }).then(function () {
+        st.accounts[login.platform] = { logged_in: false, name: "" };
+        loginDialog.close();
+        render();  // 回到平台官方的播放器
+      });
+    });
+    loginDialog.addEventListener("close", function () { clearTimeout(login.timer); login.key = null; });
+    loginDialog.addEventListener("click", function (e) { if (e.target === loginDialog) loginDialog.close(); });  // 点弹窗外面
+    $("watch-login").addEventListener("click", function () {
+      var p = st.sel ? byId[st.sel] : null;
+      if (p && data.login[p.platform]) openLogin(p.platform, p.platform_name);
+    });
+
+    function renderApex() {
+      var playing = /^(embed|play):/.test(st.stageKey || "");
+      $("watch-apex").hidden = !(st.apex && !st.apexOk && playing);
+    }
+
+    function render() { renderList(); renderStage(); renderApex(); }
+
+    function select(id) {
+      st.sel = id;
+      st.closed = false;
+      var box = document.querySelector('.watch-p[data-player="' + CSS.escape(id) + '"]');
+      if (box) box.closest("details").open = true;
+      try { history.replaceState(null, "", "?p=" + encodeURIComponent(id)); } catch (e) {}
+      render();
+    }
+
+    // 还没选人（也没点"关闭直播"）：自动选第一位在播的，先挑能在窗口里播的
+    function autoSelect() {
+      if (st.sel || st.closed || !st.status) return;
+      var live = data.players.filter(function (p) { return isLive(p.id); });
+      var pick = live.filter(function (p) { return canPlay(p) || canEmbed(p); })[0] || live[0];
+      if (pick) select(pick.id);
+    }
+
+    function refresh() {
+      st.lastTry = Date.now();
+      fetch(data.status_url, { cache: "no-store" })
+        .then(function (r) {
+          if (r.status === 404) { location.reload(); throw new Error("gone"); }  // 这场赛事从赛程里拿掉了：回赛事页
+          return r.json();
+        })
+        .then(function (r) {
+          st.status = r.players;
+          st.platforms = r.platforms;
+          st.failed = false;
+          autoSelect();
+          render();
+        })
+        .catch(function () { st.failed = true; render(); });
+    }
+    function checkGame() {
+      fetch(data.game_url, { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          st.apex = !!r.running;
+          if (!st.apex) st.apexOk = false;
+          renderApex();
+        })
+        .catch(function () {});
+    }
+    // 页面看不见时（最小化、切到别的程序）不问；回来以后超过 60 秒没问过就马上问一次
+    function tick() {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - st.lastTry >= 60000) refresh();
+    }
+
+    document.querySelectorAll(".watch-p").forEach(function (btn) {
+      btn.addEventListener("click", function () { select(btn.dataset.player); });
+    });
+    // 队徽加载不出来（没连上、文件没了）：换回队名的第一个字。脚本运行以前就失败了的也算
+    document.querySelectorAll(".watch-team-logo img").forEach(function (img) {
+      function fallback() {
+        var box = img.parentNode;
+        if (!box) return;
+        box.classList.remove("has-img");
+        box.textContent = box.dataset.initial || "";
+      }
+      img.addEventListener("error", fallback);
+      if (img.complete && img.naturalWidth === 0) fallback();
+    });
+    document.querySelectorAll(".watch-seg button").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        st.filter = btn.dataset.filter;
+        document.querySelectorAll(".watch-seg button").forEach(function (other) {
+          other.classList.toggle("on", other === btn);
+          other.setAttribute("aria-pressed", other === btn ? "true" : "false");
+        });
+        renderList();
+      });
+    });
+    $("watch-apex-keep").addEventListener("click", function () { st.apexOk = true; renderApex(); });
+    $("watch-apex-close").addEventListener("click", function () { st.closed = true; render(); });
+    document.addEventListener("visibilitychange", tick);
+    window.addEventListener("pagehide", stopPlayer);  // 离开这一页：播放器停下，中转那头跟着断开
+    if (st.sel) {
+      var first = document.querySelector('.watch-p[data-player="' + CSS.escape(st.sel) + '"]');
+      if (first) first.closest("details").open = true;
+    }
+    render();
+    refresh();
+    checkGame();
+    setInterval(tick, 5000);
+    setInterval(function () { if (document.visibilityState === "visible") checkGame(); }, 10000);
+  })();
+</script>
+{% endblock %}

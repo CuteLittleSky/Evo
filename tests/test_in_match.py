@@ -36,7 +36,7 @@ import storage
 from hud import Hud
 from lobby import LobbyReader
 from ocr import SMALL_CROP_PARAMS, create_engine, load_config
-from post_match import HUD_ONLY_NOTE, NO_END_NOTE, REQUEUE_NOTE, SOURCE_HUD, SOURCE_SUMMARY, settle
+from post_match import HUD_ONLY_NOTE, NO_END_NOTE, REQUEUE_NOTE, SOURCE_HUD, SOURCE_SUMMARY, XP_ONLY_NOTE, settle
 from screens import ScreenDetector
 from summary_page import is_champion
 
@@ -270,16 +270,19 @@ def rule_checks():
     a, b, c = game(10, -20), game(30), game(50, 35)
     lobby(60, 870)
     out["fill"] = pick(storage.get_match(conn, b), "rp_delta", "rp_source")
-    # 都有 RP 但对不上：标待确认
+    # 回大厅时顺便补中间各局的段位：c 是大厅前最后一局（补大厅读到的），a 往后加、b 往前减（b 的 RP 是刚补的，不当作读到的）
+    out["fill_chain"] = [pick(storage.get_match(conn, m), "rank_division", "rank_progress") for m in (a, b, c)]
+    out["fill_chain_log"] = [line.strip() for line in log if "没有段位" in line]
+    # 都有 RP 但对不上：不标待确认（2026-11-11 起），战绩页显示校准行
     d = game(70, 10)
     lobby(80, 900)
-    out["mismatch"] = pick(storage.get_match(conn, d), "needs_review")
-    out["mismatch_note"] = storage.get_match(conn, d)["review_note"] or ""
+    out["mismatch"] = pick(storage.get_match(conn, d), "needs_review", "review_note")
+    out["mismatch_log"] = log[-1]
     # 对上了：不标
     e = game(90, 5)
     lobby(100, 905)
     out["agree"] = pick(storage.get_match(conn, e), "needs_review")
-    # 跨大段：不核对
+    # 跨大段：不标（升段奖励、降段保护显示成校准行）
     f = game(110, 40)
     lobby(120, 10, "大师", None)
     out["cross_tier"] = pick(storage.get_match(conn, f), "needs_review")
@@ -294,6 +297,21 @@ def rule_checks():
     i = game(170, 5)
     lobby(170 + 7 * 24 * 60, 688, "白银", "I")
     out["fill_rank_late"] = pick(storage.get_match(conn, i), "rank_tier", "rank_progress")
+    # 战绩页的校准行：对得上的（包括补上了的）没有；对不上 +20；跨大段钻石 II 905 → 大师 10 是 1105 − 40；
+    # 中间只有别的账号的局 +20；最后一次（白银 I 688 = 5438）比大师 40（16040）少 10602，再减中间那局的 5
+    out["adjust"] = [(c["read_at"], c["delta"], c["games"]) for c in
+                     calibration.adjustments(storage.lobby_readings(conn), storage.all_matches(conn))]
+    out["adjust_want"] = [(stamp(80), 20, 1), (stamp(120), 1065, 1), (stamp(140), 20, 0),
+                          (stamp(170 + 7 * 24 * 60), -10607, 1)]
+    # 以前对不上标的待确认：没确认过的去掉这条备注，没别的问题就不再待确认；确认过的不动
+    old = "大厅校准：前后两次大厅总分相差 -90，中间 11 局（编号 1、2）RP 加起来 -128，对不上，请核对"
+    only = storage.insert_match(conn, {"ended_at": stamp(300), "needs_review": 1, "review_note": f"{old}；{XP_ONLY_NOTE}"})
+    other = storage.insert_match(conn, {"ended_at": stamp(301), "needs_review": 1,
+                                        "review_note": f"{old}；名次对不上：总结页第 3、经验值页第 4，请核对"})
+    done = storage.insert_match(conn, {"ended_at": stamp(302), "needs_review": 0, "review_note": old})
+    out["cleared"] = calibration.clear_old_flags(conn)
+    out["cleared_rows"] = [pick(storage.get_match(conn, m), "needs_review", "review_note") for m in (only, other, done)]
+    out["cleared_want"] = [(0, XP_ONLY_NOTE), (1, "名次对不上：总结页第 3、经验值页第 4，请核对"), (0, old)]
 
     # 各来源的优先级
     def match_with(readings, note=None):
@@ -346,6 +364,257 @@ def panel_checks():
     }
 
 
+def rank_fill_checks():
+    """补段位（calibration.fill_ranks，2026-11-11 用户定的规则）：用前后的大厅、经验值页的段位和各局 RP 补中间各局。
+    数字照 2026-11-04 到 11-10 用户本机的几段编的（黄金 II 从 7000 起、黄金 I 从 7750 起、白金 IV 从 8500 起）。"""
+    from ranks import score
+    conn = storage.connect(":memory:")
+    t = datetime(2026, 11, 5, 20, 0)
+
+    def stamp(minutes):
+        return f"{t + timedelta(minutes=minutes):%Y-%m-%d %H:%M:%S}"
+
+    def game(minutes, rp=None, rank=None, source="经验值页", mode="ranked", name="Me", when=None):
+        fields = {"ended_at": when or stamp(minutes), "rp_delta": rp, "rp_source": source if rp is not None else None,
+                  "mode": mode, "player_name": name}
+        fields.update(zip(("rank_tier", "rank_division", "rank_progress"), rank or ()))
+        return storage.insert_match(conn, fields)
+
+    def lobby(minutes, tier, division, progress, name="Me", when=None):
+        storage.save_lobby(conn, {"read_at": when or stamp(minutes), "player_name": name, "rank_tier": tier,
+                                  "rank_division": division, "rank_progress": progress,
+                                  "score": score(tier, division, progress)})
+
+    lobby(0, "黄金", "II", 40)  # 7040
+    alt = game(3, -20, name="Alt")  # 别的账号：不算进来，也不补（它没有参照点）
+    m1 = game(5, -18)  # 7022 = 黄金 II 22
+    pubs = game(7, mode="pubs")  # 匹配局：不算、不补
+    m2 = game(10, -33, ("黄金", "III", None))  # 经验值页只读到段：6989，补上分数 739
+    game(15, 2, ("黄金", "III", 741))  # 经验值页读到的（参照点）
+    m4 = game(20, -62, source="大厅校准")  # 补出来的 RP 不当作读到的：按前后之差是 -23
+    m5 = game(25, -38, source="对局中")
+    m6 = game(30, 20, ("黄金", "III", 700))  # 参照点 6950 → m5 6930、m4 6968
+    m7 = game(35, -33, source="对局中")  # 缺两局 RP：从前面推 6917
+    m8, m9 = game(40), game(45)  # m8 两头都推不到：只补大段；m9 从后面推 6810
+    m10 = game(50, 127, source="对局中")
+    lobby(55, "黄金", "III", 687)  # 6937
+    m11 = game(60, 24, source="对局中")  # 6937 + 24 + 212 ≠ 7100：RP 对不上，只补大段
+    m12 = game(65, 212, ("黄金", "II", 100))
+    unknown = game(80, mode=None)  # 模式没读出、没有 RP：不补，RP 当作不知道
+    m16 = game(85, -20)
+    lobby(90, "黄金", "II", 60)  # 7060：m16 = 7060，unknown 那局按前后之差是 -20
+    # 跨大段：对得上才补（黄金 I 575 → +18 → +440 = 白金 IV 283）；缺 RP 的不补
+    lobby(0, "黄金", "I", 498, name="Up")  # 8248
+    u1 = game(5, 93, source="对局中", name="Up")
+    game(10, -16, ("黄金", "I", 575), name="Up")  # 8325
+    u3 = game(15, 18, source="对局中", name="Up")
+    game(20, 440, ("白金", "IV", 283), name="Up")  # 8783
+    u5, u6 = game(25, name="Up"), game(30, -48, name="Up")
+    lobby(35, "黄金", "I", 740, name="Up")  # 掉回黄金（可能有降段保护）：缺一局 RP，没法核对
+    # 中间换了赛季不补：测试里只有一个赛季（见 fake_game.py），在 test_season_ranges.py 测
+
+    filled = calibration.fill_ranks(conn)
+    skipped = (u5, u6, alt, pubs, unknown)
+    got = {m: pick(storage.get_match(conn, m), "rank_tier", "rank_division", "rank_progress")
+           for m in (m1, m2, m4, m5, m7, m8, m9, m10, m11, m16, u1, u3, *skipped)}
+    want = {m1: ("黄金", "II", 22), m2: ("黄金", "III", 739), m4: ("黄金", "III", 718), m5: ("黄金", "III", 680),
+            m7: ("黄金", "III", 667), m8: ("黄金", None, None), m9: ("黄金", "III", 560), m10: ("黄金", "III", 687),
+            m11: ("黄金", None, None), m16: ("黄金", "II", 60), u1: ("黄金", "I", 591), u3: ("黄金", "I", 593)}
+    wrong = {m: (got[m], want[m]) for m in want if got[m] != want[m]}
+    sources = {r["source"] for m in (m1, m2) for r in storage.readings_of(conn, m) if r["field"].startswith("rank_")}
+    anchors = [pick(storage.get_match(conn, m), "rank_progress") for m in (m6, m12)]
+    return {
+        f"补段位：同一大段对得上、缺一局、缺两局（中间只补大段）、RP 对不上（只补大段）、跨大段对得上的都补对了（不对的：{wrong or '无'}）":
+            not wrong,
+        f"补段位：跨大段缺 RP、别的账号、匹配局、模式没读出的局：不补（{[got[m] for m in skipped]}）":
+            all(got[m] == (None, None, None) for m in skipped),
+        f"补段位：经验值页读到的段位不改，补上的在 readings 表记来源\"大厅校准\"（{anchors}、{sources}）":
+            anchors == [(700,), (100,)] and sources == {"大厅校准"},
+        f"补段位：日志写补了什么、为什么（{filled[0][2] if filled else '没补'}）":
+            bool(filled) and filled[0][2] == "编号 2 没有段位：补上 黄金 II 22（前后的段位和各局 RP 对得上）",
+        "补段位：再跑一次什么都不改": calibration.fill_ranks(conn) == [],
+    }
+
+
+def rp_fix_checks():
+    """按最近的参照点补 RP（calibration.fix_rps，2026-11-13 用户同意）：两次大厅之间读到了经验值页的段位，
+    缺 RP 的那局只按它所在那一小段算，别的局读错的 RP 不算到它头上（照用户本机 11-04 那一段编的：
+    缺的那局按两次大厅之差是 -62，按前后经验值页的段位是 -38，差的 24 是另一局对局中读的 +24）。"""
+    from ranks import score
+    t = datetime(2026, 11, 4, 21, 0)
+
+    def stamp(minutes):
+        return f"{t + timedelta(minutes=minutes):%Y-%m-%d %H:%M:%S}"
+
+    def setup(conn, x2_rp=None, log=None):
+        def game(minutes, rp=None, rank=None, source="经验值页", mode="ranked", edited=None):
+            fields = {"ended_at": stamp(minutes), "rp_delta": rp, "rp_source": source if rp is not None else None,
+                      "mode": mode, "player_name": "Me", "edited": edited}
+            fields.update(zip(("rank_tier", "rank_division", "rank_progress"), rank or ()))
+            return storage.insert_match(conn, fields)
+
+        def lobby(minutes, progress):
+            reading = {"read_at": stamp(minutes), "player_name": "Me", "rank_tier": "黄金", "rank_division": "III",
+                       "rank_progress": progress, "score": score("黄金", "III", progress)}
+            storage.save_lobby(conn, reading)
+            if log is not None:
+                calibration.calibrate(conn, reading, log.append)
+
+        lobby(0, 500)  # 6750
+        ids = {"x1": game(5, -32, ("黄金", "III", 468)),  # 6718
+               "x2": game(10, x2_rp, source="大厅校准"),  # 应该是 -38
+               "x3": game(15, -38, ("黄金", "III", 392)),  # 6642
+               "x4": game(20, 24, source="对局中"),  # 按前后的段位是 0
+               "x5": game(25, 212, ("黄金", "III", 604))}  # 6854
+        lobby(30, 604)  # 两次大厅之差 +104，读到的 RP 加起来 +166
+        if log is None:  # 补以前的局：用户改过 RP 的不动；模式没读出的局不给它补 RP
+            ids["y1"] = game(35, -50, source="大厅校准", edited="rp_delta")  # 按前后算是 -46
+            ids["y2"] = game(40, -38, ("黄金", "III", 520))  # 6770
+            ids["z1"] = game(45, mode=None)  # 按前后算是 0，可能是匹配
+            ids["z2"] = game(50, -20, ("黄金", "III", 500))
+        return ids
+
+    live, log = storage.connect(":memory:"), []
+    ids = setup(live, log=log)
+    x2 = pick(storage.get_match(live, ids["x2"]), "rp_delta", "rp_source")
+    rows = [(c["read_at"], c["delta"]) for c in
+            calibration.adjustments(storage.lobby_readings(live), storage.all_matches(live))]
+    old = storage.connect(":memory:")
+    ids = setup(old, x2_rp=-62)
+    fixed = calibration.fix_rps(old)
+    after = {k: pick(storage.get_match(old, ids[k]), "rp_delta") for k in ("x2", "y1", "z1")}
+    return {
+        f"回大厅时只缺一局 RP：按它前后经验值页的段位算 -38，不是两次大厅之差的 -62（{x2}）": x2 == (-38, "大厅校准"),
+        f"  日志写按前后的段位补的（{[l.strip() for l in log if '没有 RP' in l]}）":
+            any("编号 2 没有 RP：按前后的段位和各局 RP 补上 -38" in l for l in log),
+        f"  另一局读错的 +24 显示成那次回大厅的校准分数 -24（{rows}）": rows == [(stamp(30), -24)],
+        f"以前按两次大厅之差补的 -62：改成 -38；用户改过的 -50、模式没读出的局不动（{after}；{fixed}）":
+            after == {"x2": (-38,), "y1": (-50,), "z1": (None,)} and len(fixed) == 1
+            and "以前按两次大厅之差补的是 -62" in fixed[0],
+        "按前后的段位补 RP：再跑一次什么都不改": calibration.fix_rps(old) == [],
+    }
+
+
+def lobby_misread_checks():
+    """大厅读错的段位（2026-10-22 用户本机连着两张把钻石 I 412 读成了大师 412，截图删了）：
+    A. 段位那一栏有两行段位不一样时用徽章下面的罗马数字分（lobby.pick_tier）；B. 前后一样、夹在中间不一样的删掉
+    （calibration.drop_misreads）。"""
+    import numpy as np
+    import lobby as lobby_module
+    from lobby import pick_tier
+    from ranks import score
+
+    class Fake(LobbyReader):
+        """段位那一栏、徽章读到什么由测试给（不用截图和识别引擎）。"""
+        def __init__(self, panel, emblem):
+            super().__init__(engine=None)
+            self.panel, self.emblem = panel, emblem
+
+        def _lines(self, frame, spec):
+            if spec is self.cfg["panel"]:
+                return [(text, 0.95) for text in self.panel]
+            return [(self.emblem, 0.95)] if self.emblem else []
+
+    def read(panel, emblem):
+        with mock.patch.object(lobby_module, "read_name", lambda *a, **k: "Me"):
+            r = Fake(panel, emblem).read(np.zeros((1080, 1920, 3), np.uint8))
+        return r["tier"], r["division"], r["progress"], r["score"]
+
+    out = {
+        "A. 只有一行段位：照旧（钻石 I）": pick_tier([("钻石", "I")], "I") == ("钻石", "I")
+        and pick_tier([("大师", None)], None) == ("大师", None) and pick_tier([], "I") is None,
+        "A. 两行不一样、徽章有罗马数字：取分段的那一行（大师 / 钻石 I → 钻石 I）":
+            pick_tier([("大师", None), ("钻石", "I")], "I") == ("钻石", "I"),
+        "A. 两行都分段：取文字里的段和徽章对得上的（黄金 / 白银 I，徽章 I → 白银 I）；对不上的分不出，不记":
+            pick_tier([("黄金", None), ("白银", "I")], "I") == ("白银", "I")
+            and pick_tier([("黄金", None), ("白银", None)], "I") is None,
+        "A. 两行不一样、徽章没读到：分不出，不记": pick_tier([("大师", None), ("钻石", "I")], None) is None,
+        f"A. 读大厅：多了一行'大师…'，徽章是 I → 钻石 I 412（{read(['大师挑战', '钻石I', '412/1000排位点数'], 'I')}）":
+            read(["大师挑战", "钻石I", "412/1000排位点数"], "I") == ("钻石", "I", 412, 15412),
+        "A. 读大厅：多了一行'大师…'，徽章没读到 → 不记（没有总分）":
+            read(["大师挑战", "钻石I", "412/1000排位点数"], None)[3] is None,
+        "A. 读大厅：平常只有一行，照旧": read(["钻石I", "412/1000排位点数"], "I") == ("钻石", "I", 412, 15412),
+    }
+
+    # B：前后两次一样、中间没打排位，夹在中间不一样的删掉（回大厅时）
+    conn, log = storage.connect(":memory:"), []
+
+    def lobby(when, tier, division, progress=412):
+        reading = {"read_at": when, "player_name": "Me", "rank_tier": tier, "rank_division": division,
+                   "rank_progress": progress, "score": score(tier, division, progress)}
+        storage.save_lobby(conn, reading)
+        calibration.calibrate(conn, reading, log.append)
+
+    lobby("2026-10-22 19:11:23", "钻石", "I")
+    storage.insert_match(conn, {"ended_at": "2026-10-22 19:11:50", "mode": "pubs", "player_name": "Me"})  # 匹配局不算
+    lobby("2026-10-22 19:12:12", "大师", None)
+    lobby("2026-10-22 19:12:21", "钻石", "I")
+    left = [r["score"] for r in storage.lobby_readings(conn)]
+    rows = calibration.adjustments(storage.lobby_readings(conn), storage.all_matches(conn))
+    out[f"B. 钻石 I 412 → 大师 412 → 钻石 I 412、中间只有匹配：删掉大师那次，没有校准行（{left}、{len(rows)} 行）"] = (
+        left == [15412, 15412] and not rows and any("读错了，删掉" in line for line in log))
+    # 中间打过排位：分数可能真的变过（比如 +50 又 -50），不删；三次都不一样的也不删
+    other = storage.connect(":memory:")
+    for when, progress in (("2026-11-05 20:00:00", 100), ("2026-11-05 20:30:00", 150), ("2026-11-05 21:00:00", 100),
+                           ("2026-11-05 22:00:00", 200), ("2026-11-05 22:10:00", 300)):
+        storage.save_lobby(other, {"read_at": when, "player_name": "Me", "rank_tier": "黄金", "rank_division": "II",
+                                   "rank_progress": progress, "score": 7000 + progress})
+    storage.insert_match(other, {"ended_at": "2026-11-05 20:20:00", "mode": "ranked", "rp_delta": 50, "player_name": "Me"})
+    storage.insert_match(other, {"ended_at": "2026-11-05 20:40:00", "mode": "ranked", "rp_delta": -50, "player_name": "Me"})
+    out["B. 中间打过排位的、三次都不一样的：不删"] = (calibration.drop_misreads(other) == []
+                                              and len(storage.lobby_readings(other)) == 5)
+    return out
+
+
+def calibration_panel_checks():
+    """战绩页的校准行（2026-11-11）：放在那次回大厅之前结束的那一局上面；只看匹配、只看待确认时不显示；
+    打开面板时取消以前大厅校准标的待确认；翻页时每行只出现在一页上。"""
+    import panel_app
+    path = fake_game._TEMP / "panel_calibration.db"
+    path.unlink(missing_ok=True)
+    conn = storage.connect(path)
+    from ranks import score
+
+    def lobby(when, progress):
+        storage.save_lobby(conn, {"read_at": when, "player_name": "Me", "rank_tier": "黄金", "rank_division": "III",
+                                  "rank_progress": progress, "score": score("黄金", "III", progress)})
+
+    def game(when, rp, **extra):
+        return storage.insert_match(conn, {"ended_at": when, "rp_delta": rp, "mode": "ranked", "player_name": "Me",
+                                           "placement": 10, **extra})
+
+    lobby("2026-11-10 21:00:00", 296)
+    m1 = game("2026-11-10 21:10:00", -38)
+    m2 = game("2026-11-10 21:20:00", 10, needs_review=1,
+              review_note="大厅校准：前后两次大厅总分相差 -10，中间 2 局（编号 1、2）RP 加起来 -28，对不上，请核对")
+    lobby("2026-11-10 21:30:00", 286)  # 黄金 III 296 → 286（-10），两局合计 -28：校准 +18
+    m3 = game("2026-11-10 21:40:00", 5)
+    conn.close()
+    panel_app.app.config.update(DB=path, TESTING=True)
+    client = panel_app.app.test_client()
+    page = client.get("/matches?range=all").get_data(as_text=True)
+    pubs = client.get("/matches?range=all&mode=pubs").get_data(as_text=True)
+    review = client.get("/matches?range=all&review=1").get_data(as_text=True)
+    conn = storage.connect(path)
+    cleared = pick(storage.get_match(conn, m2), "needs_review", "review_note")
+    conn.close()
+    at = page.find("校准分数")
+    # 翻页：两页各 1 局，校准行（21:30）在 21:20 那局上面，第 1 页最后一局是 21:40（比它晚）：只在第 2 页
+    rows = [{"id": 3}, {"id": 2}, {"id": 1}]
+    raw = [{"ended_at": "2026-11-10 21:40:00"}, {"ended_at": "2026-11-10 21:20:00"}, {"ended_at": "2026-11-10 21:10:00"}]
+    cal = [{"read_at": "2026-11-10 21:30:00", "kind": "calibration"}, {"read_at": "2026-11-10 20:00:00", "kind": "calibration"}]
+    merge = panel_app.merge_calibration
+    pages = [[r.get("id") or r["read_at"][-8:-3] for r in merge(rows[i:i + 1], raw[i:i + 1], cal, above, i == 2)]
+             for i, above in ((0, None), (1, "2026-11-10 21:40:00"), (2, "2026-11-10 21:20:00"))]
+    return {
+        "校准行：写校准分数和差多少（+18），放在 21:20 那局和 21:40 那局中间":
+            page.find(f'id="m{m3}"') < at < page.find(f'id="m{m2}"') < page.find(f'id="m{m1}"') and ">+18<" in page,
+        "校准行：只看匹配、只看待确认时不显示": "校准分数" not in pubs and "校准分数" not in review,
+        f"打开面板：以前大厅校准标的待确认取消了（{cleared}）": cleared == (0, None),
+        f"校准行翻页：每行只在一页上，比所有局都早的在最后一页最后（{pages}）": pages == [[3], ["21:30", 2], [1, "20:00"]],
+    }
+
+
 def main():
     print("0.3.0 新流程：对局中、一局结束、冠军、大厅校准、各来源的优先级")
     try:
@@ -359,11 +628,22 @@ def main():
     checks = {
         **panel_checks(),
         f"大厅校准：只缺一局的 RP，用差值补上（{r['fill']}）": r["fill"] == (-45, "大厅校准"),
-        f"大厅校准：都有 RP 但对不上，标待确认（{r['mismatch_note']}）": r["mismatch"] == (1,) and "大厅校准" in r["mismatch_note"],
+        f"大厅校准：都有 RP 但对不上，不标待确认，日志写校准分数（{r['mismatch_log'].strip()}）":
+            r["mismatch"] == (0, None) and "校准分数 +20，不标待确认" in r["mismatch_log"],
         "大厅校准：对上了，不标": r["agree"] == (0,),
-        "大厅校准：跨了大段（升段奖励、降段保护），不核对": r["cross_tier"] == (0,),
+        "大厅校准：跨了大段（升段奖励、降段保护），不标": r["cross_tier"] == (0,),
         "大厅校准：别的账号的局不算进来": r["other_account"] == (0,),
+        f"校准行：对得上的没有，对不上、跨大段、中间没记下排位局的各一行（{r['adjust']}）": r["adjust"] == r["adjust_want"],
+        f"以前大厅校准标的待确认：没确认的取消、有别的问题的留着、确认过的不动（改了 {r['cleared']} 局）":
+            r["cleared"] == 2 and r["cleared_rows"] == r["cleared_want"],
+        **calibration_panel_checks(),
         f"大厅之前那一局没有段位：补上大厅读到的（{r['fill_rank']}）": r["fill_rank"] == ("大师", 40),
+        f"回大厅时补中间各局的段位：前一局往后加 RP、刚用差值补上 RP 的那局往前减（{r['fill_chain']}）":
+            r["fill_chain"] == [("II", 880), ("II", 835), ("II", 870)],
+        f"  日志：{r['fill_chain_log']}": len(r["fill_chain_log"]) == 3,
+        **rank_fill_checks(),
+        **rp_fix_checks(),
+        **lobby_misread_checks(),
         f"那一局结束一周后才回大厅（中间换了赛季）：不补（{r['fill_rank_late']}）": r["fill_rank_late"] == (None, None),
         f"对局中比总结页少（最后一秒没截到）：用总结页的，不标；老板分、RP 用对局中的（{r['hud_less']}）":
             r["hud_less"] == (3, 900, 2, 30, "对局中", 0),

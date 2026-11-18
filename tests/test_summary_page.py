@@ -11,12 +11,19 @@
 
 from fake_game import MissingShots, load, report, run_collect, shot  # 要在项目代码之前导入（设置临时数据文件夹）
 
+import itertools
 import re
+from datetime import datetime, timedelta
+from unittest import mock
 
+import live_collect
 import ocr
+import screenshots
+from paths import data_absolute
 from summary_page import read_summary
 
 NIGHT = "live/20261016_211452/"
+RUNS = itertools.count(1)
 
 
 def late_placement(full, blank):
@@ -33,6 +40,54 @@ def other_damage(full, other):
     frame = full.copy()
     frame[620:700, 990:1245] = other[620:700, 990:1245]
     return frame
+
+
+def blank_rows(full, *rows):
+    """拼一张"中间卡片上这几行没读到"的总结页：这几行（2560×1440 下的上下范围）涂成旁边的底色。"""
+    frame = full.copy()
+    for top, bottom in rows:
+        frame[top:bottom, 990:1245] = frame[top - 10, 1000]
+    return frame
+
+
+def run_with_jumps(frames, images):
+    """和 run_collect 一样，只是帧名写成"观战+130"时，这一帧让时间往后跳 130 秒（存一局的时间用 datetime.now()，
+    fake_game 的假时钟管不到）。每次从不同的小时开始，截图文件夹不重名。"""
+    ahead = [next(RUNS) * 3600]
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + timedelta(seconds=ahead[0])
+
+    def picture(label):
+        name, _, seconds = label.partition("+")
+        ahead[0] += int(seconds or 0)
+        return images[name]
+
+    with mock.patch.object(live_collect, "datetime", Later):
+        return run_collect(frames, picture, keep_all=False)
+
+
+def revisit_checks(images):
+    """又回到总结页的几种情况（2026-11-09，PR #6）：没读全就切走、很快回到同一张，补进原来那一局；
+    隔了很久、回过大厅，同一局也不重复存。"""
+    rows, _, _ = run_with_jumps(["观战", "少项", "少项", "观战", "F5", "F5", "大厅", "大厅"], images)
+    saved = data_absolute(rows[0]["evidence_path"]) if rows and rows[0]["evidence_path"] else None
+    out = {
+        "第一次只读到击杀、伤害、生存时间，又回到同一张读全：只存 1 局、补全名次、不待确认":
+            len(rows) == 1 and (rows[0]["placement"], rows[0]["damage"], rows[0]["needs_review"]) == (8, 688, 0),
+        "补全以后总结页截图还在（名字照旧，一直留着），不多留一张":
+            saved is not None and saved.exists() and screenshots.is_summary(saved)
+            and [p.name for p in saved.parent.iterdir()] == [saved.name],
+    }
+    rows, _, _ = run_with_jumps(["观战", "B5", "B5", "观战", "缺伤害", "观战", "大厅", "大厅"], images)
+    out["第一次读到伤害，第二次停得短没读到：保留第一次读到的 688"] = len(rows) == 1 and rows[0]["damage"] == 688
+    rows, _, _ = run_with_jumps(["观战", "F5", "F5", "F5", "观战", "观战+130", "F5", "F5", "观战"], images)
+    out["过了 2 分钟以上再切回同一局的总结页：不重复存"] = len(rows) == 1
+    rows, _, _ = run_with_jumps(["观战", "F5", "F5", "F5", "大厅", "大厅", "F5", "F5", "大厅"], images)
+    out["回到大厅后重新打开上一局的总结页：不重复存"] = len(rows) == 1
+    return out
 
 
 def memo_checks(images):
@@ -82,8 +137,11 @@ def main():
             "M9": load(shot(NIGHT + "09_233033.png")),  # 名次没滑进来就离开了：0 伤害
             "M8": load(shot(NIGHT + "08_231728.png")),  # 95 伤害
             "M7": load(shot(NIGHT + "07_231013.png")),  # 599 伤害
+            "大厅": load(shot(NIGHT + "lobby_211506_enter.png")),
         }
         images["F5改伤害"] = other_damage(f5, images["M7"])  # 第 8 名、3 杀，伤害换成 599
+        images["少项"] = blank_rows(images["B5"], (810, 880), (905, 975))  # 名次没滑进来，急救、重生也没读到
+        images["缺伤害"] = blank_rows(images["B5"], (620, 700))  # 名次没滑进来，伤害也没读到
     except MissingShots as e:
         print(f"  ⏭ 跳过：找不到截图 {e}（截图只在开发者电脑上，不在仓库里）")
         return None
@@ -116,6 +174,14 @@ def main():
         and rows[0]["needs_review"] == 1 and (rows[0]["review_note"] or "").startswith("名次：没读到"),
         "存下以后不再快速检查（回到每秒一次）": m7_sleeps[-1] == 1.0 and min(m7_sleeps) <= 0.3,
     })
+
+    # 2026-11-06 实战：名次还没滑进来就离开总结页（存成待确认），几秒后回到同一张、名次也滑进来了 ——
+    # 应该把那一局补全，不能再存一局（以前会存成两局：待确认 + 正常）。
+    frames = ["观战", "B5", "B5", "观战", "F5", "F5"]
+    rows, _, _ = run_collect(frames, images.get)
+    checks["名次没滑进来就离开、随后回到同一张读全：只存 1 局并补全名次"] = (
+        len(rows) == 1 and rows[0]["placement"] == 8 and rows[0]["needs_review"] == 0)
+    checks.update(revisit_checks(images))
     return report(checks)
 
 

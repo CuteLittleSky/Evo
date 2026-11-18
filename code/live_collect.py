@@ -32,6 +32,7 @@
   进入时一张、离开前最后一帧一张；每局结束时还存最后一张自己的界面（hud_时间_last.png，校准对局中的区域用）
 - 设置页的"保留全部截图"开关：每局结束时看一眼，改了从下一局开始生效（见 collect 里的 round_end）
 每 5 分钟和记录结束时，日志里写一行 CPU、内存占用（方便实测对局中每 0.3 秒一张对 CPU 的影响）。
+每局对局中 Evo 全部进程的 CPU、内存记进最近 10 局（总览页的「Evo 占用」、匿名统计用，见 evo_usage.py）。
 
 运行：python code/live_collect.py
 停止：在终端按 Ctrl+C，或到达 --minutes 设定的时长后自动停止
@@ -46,14 +47,17 @@ from time import perf_counter, process_time  # 单独导入：测试会把本文
 
 import cv2
 
+import calibration
 import capture
+import evo_usage
 import game_lang
+import ranks
 import screenshots
 import season_import
 import sounds
 import storage
 from eliminated import read_eliminated
-from game_aspect import AspectWatcher
+from game_aspect import AspectGuess, AspectWatcher
 from hud import Hud
 from in_match import InMatchWatcher
 from lobby import LobbyReader, LobbyWatcher
@@ -61,10 +65,10 @@ from match_start import read_match_start
 from ocr import SMALL_CROP_PARAMS, LazyEngine, load_config
 from paths import CAPTURES_DIR
 from player_name import PlayerNameReader
-from post_match import SOURCE_CHAMPION, SOURCE_SUMMARY, PostMatch
+from post_match import SAME_MATCH_SECONDS, SOURCE_CHAMPION, SOURCE_SUMMARY, PostMatch
 from process_info import memory_mb, set_full_speed, set_low_priority
 from screens import GameScreens
-from summary_page import KEY_FIELDS, is_champion, read_summary, show, summary_readings, summary_to_match
+from summary_page import KEY_FIELDS, is_champion, read_summary, show, summary_problems, summary_readings, summary_to_match
 from teammates import describe, read_teammates
 from xp_page import numbers_moved, numbers_snapshot, read_rp, read_xp
 
@@ -74,11 +78,21 @@ NO_SCREEN_WARNING_MINUTES = 45  # 这么久一个画面都没认出来，在日�
 USAGE_EVERY_SECONDS = 300  # 每隔这么久在日志里写一行 CPU、内存占用
 
 
-def same_match(a, b, min_fields=4):
+def same_match(a, b, min_fields=4, split_kda=False):
     """两次读数是不是同一局：两边都读到的项全部相同（至少要有 min_fields 项可比）。
-    用于在总结页和经验值页之间来回切换时，避免同一局被存好几次。"""
+    用于在总结页和经验值页之间来回切换、回到大厅后重新打开上一局时，避免同一局被存好几次。
+    split_kda：击杀/助攻/击倒（values 里的 kda，一起读出来的）按三项算，名次、小队总击杀还没读到也能凑够 min_fields。
+    条件更宽，两局数字碰巧一样的可能大一些，只在这一局还没收尾、刚存下不久时用（见 SummaryWatcher._same_round_recent）。"""
     if a is None or b is None:
         return False
+
+    def items(v):
+        if not split_kda:
+            return v
+        kills, assists, knockdowns = v.get("kda") or (None, None, None)
+        return {**{k: x for k, x in v.items() if k != "kda"}, "kills": kills, "assists": assists, "knockdowns": knockdowns}
+
+    a, b = items(a), items(b)
     both = [k for k in a if a[k] is not None and b.get(k) is not None]
     return len(both) >= min_fields and all(a[k] == b[k] for k in both)
 
@@ -90,7 +104,8 @@ def save_png(path, frame):
 class SummaryWatcher:
     """总结页：名次、击杀/助攻/击倒、伤害都读到了，并且连续两次相同（名次会晚 1–2 秒滑进来，数字也可能有动画），
     就保存截图、把这一局写进数据库（冠军的总结页没有名次：其他数字连续两次相同、顶部是"捍卫者"就算读全）。还没读全就离开了、等太久、或者停止记录时，用读得最全的一次存下，标记"待确认"
-    （缺的项之后能用别的来源补上就取消，见 post_match.settle）。在总结页和别的画面之间来回切换，同一局不重复存。
+    （缺的项之后能用别的来源补上就取消，见 post_match.settle）。在总结页和别的画面之间来回切换，同一局不重复存；
+    没读全就切走、很快又回到同一张时，把新读到的项补进原来那一局（见 _upgrade_if_same_page）。
     同一次停留里，和上一张比没变的项不再识别、沿用上次的（2026-11-01，见 summary_page.read_field）：
     数字停住了，第二张几乎不用读，名次滑进来时只重读名次那几项。
     存下时只读自己的数据（2026-11-01 用户同意）：两名队友、自己的名字、顶部是不是"捍卫者"先把截图留在内存里，
@@ -108,6 +123,11 @@ class SummaryWatcher:
         self.visit = None  # 这一次停在总结页的情况：开始时间、上一次的读数、读得最全的一次、每一项上次读的那一小块
         self.done = False  # 这一次总结页已经存过了
         self.last_saved = None  # 最近存进数据库的那一局的读数（切到别的页再切回来时，用来认出是同一局）
+        self.last_saved_id = None  # 最近存进数据库那一局的编号
+        self.last_saved_when = None  # 这一局最后一次写进数据库的时间（判断又看到的总结页隔了多久）
+        self.last_saved_results = None  # 这一局每一项的读数（补全时，这次没读到的项沿用这里的）
+        self.last_saved_image = None  # 这一局总结页截图的位置（补全时换成新读到的这一张，位置和名字不变）
+        self.last_saved_partial = False  # 这一局存下时读数有问题（待确认），很快又读到同一张时要补全
         self.later = []  # 存下了、还没读队友和名字的总结页（编号、截图、时间、每一项上次读的那一小块、要不要看"捍卫者"）
 
     @property
@@ -183,7 +203,13 @@ class SummaryWatcher:
         """把一次总结页的读数存进数据库（只是自己的数据；队友、名字等 catch_up 再读）。如果和上一局是同一局（来回切页），就不重复存。
         champion：已经看过顶部，是"捍卫者"（冠军的总结页没有名次，存之前要看）。"""
         values = {name: r["value"] for name, r in results.items()}
-        if same_match(values, self.last_saved):
+        if self._upgrade_if_same_page(results, frame, when):
+            if champion:
+                self.post.on_champion(when, SOURCE_SUMMARY)
+            return
+        # 数字都一样就是同一局，不管隔了多久、回没回过大厅（可以在大厅里重新打开上一局）；宽一些的条件只在刚存下不久时用
+        if same_match(values, self.last_saved) or (
+                self._same_round_recent(when) and same_match(values, self.last_saved, split_kda=True)):
             self.log(f"[{when:%H:%M:%S}] 回到了同一局的总结页，不重复保存")
             return
         if note:
@@ -197,7 +223,9 @@ class SummaryWatcher:
         readings, scores = summary_readings(results)
         storage.save_readings(self.conn, match_id, SOURCE_SUMMARY, readings, f"{when:%Y-%m-%d %H:%M:%S}", scores)
         self.saved += 1
-        self.last_saved = values
+        self.last_saved, self.last_saved_results, self.last_saved_image = values, results, image_path
+        self.last_saved_id, self.last_saved_when = match_id, when
+        self.last_saved_partial = bool(problems)
         self.log(f"[{when:%H:%M:%S}] 第 {self.saved} 局（编号 {match_id}）：第 {show(values['placement'])} 名，"
                  f"击杀/助攻/击倒 {show(values['kda'])}，伤害 {show(values['damage'])}")
         for p in problems:
@@ -208,6 +236,48 @@ class SummaryWatcher:
         self.later.append({"match_id": match_id, "frame": frame.copy(), "when": when,
                            "memo": self.visit["memo"] if self.visit else {},
                            "banner": "banner" in self.cfg and not champion})
+
+    def _same_round_recent(self, when):
+        """刚存下的这一局还没收尾（没回大厅、没开下一局），而且离上次写进数据库不超过 SAME_MATCH_SECONDS 秒。
+        这时又看到的总结页只可能是同一局，可以用宽一些的条件认（same_match 的 split_kda、_upgrade_if_same_page）；
+        一局收尾以后就不行了：两局数字碰巧一样时，不能把新的一局当成上一局。"""
+        return (self.last_saved_id is not None and self.post.match_id == self.last_saved_id
+                and (when - self.last_saved_when).total_seconds() <= SAME_MATCH_SECONDS)
+
+    def _upgrade_if_same_page(self, results, frame, when):
+        """上一次没读全就存下了（待确认），这一局还没收尾、很快又读到同一张总结页：把新读到的项补进那一局，不新插一局。
+        返回 True：这次读数处理完了（有新内容就补上，没有就什么都不动）；False：不是这种情况，照常往下走。
+        名次、小队总击杀、急救、重生等都可能晚 1–2 秒才画出来，第一次可能是空的，所以不要求"两边都读到且相同"，
+        只要没有反证：两次都读到伤害或生存时间而且不一样，那是另一张总结页。
+        这次没读到的项保留上次的（第二次可能停得更短、读得更少）。截图换成这一张，位置和名字不变（名字要对得上
+        screenshots.SUMMARY_NAME，总结页截图才会一直留着）；结束时间不变，模式、地图等第一次存下时已经写好了，只更新总结页那几项。"""
+        if not self.last_saved_partial or not self._same_round_recent(when):
+            return False
+        for key in ("damage", "survival_time"):
+            old, new = self.last_saved[key], results[key]["value"]
+            if old is not None and new is not None and old != new:
+                return False
+        merged = {name: r if r["value"] is not None else self.last_saved_results[name] for name, r in results.items()}
+        values = {name: r["value"] for name, r in merged.items()}
+        if values == self.last_saved:
+            self.log(f"[{when:%H:%M:%S}] 回到了同一局的总结页，不重复保存")
+            return True
+        problems = summary_problems(merged)
+        save_png(self.last_saved_image, frame)
+        fields = summary_to_match(merged, problems, None, self.last_saved_image)
+        del fields["ended_at"]
+        storage.update_match(self.conn, self.last_saved_id, fields)
+        readings, scores = summary_readings(merged)
+        storage.save_readings(self.conn, self.last_saved_id, SOURCE_SUMMARY, readings,
+                              f"{when:%Y-%m-%d %H:%M:%S}", scores)
+        self.last_saved, self.last_saved_results, self.last_saved_when = values, merged, when
+        self.last_saved_partial = bool(problems)
+        self.log(f"[{when:%H:%M:%S}] 又读到同一局的总结页（上次没读全），补全编号 {self.last_saved_id}："
+                 f"第 {show(values['placement'])} 名")
+        for p in problems:
+            self.log(f"           ⚠ {p}")
+        self.post.on_summary_upgraded(self.last_saved_id, values, when)
+        return True
 
     def _record_best(self, note):
         """数字没等到读全：用这次停留里读得最全的一次存下（会标记待确认）。
@@ -408,8 +478,12 @@ class ScreenWatcher:
         path.parent.mkdir(parents=True, exist_ok=True)
         save_png(path, frame)
         reading, problems = read_xp(self.engine, frame, self.xp_cfg, known=known)
+        first_full = self.post.on_xp(reading, problems, path, now)
         self.xp_full = not problems
-        if self.post.on_xp(reading, problems, path, now) and self.on_read is not None:
+        if self.xp_full and self.xp_cfg["fields"]["progress"].get("layout_from_next_rank"):
+            best = self.post.xp[0] if self.post.xp is not None else reading
+            self.xp_full = ranks.score(best.get("rank_tier"), best.get("rank_division"), best.get("rank_progress")) is not None
+        if first_full and self.on_read is not None:
             self.on_read(now)  # 这一局第一次读全（上面没响过的话，比如在大厅里打开的、只有经验值页的局）
 
     def _read_held(self):
@@ -447,11 +521,12 @@ class SeasonWatcher:
 
     OWNER_SECONDS = 30  # 读过一次页面上的名字，这么久之内回到数据页（比如下拉菜单收起来）不再读
 
-    def __init__(self, engine, conn, post, log, play=None, page=None):
-        """page：season_stats.SeasonPage（不给就在第一次用到时新建：读规则、参照图）。"""
+    def __init__(self, engine, conn, post, log, play=None, page=None, lang=None):
+        """page：season_stats.SeasonPage（不给就在第一次用到时新建：读规则、参照图）；lang：游戏语言（None 是简体）。"""
         self.engine, self.conn, self.post, self.log = engine, conn, post, log
         self.play = play or sounds.play
         self.page = page
+        self.lang = lang
         self.on = False
         self.saved = 0  # 这一次录入存了几项
         self._reset()
@@ -463,6 +538,12 @@ class SeasonWatcher:
         self.said = set()  # 已经在日志里说过的（被挡住、0 局、不是自己的），每项只说一次
         self.owner = None  # 页面上的名字和它是不是自己：(名字, 是不是自己, 读的时刻)
         self.showing = False  # 上一张是数据页（截图加快）
+
+    def use_language(self, lang):
+        """认定的游戏语言变了：数据页换成这种语言的规则（下次用到时新建）。2026-11-13 以前一直按简体认，繁体认不出。"""
+        if lang != self.lang:
+            self.lang, self.page = lang, None
+            self._reset()
 
     def check_mode(self, now):
         """看一眼设置里录入模式开没开（记录程序每隔几秒调用一次，和"游戏语言"一样）。"""
@@ -491,7 +572,7 @@ class SeasonWatcher:
             return
         if self.page is None:
             from season_stats import SeasonPage
-            self.page = SeasonPage(self.engine)
+            self.page = SeasonPage(self.engine, lang=self.lang)
         if not self.page.on_page(frame):
             return
         self.showing = True
@@ -506,9 +587,10 @@ class SeasonWatcher:
         """页面上的名字是不是自己（结果留 OWNER_SECONDS 秒）。"""
         if self.owner is None or (now - self.owner[2]).total_seconds() > self.OWNER_SECONDS:
             name = self.page.name(frame)
-            mine = storage.known_names(self.conn) | ({storage.name_key(self.post.player_name)}
-                                                      if self.post.player_name else set())
-            own = name is not None and (not mine or any(storage.same_name(name, known) for known in mine))
+            mine = {storage.untagged_key(k) for k in storage.known_names(self.conn)} | (
+                {storage.untagged_key(self.post.player_name)} if self.post.player_name else set())
+            own = name is not None and (not mine or any(
+                storage.same_name(storage.untagged_key(name), known) for known in mine))  # 数据页上的名字不带战队标签
             self.owner = (name, own, now)
             if not own:
                 self._say(("owner", name), now, f"数据页上是 {name or '（名字没读出来）'}，不是 Evo 认识的你的名字，不读"
@@ -574,7 +656,7 @@ class Usage:
 
 
 def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.0, match_interval=None,
-            stop=None, deadline=None, log=print, status=None, keep_all=None, game_aspect=None):
+            stop=None, deadline=None, log=print, status=None, keep_all=None, game_aspect=None, usage_root=None):
     """采集主循环：一直截屏、识别、记录，直到下面任何一种情况发生，然后安全收尾（没存完的局存下、释放截屏和识别模型）：
     - stop（threading.Event）被设置：托盘程序在游戏关闭、暂停或退出时用它喊停
     - 到达 deadline（time.monotonic() 的时刻）
@@ -584,16 +666,28 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     status：字典，记下的局数会实时写进 status["saved"]（托盘图标显示用）
     keep_all：保留全部截图。None = 按设置页的开关（screenshots.keep_all()），每局结束时再看一眼，
     改了从下一局开始生效；True / False = 整次记录都这样（测试时直接指定）
-    game_aspect：游戏画面比例。None = 按设置页（默认自动检测，读 Apex 的视频设置文件，见 game_aspect.py），
-    每隔几秒看一眼；"16:10" 等 = 整次记录都这样（测试时直接指定）
+    game_aspect：游戏画面比例。None = 按设置页（默认自动检测，读 Apex 的视频设置文件；文件里没有能用的全屏分辨率时
+    看游戏画面认，见 game_aspect.py），每隔几秒看一眼；"16:10" 等 = 整次记录都这样（测试时直接指定）
+    usage_root：量对局中的占用时从哪个进程算起（托盘程序传它自己的进程号，连同窗口一起算）；None = 只算记录程序自己
     返回这次一共记下了几局。"""
     set_low_priority()
     # 先建截屏对象：建不起来（或要新开进程才生效，capture.NeedRestart）就不建这次的截图文件夹
     camera, how = capture.open_camera(log)
     usage = Usage(log)
+    meter = evo_usage.MatchMeter(usage_root, log, evo_usage.usage_path(db_path))  # 用真的时钟：CPU 占用要按真的时间算
     run_dir = CAPTURES_DIR / "live" / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     conn = storage.connect(db_path)
+    if calibration.clear_old_flags(conn):  # 以前大厅校准对不上标的待确认（2026-11-11 起改成战绩页显示校准行）
+        log("以前因为大厅校准对不上标成待确认的局，已经取消（现在战绩页单独显示一行校准分数）")
+    for line in calibration.drop_misreads(conn):  # 以前读错的大厅读数（前后一样、夹在中间不一样的）：删掉
+        log(line)
+    for line in calibration.fix_rps(conn):  # 以前的局：每一小段只缺一局 RP 的，按前后的段位补上、改过来
+        log(line)
+    filled = calibration.fill_ranks(conn)  # 以前没有段位的局：用前后的大厅、经验值页和各局 RP 补上
+    if filled:
+        log(f"以前没有段位的 {len(filled)} 局补上了段位（其中 {sum(not full for _, full, _ in filled)} 局只补了大段），"
+            f"编号 {'、'.join(str(i) for i, _, _ in filled)}")
 
     def keep_now():
         return screenshots.keep_all() if keep_all is None else keep_all
@@ -647,8 +741,18 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
     in_match = InMatchWatcher(hud, post, log, name_cfg, save=save_hud,
                               keep_all=lambda: other.keep_all, before_hand_over=summary.catch_up)
     lobby = LobbyWatcher(LobbyReader(engine, load_config("lobby.json", lang)), post, conn, log)
-    seasons = SeasonWatcher(engine, conn, post, log)  # 录入历史赛季数据（设置页的按钮）
-    aspect = AspectWatcher(log, clock=lambda: time.monotonic(), fixed=game_aspect)
+    seasons = SeasonWatcher(engine, conn, post, log, lang=lang)  # 录入历史赛季数据（设置页的按钮）
+
+    def aspect_sources():
+        """看游戏画面认比例时比哪些画面：认定了游戏语言就只比这种语言的；录入模式里加上数据页。"""
+        found = [detector.detectors[detector.lang]] if detector.locked else list(detector.detectors.values())
+        if seasons.on and seasons.page is not None:
+            found.append(seasons.page.detector)
+        return found
+
+    # 游戏画面比例：视频设置文件里没有能用的全屏分辨率时看游戏画面认（左下角的传奇、各种画面，见 game_aspect.py）
+    aspect = AspectWatcher(log, clock=lambda: time.monotonic(), fixed=game_aspect,
+                           guess=AspectGuess(hud.legends, aspect_sources))
 
     def use_language(lang):
         """认定了游戏语言（或认出画面的语言变了，见 screens.GameScreens）：各部分换成这种语言的识别规则。"""
@@ -660,6 +764,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
         hud.use_language(lang)
         in_match.name_place = names["places"]["hud"]
         lobby.reader.cfg = load_config("lobby.json", lang)
+        seasons.use_language(lang)
 
     log(f"屏幕: {camera.width}x{camera.height}（截屏：{how['截法']}）")
     if len(detector.detectors) > 1:
@@ -726,6 +831,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                     warned = True
             engine.release_if_idle()
             usage.tick(frames, in_match.active)
+            meter.tick(in_match.active, total())
 
             if status is not None:
                 status["saved"] = total()
@@ -745,6 +851,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
         in_match.stop(now)
         other.leave()
         post.finish()
+        meter.finish(total())
         aspect.reset()
         seasons.stop(now)
         speed.stop()

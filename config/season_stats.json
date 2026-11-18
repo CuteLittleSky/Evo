@@ -14,6 +14,8 @@
     "grayscale": true,
     "min_similarity": 0.5,
     "unchanged": 0.25,
+    "aspect_margin": 0.1,
+    "_说明_aspect_margin": "录入模式里看游戏画面认比例（同 screens.json 的 aspect_margin，见 game_aspect.AspectGuess）：数据页两个角按几种比例各比一次外观，最像的那种比例比第二像的高出这么多才投票。2026-11-11 用 16:10、4:3 测试员的数据页和从它们还原出来的 16:9 数据页（这一页贴上边）试过，一票都没投错",
     "screens": {
       "season_stats": {"label": "数据页", "roi": [1335, 264, 90, 46], "keywords": ["赛季", "比赛"],
                        "template_box": [1358, 268, 40, 40]},

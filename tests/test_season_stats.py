@@ -13,12 +13,22 @@
     "1,495"读成过"1.495"、1015 局写"1.01K"、全是 0 的赛季、鼠标停在下拉框上的几张）。答案 season_stats_20261103_*.csv
     （下面六行对着原图看过 4:3 的 S30 两项、S20、S14 排位，16:10 的 S2 排位、S14 排位、S22、S26）。
     16:10 最后一张测试工具的窗口盖住了左边的名字：答案里空着的三项必须是"没读到"，不能读成别的数
+  - 用户 2026-11-11 用小号在第 31 赛季录的（captures/s31/，2560x1440，简体；从 captures/frames/20261111_231842、
+    _232415 里挑出来的，文件名写着是什么画面）：16x9_seasons_20261111 原生 16:9（S31–S28，S28 全是 0），
+    4x3_seasons_20261111 游戏 2560x1920 = 4:3 拉伸（S31–S29；4:3 下生涯的"击杀/阵亡比"折成两行；有一张鼠标停在
+    "赛季胜利"上，说明框挡住右边一栏）。答案 season_stats_20261111_*.csv：16:9 那次对着截图看过生涯、S31 全部每一个数，
+    4:3 那次 7 项和 16:9 一字不差。按 Alt+Tab 时切换窗口的界面盖在游戏上的那张有别的窗口的内容，没放进来
+  - 测试员 2026-11-13 用测试工具截的繁体（captures/testers/20261113_seasons_zhTW_16x10/pages，1920x1080 显示器，
+    游戏 1920x1200 = 16:10 拉伸，S31–S28 各两项；前两张是加载画面）。答案 season_stats_20261113_zhTW_16x10.csv
+    （S31 全部、S29 两项、S28 排位对着原图逐个看过；以前不认繁体，一张都认不出）。引擎有时把"重生隊友次數"读成
+    "重生隊友次数"、"積分賽"读成"積分赛"：以前助攻那一格被重生队友的数换掉、S29 排位当成了"全部"
   - 下拉菜单开着的、别的画面：都不算数据页
   - 数据页：赛季、全部 / 排位、赛季名、15 个数都对，核对没有问题
   - 中间一栏（生涯合计）：局数游戏只写"10.1K"这种，用伤害 ÷ 平均伤害算出准确的；前 5 名算不出，记约数。
     鼠标停在生涯那一栏弹出说明框的，算被挡住
   - 同一张读第二遍（同一个 memo）：一次都不识别
-- 不用截图：parse_number 读"1.03K"这类约数、整数里的"1.495"；check 找出对不上的地方
+- 不用截图：parse_number 读"1.03K"这类约数、整数里的"1.495"；check 找出对不上的地方；下面六行里名字没读出来的那个数
+  不挤掉同一行左边那一项的数
 
 运行：python tests/test_season_stats.py
 """
@@ -29,6 +39,11 @@ from pathlib import Path
 from fake_game import SHOTS, report  # 要在项目代码之前导入（设置临时数据文件夹）
 
 from season_stats import FIELDS, LABELS, check, parse_number
+
+# 用户小号 2026-11-11 的生涯合计（对着截图逐项看过）
+CAREER_ALT = {"games": 289, "wins": 54, "top5": 112, "damage": 228079, "damage_max": 3445, "damage_avg": 789.2,
+              "kills": 536, "deaths": 289, "kd": 1.85, "kills_max": 15, "knockdowns": 672, "assists": 601,
+              "win_streak": 7, "revives": 253, "respawns": 85}
 
 SETS = (
     {"label": "用户 11-01（16:10）", "folder": SHOTS / "frames" / "20261101_161135",
@@ -52,6 +67,23 @@ SETS = (
                 "damage_avg": 457.7, "kills": 21680, "deaths": 21156, "kd": 1.02, "kills_max": 19,
                 "knockdowns": 28092, "assists": 11481, "win_streak": 3, "revives": 4771, "respawns": 1495},
      "top5": (3345, 3355), "career_covered": ("0014_170445_2560x1440.jpg",)},
+    # 第 31 赛季、用户的小号（生涯不到 1000 局，没有约数）：同一批数字在原生 16:9 和 4:3 拉伸下各录一次
+    {"label": "用户 11-11（第 31 赛季，原生 16:9）", "folder": SHOTS / "s31" / "16x9_seasons_20261111",
+     "answers": "season_stats_20261111_16x9.csv", "aspect": 16 / 9, "pages": 10, "covered": 0, "player": "小命脉脉的",
+     "career_frames": ("0030_231920_数据页.jpg", "0037_231931_数据页.jpg", "0047_231950_数据页.jpg"),
+     "career": CAREER_ALT, "top5": None, "career_approx": (), "career_covered": ()},
+    {"label": "用户 11-11（第 31 赛季，4:3）", "folder": SHOTS / "s31" / "4x3_seasons_20261111",
+     "answers": "season_stats_20261111_4x3.csv", "aspect": 4 / 3, "pages": 5, "covered": 1, "player": "小命脉脉的",
+     "career_frames": ("0017_232445_数据页.jpg", "0021_232453_数据页.jpg", "0025_232507_数据页.jpg"),
+     "career": CAREER_ALT, "top5": None, "career_approx": (), "career_covered": ()},
+    {"label": "测试员 11-13（繁体，16:10）", "folder": SHOTS / "testers" / "20261113_seasons_zhTW_16x10" / "pages",
+     "answers": "season_stats_20261113_zhTW_16x10.csv", "aspect": 16 / 10, "lang": "zh-TW", "pages": 8, "covered": 0,
+     "name_length": 4,
+     "career_frames": ("0003_181318_1920x1080.jpg", "0006_181331_1920x1080.jpg", "0009_181340_1920x1080.jpg"),
+     "career": {"games": 1671, "wins": 183, "top5": 707, "damage": 1648880, "damage_max": 4555,
+                "damage_avg": 986.76, "kills": 4459, "deaths": 4025, "kd": 1.11, "kills_max": 19,
+                "knockdowns": 5594, "assists": 3437, "win_streak": 3, "revives": 1117, "respawns": 74},
+     "top5": None, "career_approx": (), "career_covered": ()},
 )
 
 
@@ -87,6 +119,14 @@ def rule_checks():
     out[f"算出来不在约数的范围里：对不上（{far}）"] = any("约数" in p for p in far)
     _, _, missing = check({k: v for k, v in good.items() if k != "assists"}, {})
     out[f"缺一项：写明没读到什么（{missing}）"] = missing == ["没读到：助攻"]
+
+    from season_stats import SeasonPage
+    page = SeasonPage(lambda img: None)  # 只用 _by_line，不识别
+    texts = [("助攻", 1.0, 25, 78), ("3,437", 1.0, 237, 79), ("重生队友次教", 1.0, 330, 79), ("74", 1.0, 525, 79),
+             ("击倒", 1.0, 25, 51), ("5,594", 1.0, 236, 52)]
+    found, left = page._by_line(texts, page.cfg["rows"])
+    out[f"下面六行：右边那一项的名字没读出来时，它的数不挤掉左边那一项的数，自己空着（{found}，没归上 {left}）"] = (
+        sorted(found) == [("assists", "3,437"), ("knockdowns", "5,594")] and [t for t, *_ in left] == ["74"])
     return out
 
 
@@ -119,7 +159,7 @@ def _screenshot_checks(spec, SeasonPage, real, load_image):
         return real(img, **kwargs)
 
     folder, label = spec["folder"], spec["label"]
-    page = SeasonPage(engine)
+    page = SeasonPage(engine, lang=spec.get("lang"))  # 游戏语言（不写是简体）
     with Path(__file__).with_name(spec["answers"]).open(encoding="utf-8-sig") as f:
         answers = list(csv.DictReader(f))
     wrong, pages, covered, names = [], 0, 0, set()
@@ -168,10 +208,11 @@ def _screenshot_checks(spec, SeasonPage, real, load_image):
         f"；{pages - covered} 张赛季、15 个数全对，核对没问题；被说明框挡住的 {covered} 张认出来了"
         f"（错的：{wrong or '无'}）": not wrong and pages == spec["pages"] and covered == spec["covered"],
         f"{label}：页面上的玩家名{name_text}": name_ok,
-        f"{label}：生涯合计 {len(career)} 张：局数用伤害 ÷ 平均伤害算出 {spec['career']['games']:,}，其他 14 项都对，"
-        f"没有问题（前 5 名只有约数）；鼠标停在生涯那一栏的 {len(career_covered)} 张算被挡住":
-            all(values == spec["career"] and set(approx) == {"top5"} and approx["top5"] == spec["top5"]
-                and not problems for values, approx, problems in career) and all(career_covered),
+        f"{label}：生涯合计 {len(career)} 张：局数 {spec['career']['games']:,}，其他 14 项都对，没有问题"
+        f"（{'前 5 名只有约数' if spec['top5'] else '没有约数'}）；鼠标停在生涯那一栏的 {len(career_covered)} 张算被挡住":
+            all(values == spec["career"] and set(approx) == set(spec.get("career_approx", ("top5",)))
+                and approx.get("top5") == spec["top5"] and not problems
+                for values, approx, problems in career) and all(career_covered),
     }
     if spec is SETS[0]:
         frame = load_image(folder / spec["career_frames"][0])

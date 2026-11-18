@@ -9,11 +9,17 @@ tests/replay_20261016_teammates.csv
 assets/选手照片/
 # 派圈助手用的战队队标（各战队的商标，不能按 AGPL 开源；派圈 tools/build_pro_logos.py 下载处理后传到派圈的云存储）
 assets/队标/
+# 派圈助手的头像：只在本机，和 Evo 无关
+assets/icon/paiquan-avatar-E3-2048.png
 # 数据库等运行数据
 data/
 *.db
 *.sqlite
 *.sqlite3
+# 赛事数据的两张表（tools/esports.py 读它们生成 esports.json）：里面是职业选手的直播间房间号，只留在本机（2026-11-17 用户决定）
+esports/
+# 别的 agent 干活时放临时文件的地方（2026-11-17 用户决定：不进 git；不然代码地图那组测试会说"还没分组"）
+.tmp/
 # 托盘程序的运行记录
 logs/
 # Evo 窗口（WebView2）的本地存储（记住主题等）
@@ -61,7 +67,6 @@ miniprogram/
 docs/小程序.md
 code/cloud_sync.py
 code/panel_cloud.py
-code/qr.py
 panel/templates/_cloud.html
 tests/test_cloud_sync.py
 tools/cloud_ping.py

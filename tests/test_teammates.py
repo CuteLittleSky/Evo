@@ -26,13 +26,16 @@ import storage
 from post_match import XP_ONLY_NOTE
 
 FOLDER = Path(tempfile.mkdtemp(prefix="evo-mates-", dir=storage.DB_PATH.parent.parent))  # 在测试的临时数据文件夹里
+# 不是 16:9 的记录（这里按 16:9 读）：11-11 用户用 4:3 拉伸打的那局，整局在 test_aspect.py 里按 4:3 重放、对答案
+NOT_16_9 = {"20261111_225234"}
 
 
 def screenshot_checks():
     """返回检查结果；没有截图返回 None。"""
     # 总结页截图：以前平铺在每次记录的文件夹里，现在在它的 summary/ 里（screenshots.path_for），两种都找
     files = sorted(p for p in [*SHOTS.glob("live/*/*.png"), *SHOTS.glob("live/*/*/*.png")]
-                   if re.fullmatch(r"\d{2,}_\d{6}\.png", p.name))
+                   if re.fullmatch(r"\d{2,}_\d{6}\.png", p.name)
+                   and not NOT_16_9 & {p.parent.name, p.parent.parent.name})
     if not files:
         return None
     from ocr import SMALL_CROP_PARAMS, create_engine, load_config, load_image  # 用到截图才加载识别引擎

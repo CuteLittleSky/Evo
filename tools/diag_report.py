@@ -5,7 +5,8 @@
 1. 打印 info.txt：电脑、显示器（HDR、缩放、主显示器）、Evo 截的是哪个显示器、Apex 的设置、开着的软件、截屏结果
 2. 看 captures.csv：游戏开着时有没有"没有新画面"（截屏卡住）、最长连续多久画面一点没变
 3. 用现在的识别规则认 frames/ 里的每一张（和记录程序一样几种游戏语言一起认）：是哪个画面、左下角认不认得出自己的传奇。
-   游戏画面比例按玩家 Evo 的设置；自动检测时按 Apex 视频设置（全屏时用里面的分辨率，同 game_aspect.from_video_config）
+   游戏画面比例按玩家 Evo 的设置；自动检测时按 Apex 视频设置（全屏时用里面的分辨率，同 game_aspect.from_video_config），
+   里面没有能用的全屏分辨率时和记录程序一样看游戏画面认（game_aspect.AspectGuess）
 4. 最后按上面的结果列几条线索（只是提示，要看截图确认）
 
 截图里有其他玩家的名字：压缩包和解出来的截图都不要提交到仓库（放 captures/ 里）。
@@ -48,7 +49,22 @@ def aspect_of(info):
                 return w / h, f"Apex 视频设置：全屏 {w}×{h}"
         except (KeyError, TypeError, ValueError):
             pass
-    return None, "和截图一样"
+    return None, "Apex 视频设置里没有能用的全屏分辨率"
+
+
+def guess_aspect(zf, frames, legends, detector, why):
+    """视频设置里没有能用的全屏分辨率：和记录程序一样看游戏画面认（game_aspect.AspectGuess），
+    按顺序一张一张认，同一种比例认出 GUESS_VOTES 次就用它；一直认不出就和截图一样。"""
+    guess = game_aspect.AspectGuess(legends, lambda: list(detector.detectors.values()))
+    votes = Counter()
+    for name in frames:
+        found, where = guess.vote(read_image(zf, name))
+        if found is None:
+            continue
+        votes[found] += 1
+        if votes[found] >= game_aspect.GUESS_VOTES:
+            return found, f"{why}，看游戏画面认出 {game_aspect.name(found)}（{where}，到 {name} 为止）"
+    return None, f"{why}，看游戏画面也认不出，和截图一样"
 
 
 def capture_stats(rows):
@@ -82,13 +98,15 @@ def main():
     if playing:
         print(f"  最长连续\"没变\"{longest} 次（约 {longest * 2} 秒）")
 
-    aspect, why = aspect_of(info)
-    layout.set_game_aspect(aspect)
     frames = sorted(n for n in names if n.startswith("frames/") and n.endswith(".jpg"))
-    print(f"\n[用现在的识别规则认 frames/ 里的 {len(frames)} 张]（游戏画面比例：{why}）")
     langs = []
     detector = GameScreens(create_engine(SMALL_CROP_PARAMS), log=langs.append)
     legends = LegendDetector()
+    aspect, why = aspect_of(info)
+    if aspect is None:
+        aspect, why = guess_aspect(zf, frames, legends, detector, why)
+    layout.set_game_aspect(aspect)
+    print(f"\n[用现在的识别规则认 frames/ 里的 {len(frames)} 张]（游戏画面比例：{why}）")
     screens, legend_votes, first = Counter(), Counter(), {}
     out = []
     for i, name in enumerate(frames, 1):

@@ -51,28 +51,39 @@ SECTIONS = [
     ("页面", "程序", [
         "code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/radar.py",
         "code/global_stats.py", "code/map_rotation.py"]),
+    ("页面", "赛事、看直播", ["code/panel_esports.py", "code/esports_data.py", "code/live_status.py", "code/abogus.py",
+                              "code/watch_douyu.py", "code/flv_relay.py", "code/watch_douyin.py", "code/watch_bilibili.py", "code/bili_login.py",
+                              "code/secret_store.py", "code/qr.py"]),
     ("页面", "模板（panel/templates/）", ["panel/templates/*.html", "panel/templates/share/*.svg"]),
     ("页面", "图片、字体", [
         ("panel/static/", "样式表 style.css、字体，图标（legends/ 传奇头像由 tools/legend_icons.py 生成、ranks/ 段位、"
-                          "brands/ 关注我、partner/ 派圈助手、support/ 收款码）"),
+                          "brands/ 关注我、partner/ 派圈助手、support/ 收款码），vendor/ 别人写的脚本（mpegts.js，看直播页的播放器，许可证在旁边）"),
         ("panel/prototype/", "最早的界面设计稿（只作参考，程序不用）")]),
     ("底座", None, [
         "code/evo_app.py", "code/paths.py", "code/source_run.py", "code/storage.py", "code/app_settings.py",
-        "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/icons.py", "code/sounds.py",
+        "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/evo_usage.py", "code/icons.py",
+        "code/sounds.py",
         "code/webview2.py", "code/update_check.py", "code/update_patch.py", "code/updater.py", "code/mirrorchyan.py",
         "code/telemetry.py", "code/notice_check.py",
-        ("server/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
-                    "wrangler.toml 部署配置")]),
+        ("server/stats/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
+                          "wrangler.toml 部署配置"),
+        ("server/team/", "赛事数据的协作网页 team.evotracker.cn（Cloudflare Worker + 不公开的 R2）：worker.js 路由，"
+                         "auth.js 成员、邀请链接、登录，store.js 读写存储桶里的 JSON，data.js 选手库、赛程、改动记录，"
+                         "esports.js 检查和生成 esports.json（照 tools/esports.py），publish.js 发布、平台开关，"
+                         "liquipedia.js 问 Liquipedia、整理数据，lpsync.js 定时抓（额度、失败重试）和待确认，"
+                         "overrides.js 手动修正 Liquipedia 的资料，lpimport.js 从 Liquipedia 一键加进选手库，logos.js 战队队徽（队标库、挑选、上传），"
+                         "pages.js / pages_esports.js / pages_lp.js / pages_pros.js / pages_logos.js 页面，test.mjs 测试（node server/team/test.mjs；"
+                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos、test_main、test_nostream、test_lpimport），wrangler.toml 部署配置")]),
     ("测试工具（给玩家的 Evo测试工具.exe）", None, [
         "code/evo_tester.py", "code/tester_window.py", "code/tester_capture.py", "code/tester_info.py",
         "code/tester_projects.py", "code/tester_answers.py"]),
     # 只在本机、不进 git 的文件（.gitignore 里）扫不到，固定写一段
     ("小程序", None, "只在本机、不进 git（见 docs/小程序.md）：`miniprogram/`，和 Evo 里绑定、上传战绩的 "
-                     "`code/cloud_sync.py`、`code/panel_cloud.py`、`code/qr.py`、`panel/templates/_cloud.html`、"
+                     "`code/cloud_sync.py`、`code/panel_cloud.py`、`panel/templates/_cloud.html`、"
                      "`tests/test_cloud_sync.py`、`tools/cloud_ping.py`"),
     ("开发用的脚本（tools/）", "打包、安装、发布", [
         "tools/build.py", "tools/evo.spec", "tools/install.py", "tools/release.py", "tools/publish.py",
-        "tools/cos.py", "tools/notice.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
+        "tools/cos.py", "tools/notice.py", "tools/esports.py", "tools/team.py", "tools/team_logos.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
         (".github/workflows/", "GitHub Actions（Mirror酱 提的 PR #4）：发 GitHub Release 时把压缩包和更新日志传给 Mirror酱"
                                "（国内渠道）；读的是 tag 指向的那个提交里的这两个文件")]),
     ("开发用的脚本（tools/）", "做素材", [
@@ -80,7 +91,7 @@ SECTIONS = [
         "tools/feature_cards.py", "tools/window_shots.py"]),
     ("开发用的脚本（tools/）", "查问题、看数据", [
         "tools/ocr_probe.py", "tools/frame_capture.py", "tools/legend_capture.py", "tools/log_speed.py",
-        "tools/diag_report.py", "tools/stats_report.py", "tools/demo_data.py", "tools/demo_seasons.py",
+        "tools/diag_report.py", "tools/tester_preview.py", "tools/stats_report.py", "tools/demo_data.py", "tools/demo_seasons.py",
         "tools/code_map.py"]),
     ("测试（tests/）", None, [
         "tests/run_all.py", "tests/fake_game.py", "tests/test_*.py",

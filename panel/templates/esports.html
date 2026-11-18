@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}赛事 · Evo{% endblock %}
+
+{# "赛事"页面（panel_esports.py，2026-11-17 用户定的）：正在进行（卡片）、即将开始、最近结束（一行一场）。
+   赛程是开发者手动维护的 esports.json；"几位选手在播"晚一点才到（下面的脚本问 /esports/live），位置先留好，不让卡片跳 #}
+
+{# 即将开始、最近结束的一行：日期和钟点、名称和阶段、队伍数、右边一句话。
+   即将开始的（watch）右边换成"看名单和直播"按钮（2026-11-17 用户要求：没开始也能点进去，赛前练习、打排位也值得看）；
+   描边的按钮，比正在进行的红色"看直播"低一级。按钮上的字每行一样，所以读屏软件念的名字里带上赛事名和时间 #}
+{% macro row(e, note, watch=false) %}
+<li class="es-row">
+  <div>
+    <div class="es-row-day">{{ e.day }} {{ e.weekday }}</div>
+    <time class="es-row-time num" datetime="{{ e.start }}">{{ e.time }}</time>
+  </div>
+  <div class="es-row-main">
+    <div class="es-row-name es-ell">{{ e.name }}</div>
+    <div class="es-row-sub es-ell">{{ e.type }}{% if e.stage %} · {{ e.stage }}{% endif %}</div>
+  </div>
+  <div class="es-row-teams"><span class="num">{{ e.teams }}</span> 支队伍</div>
+  <div class="es-row-note">
+    {%- if watch %}<a class="btn es-row-btn" href="{{ url_for('esports.watch', event_id=e.id) }}"
+       aria-label="看名单和直播：{{ e.name }}，{{ e.day }} {{ e.time }} 开始">{{ note }}</a>
+    {%- else %}{{ note }}{% endif -%}
+  </div>
+</li>
+{% endmacro %}
+
+{% block content %}
+{% if not loaded %}
+<section class="card empty-card" role="status">
+  <p class="es-empty-title">赛事信息没有读到</p>
+  <p class="small">可能是网络连不上。<a class="text-link" href="{{ url_for('esports.page') }}">再试一次</a></p>
+</section>
+{% else %}
+{% if stale %}
+<div class="banner-info" role="status">
+  <span class="grow">这次没连上，下面是{{ read_at }}读到的赛程，可能不是最新的。</span>
+  <a class="banner-link" href="{{ url_for('esports.page') }}">再试一次</a>
+</div>
+{% endif %}
+
+<section class="es-section" aria-labelledby="h-es-live">
+  <h2 id="h-es-live">正在进行</h2>
+  {% if live %}
+  <div class="es-live-grid">
+    {% for e in live %}
+    <article class="card es-card" aria-labelledby="es-name-{{ loop.index }}">
+      <div class="es-card-top">
+        <span class="es-live-tag"><span class="es-live-dot" aria-hidden="true"></span>进行中</span>
+        <span class="es-tag">{{ e.type }}</span>
+        <span class="es-when">{{ e.day }} <time class="num" datetime="{{ e.start }}">{{ e.time }}</time> 开始</span>
+      </div>
+      <div>
+        <h3 id="es-name-{{ loop.index }}">{{ e.name }}</h3>
+        <p class="es-card-sub">{{ e.sub }}</p>
+      </div>
+      <div class="es-card-foot">
+        {# 一句完整的话（"12 位选手在播"），到了以后读屏软件念一次；不只放一个数字 #}
+        <span class="es-count" role="status" aria-atomic="true" data-es-count="{{ e.id }}">正在看谁在播…</span>
+        <a class="watch-btn" href="{{ url_for('esports.watch', event_id=e.id) }}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"></path></svg>看直播
+        </a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="card es-none">现在没有正在进行的赛事{% if upcoming %}，下一场 {{ upcoming[0].day }} <span class="num">{{ upcoming[0].time }}</span> 开始{% endif %}。</p>
+  {% endif %}
+</section>
+
+{% if upcoming %}
+<section class="es-section" aria-labelledby="h-es-upcoming">
+  <h2 id="h-es-upcoming">即将开始</h2>
+  <ul class="card es-list">
+    {% for e in upcoming %}{{ row(e, "看名单和直播", watch=true) }}{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if recent %}
+<section class="es-section" aria-labelledby="h-es-recent">
+  <h2 id="h-es-recent">最近结束</h2>
+  <ul class="card es-list es-ended">
+    {% for e in recent %}{{ row(e, "已结束") }}{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<p class="es-foot">赛事、队伍和每位选手的直播间由 Evo 统一维护。</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if live %}
+<script>
+  // 正在进行的赛事有几位选手在播：页面画好以后问一次（查直播间要几秒）。没查到就写"没查到谁在播"，不写 0
+  (function () {
+    function show(el, info) {
+      el.textContent = "";
+      if (info && info.live > 0) {
+        var n = document.createElement("span");
+        n.className = "num";
+        n.textContent = info.live;
+        el.append(n, " 位选手在播");
+      } else if (info && info.unknown === 0) {
+        el.textContent = "现在没人在播";
+      } else {
+        el.textContent = "没查到谁在播";
+      }
+    }
+    var slots = document.querySelectorAll("[data-es-count]");
+    fetch("{{ url_for('esports.live') }}", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (r) { slots.forEach(function (el) { show(el, r.events[el.dataset.esCount]); }); })
+      .catch(function () { slots.forEach(function (el) { show(el, null); }); });
+  })();
+</script>
+{% endif %}
+{% endblock %}

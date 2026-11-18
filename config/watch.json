@@ -1,0 +1,63 @@
+{
+  "_说明": "赛事页、看直播（code/live_status.py、code/esports_data.py）：四个直播平台的名字、直播间地址、查房间的接口和请求头。和识别游戏画面无关。平台改了接口先改这里",
+  "logo_url": "https://dl.evotracker.cn/esports/logos/{file}",
+  "_说明_logo_url": "队徽图片的地址。esports.json 里每支队只写文件名（如 3fa9c1d2e4b5a6f7.webp），Evo 自己拼成这个地址：赛程文件被人改了也只会去这里拿图",
+  "timeout": 10,
+  "_说明_timeout": "每个请求最多等几秒",
+  "parallel": 4,
+  "_说明_parallel": "查开播状态时同时最多发几个请求（用户定的：要克制）",
+  "platforms": {
+    "douyu": {
+      "name": "斗鱼",
+      "room_url": "https://www.douyu.com/{room}",
+      "info_url": "https://www.douyu.com/betard/{room}",
+      "player": "flv",
+      "encryption_url": "https://www.douyu.com/wgapi/livenc/liveweb/websec/getEncryption?did={did}",
+      "play_url": "https://www.douyu.com/lapi/live/getH5PlayV1/{room}",
+      "renew_lead": 5,
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      "missing_text": "该房间目前没有开放",
+      "_说明": "info_url 回一份 JSON（约 120 KB），room 里：show_status 1 = 在播，videoLoop / isLoop 1 = 轮播（不算在播），show_time = 开播时刻。房间不存在时回一个网页（missing_text）或 404。player = flv：这个平台用 Evo 自己的播放器在窗口里播（取地址 code/watch_douyu.py：encryption_url 要签名材料、play_url 取地址；视频经过本机中转 code/flv_relay.py，地址有期限时提前 renew_lead 秒换新的）"
+    },
+    "huya": {
+      "name": "虎牙",
+      "room_url": "https://www.huya.com/{room}",
+      "info_url": "https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid={room}&showSecret=1",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+      "referer": "https://www.huya.com/",
+      "origin": "https://www.huya.com",
+      "_说明": "info_url 只认数字房间号。status 200 = 有这个房间（data.liveStatus：ON 在播、REPLAY 轮播、OFF 没开播；liveData.startTime 开播时刻），422 = 该主播不存在"
+    },
+    "bilibili": {
+      "name": "B站",
+      "room_url": "https://live.bilibili.com/{room}",
+      "batch_url": "https://api.live.bilibili.com/xlive/web-room/v1/index/getRoomBaseInfo?req_biz=web_room_componet",
+      "batch_size": 30,
+      "embed_url": "https://www.bilibili.com/blackboard/live/live-activity-player.html?cid={room}&quality=1",
+      "player": "direct",
+      "play_api": "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?protocol=0&format=0&codec=0&platform=web",
+      "qr_generate_url": "https://passport.bilibili.com/x/passport-login/web/qrcode/generate?source=main-fe-header",
+      "qr_poll_url": "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?source=main-fe-header",
+      "nav_url": "https://api.bilibili.com/x/web-interface/nav",
+      "logout_url": "https://passport.bilibili.com/login/exit/v2",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      "referer": "https://live.bilibili.com/",
+      "_说明": "batch_url 一次查多个房间（后面接 &room_ids=…）。回的 data.by_room_ids 按真实房间号列，短号在 short_id 里；不存在的房间不在里面。live_status 1 = 在播、2 = 轮播；live_time 是北京时间。embed_url 是 B站官方的嵌入播放器（看直播页放在 iframe 里；有 embed_url 的平台才能在 Evo 窗口里播）。quality=1 是在它的控制条上显示切换画质和线路的按钮（0 是藏起来，不是选哪一档）；不登录 B站 最高只给超清（720p），要更高得登录。player = direct：玩家登录了 B站以后用 Evo 自己的播放器播，页面直接连 B站的视频服务器、不经过本机中转（play_api 取地址，后面接 &room_id=…&qn=…，code/watch_bilibili.py）；没登录的照旧用 embed_url。扫码登录（code/bili_login.py）：qr_generate_url 要二维码、qr_poll_url 问扫了没有（后面接 &qrcode_key=…）、nav_url 问登录着没有和昵称、logout_url 退出登录"
+    },
+    "douyin": {
+      "name": "抖音",
+      "room_url": "https://live.douyin.com/{room}",
+      "page_url": "https://live.douyin.com/{room}",
+      "room_pattern": "[A-Za-z0-9_]{1,24}",
+      "page_max_bytes": 3000000,
+      "player": "direct",
+      "default_max_bitrate": 9000000,
+      "info_url": "https://webcast.amemv.com/webcast/room/reflow/info/",
+      "info_params": [["type_id", "0"], ["live_id", "1"], ["version_code", "99.99.99"], ["app_id", "1128"]],
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400",
+      "referer": "https://live.douyin.com/",
+      "blocked_text": ["verify_data", "验证码中间页"],
+      "_说明": "两步：先开直播间网页（约 1 MB，内部房间号在最后；在播的房间记着这一场的内部房间号，下次不用再开网页；顺便收下游客 Cookie ttwid，只留在内存里），再用内部房间号问 info_url（参数后面接 room_id、msToken，带 a_bogus 签名，code/abogus.py）。room.status 2 = 在播、4 = 没开播。user_agent 参与签名，要和请求头一样。player = direct：用 Evo 自己的播放器播，页面直接连抖音的视频服务器、不经过本机中转（取地址 code/watch_douyin.py：各档的地址就在 info_url 的回包里，只要 H.264 的）。room_pattern：房间号可以怎么写（没写这一项的平台只能是数字）。抖音的直播间地址 live.douyin.com/ 后面除了数字房间号，也可以是主播的抖音号（字母、数字、下划线，不分大小写；2026-11-18 实测两种写法读出来的是同一场直播）；带点的抖音号没试过，不收。default_max_bitrate：玩家没选过清晰度时，要码率（比特每秒）不超过这个数的最好一档（9000000 = 一般是 1080p60 8 Mbps 那一档；原画有的房间 15–20 Mbps）；写 0 是不限、要最好的"
+    }
+  }
+}

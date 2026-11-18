@@ -1,6 +1,6 @@
 # Evo（项目说明）
 
-Evo：一个轻量、开源的 Apex Legends 战绩记录器，面向 PC 玩家（Steam / EA App）。通过屏幕截图 + OCR 自动记录每局的名次、击杀、伤害和排位分（RP）变化。绑定微信小程序以后，战绩同步到云端（微信云开发），手机上也能看，可以随时解绑。
+Evo：一个轻量、开源的 Apex Legends 战绩记录器，面向 PC 玩家（Steam / EA App）。通过屏幕截图 + OCR 自动记录每局的名次、击杀、伤害和排位分（RP）变化。绑定微信小程序以后，战绩同步到云端（微信云开发），手机上也能看。
 
 命名：项目名 Evo（取自游戏里随伤害升级的进化护甲）。名称中不用 "Apex"、"Legends" 等 EA 商标，只在简介中写 "for Apex Legends"。仓库名和 Python 包名用 `evo-tracker`。
 
@@ -15,6 +15,7 @@ Evo：一个轻量、开源的 Apex Legends 战绩记录器，面向 PC 玩家�
 | 打包、安装、发布、改托盘或窗口 | [docs/底座.md](docs/底座.md) |
 | 做小程序、云同步（`miniprogram/`、Evo 上传战绩） | [docs/小程序.md](docs/小程序.md) |
 | 做「派圈助手」（和合作者一起做的小程序，集成 Evo；2026-10-26 起） | 仓库在 **`E:\paiquan-miniprogram`**（私有共享仓库 `AugustHuangMX/paiquan-miniprogram`，用户是拥有者）：先读那里的 `AGENTS.md`、`AI-CONTEXT.md`、`PRODUCT.md`（合作者的规矩：中英双语、深浅主题、不编数据、600 条测试）。合作者给了用户很大的自由度：**首页（地图页）和「我的」页由用户全权负责，结构也可以改；所有页面都可以滑动**（2026-10-27，原来的"一屏出结论"取消了），怎么改问用户、不用等合作者；他 `AGENTS.md` 的 8 条红线照守。在 Evo 这个窗口里直接改那个文件夹，不另开窗口。在开发者工具里看效果、截图：照 `miniprogram/paiquan-preview/README.md` 做（只在本机；用我们的 AppID 和测试云环境复制一份，不碰他的项目和云环境） |
+| 审 PR（学弟 wzxlll33、其他网友提的） | [docs/PR_review.md](docs/PR_review.md)：每次都照它做 |
 | 给新版本做宣传图（新功能配图） | [release/做图流程.md](release/做图流程.md)：每次都照它做（`python tools/feature_cards.py`），风格不要自己改 |
 
 - 一个窗口做一件事（2026-10-28 用户说的工作方式），东西按主题放、不按时间放：
@@ -45,19 +46,18 @@ Evo：一个轻量、开源的 Apex Legends 战绩记录器，面向 PC 玩家�
 
 1. **只看不动**：只做被动截屏（DXGI 桌面复制，如 dxcam）。绝不注入游戏、不读写游戏内存、不 hook 渲染、不在游戏画面上绘制浮层、不模拟任何键盘鼠标输入、不注册全局键盘钩子。Apex PC 版用 EA Javelin 反作弊，比之前的 EAC 更敏感。唯一的例外（2026-10-20 用户决定）：读 Apex 自己的视频设置文件 `videoconfig.txt` 里的分辨率和是不是全屏，判断游戏画面是 16:9、16:10 还是 4:3（`game_aspect.py`；只读不改，设置页可以改成手动选）
 2. **轻量**：
-   - 后台运行内存 < 100 MB，识别时峰值 < 300 MB，空闲时 CPU 接近 0%
-   - 不影响游戏帧数（用 CapFrameX / PresentMon 实测平均帧数和 1% low）
+   - 目标是后台运行内存 < 100 MB，识别时峰值 < 300 MB，空闲时 CPU 接近 0%（现在暂时做不到，但是每一次改进都朝这个目标努力）
+   - 不影响游戏帧数
    - 不使用 Electron。界面 = 托盘图标 + 按需打开的 Evo 窗口（Windows 自带的 WebView2 显示本地网页面板），窗口在单独的进程里，关掉就把内存还给系统
-   - OCR 只用 CPU、限制单线程、低优先级，模型按需加载；交火时不用引擎
    - 读结算画面、大厅时不让 Windows 降频（2026-10-27 用户决定：笔记本玩家的识别慢 10–15 倍，等不到提示音；只在这几秒，游戏在菜单里，优先级不变，对局中照旧由 Windows 决定。见 docs/底座.md）
-3. **开源**：AGPL-3.0 许可证（2026-10-24 用户决定，之前是 MIT：防止加速器等公司把代码放进不公开源码的产品，不管放在客户端还是服务器上；代码和提示音都用它，传奇头像等素材另算）。可以借鉴其他项目（如 MaaAssistantArknights）的**设计思路**，但不复制别人的代码：即使许可证允许（MAA 也是 AGPL-3.0），Evo 的代码也要全部是自己的，以后才能单独授权给别人。例外：玩家给 Evo 仓库提的 PR，用户看过、决定合并的可以合并（2026-11-02 第一次：EvilScho1ar 的 PR #3，用户决定直接合并，不另外签授权）；一起开发的学弟 wzxlll33（2026-11-07 起）也一样，用户决定不签协议；这部分代码按 AGPL 进来、版权归贡献者，以后要单独授权时，得先取得他们同意或者重写。合并时保留贡献者的提交（署名）
+3. **开源**：AGPL-3.0 许可证（2026-10-24 用户决定，之前是 MIT：防止加速器等公司把代码放进不公开源码的产品，不管放在客户端还是服务器上；代码和提示音都用它，传奇头像等素材另算）。可以借鉴其他项目（如 MaaAssistantArknights）的**设计思路**，但不复制别人的代码：即使许可证允许（MAA 也是 AGPL-3.0）
 4. **数据可信优先**：识别置信度低时，不悄悄写入错误数据，而是保留截图并标记"待确认"，由用户在面板中修正；读不出来的项留空，不当作 0。
 5. **配置驱动**：识别规则（区域、模板、阈值）写在配置文件里（`config/`），而不是写死在代码中，以便适应赛季更新和社区贡献。
 6. 在调整前端界面的时候（官网、客户端、小程序），永远使用 ui-ux-pro-max 这个 skill。
 
 ## 技术栈
 
-- Python 3.13（Windows）：新版 numpy 要求 3.12+，onnxruntime 暂不支持 3.15
+- Python 3.13（Windows）：新版 numpy 要求 3.12+，onnxruntime 暂不支持 3.15。依赖都装在项目的虚拟环境 `E:\Evo\.venv` 里，系统自带的 `python` 只有 pip：下面写的 `python` 都指 `E:\Evo\.venv\Scripts\python.exe`（Claude 运行命令时写完整路径）。报 `No module named 'cv2'` 一般是用错了 Python，不是包丢了
 - 文件布局：程序代码在 `code/`（互相 import 时直接写模块名，如 `import storage`）；只在开发时用的脚本（打包、安装、发布、伪数据、探测工具、`evo.spec`）在 `tools/`（先 `import code_path` 才能 import 程序代码）；测试在 `tests/`；根目录只放文档和文件夹；素材放 `assets/`。运行命令都带上文件夹，如 `python code/evo_app.py`、`python tools/build.py`
 - 截屏 `dxcam`（备选 `mss`）；图像 `opencv-python-headless` + `numpy`（不要装 `opencv-python`，会冲突）；引擎 RapidOCR + onnxruntime（模型内置、单线程）；存储 SQLite；面板 Flask + 纯 HTML/CSS；窗口 `pywebview` + WebView2；托盘 `pystray`；打包 PyInstaller（一个文件夹）。细节见 docs/底座.md
 - 小程序：微信原生写法（JavaScript + WXML / WXSS）+ 微信云开发（云函数用 Node.js），用微信开发者工具调试。细节见 docs/小程序.md
@@ -98,7 +98,9 @@ RP：游戏里没有单一的"总 RP"，只有"段位 + 段内进度"。**总分
 
 - 每完成一个能运行的小功能就提交一次。提交信息用中文：第一行简要说明，下面写改了什么、为什么、怎么验证的（以前写进 progress.md 的里程碑，现在都写在这里）
 - 同时开几个窗口时：每个窗口只改自己那条待办，只提交自己改的内容（别的窗口还没提交的改动不带进自己的提交）。提交前先看 `git diff --cached --stat`（别的窗口可能已经 `git add` 了文件）和要提交的每个文件的 diff（同一个文件里可能有别的窗口改的几行），用 `git commit -- 文件` 只提交自己的文件
-- **和学弟 wzxlll33 一起开发**（2026-11-07 用户定的；学计算机，GitHub 上的协作者）：需求和所有决定由用户定，他做用户提的需求；他自己的想法先开 Issue，用户同意了才做。`main` 有保护：只能经 PR 合并，要用户批准（`.github/CODEOWNERS` 写的代码负责人），批准以后再推新提交要重新批准；用户是拥有者，照旧可以直接推。
+  - 都在主文件夹里干活（`E:\Evo`、`E:\paiquan-miniprogram`；2026-11-15 用户决定不用 worktree）：worktree 里没有不进 git 的文件（`miniprogram/`、`site/`、`cloud_sync.py`、`docs/小程序.md`、截图、数据），也看不到别的窗口还没提交的改动。一个 worktree 都不开（用户说"直接不用 worktree 就好"）。Evo 一直在 `main` 上；派圈照它的 `AGENTS.md`（小改动直接提交到 `main`，bug 修复、大功能走 `fix/`、`feat/` 分支）：分支就在主文件夹里切，切之前给同一个文件夹里干活的窗口说一声、工作区干净时才切，做完合回 `main` 马上切回来
+  - **窗口之间互相说话**（2026-11-15 用户定的：用户喜欢几个窗口互相交流）：发版、推送、部署云函数、合进 `main`，或者要改别的窗口也在用的东西（同一个文件、云函数、上传的格式、发版的先后）之前，先用 `ListAgents` 看开着哪些窗口，给相关的窗口发消息（`SendMessage`）：说要做什么、问有没有冲突或要等的。做完一件会影响别人的事也说一声：改了什么、对方要注意什么（比如"下一版 Evo 会传武器，发版前要先部署 `evo_pc`"）。收到别的窗口的消息照常回答，要用户拍板的事转给用户，不替用户答应。小事不用广播
+- **和学弟 wzxlll33 一起开发**（2026-11-07 用户定的；学计算机，GitHub 上的协作者）：需求和所有决定由用户定，他做用户提的需求；他自己的想法先开 Issue，用户同意了才做。`main` 有保护：只能经 PR 合并，要用户批准（`.github/CODEOWNERS` 写的代码负责人），批准以后再推新提交要重新批准；用户是拥有者，照旧可以直接推。用户是最高执行人，只有 wzxlll33 和其他贡献者的改动需要用户审核（2026-11-09 用户定的：GitHub 上关掉了"最后一次推送要别人批准"，用户往贡献者的 PR 分支上推修改以后，自己批准就算数）。
   - **测试版走 `beta` 分支**（2026-11-07 用户定的）：他在功能分支上做，做好直接合进 `beta`（可以直接推，不用 PR；`beta` 不许强推、删除），测试版（如 0.5.5b）都从 `beta` 打包，不进一键更新；测好以后**整个 `beta` 提一个 PR 合进 `main`**，用户批准（某个功能没准备好，先从 `beta` 上撤掉再合）。合并用"Create a merge commit"，保留他的提交（署名）。每次打测试版前先把 `main` 合进 `beta`；**改表结构（`SCHEMA_VERSION`）只在 `beta` 上做**，`main` 不单独改，免得编号撞上（用户的真实数据库已经被 0.5.5b 升到 10）
   - 用户让审他的 PR 时：用大白话讲改了什么、有没有违背项目原则、跑了哪些测试（他那里没有截图，改模型、`storage.py` 的 PR 要在本机跑全部）。只在本机的东西（截图、小程序代码、官网、密钥）先都不给，他要的时候用户再定。不另写给他的上手说明（用户决定不加 CONTRIBUTING.md）
 - 推送前先 `git fetch`：GitHub 上有合进来的 PR，先合并到本机 `main` 再推
@@ -106,4 +108,4 @@ RP：游戏里没有单一的"总 RP"，只有"段位 + 段内进度"。**总分
 - 新增依赖前先说明理由和对内存 / 体积的影响
 - 不要删除或覆盖我的截图样本
 - 不提交到仓库：`captures/`（测试截图）、`data/`、数据库文件、`site/`；小程序的 AppSecret、云开发的密钥（也不写进 Evo）；别的玩家的名字和 ID（队友的测试答案只在本机：`tests/replay_20261016_teammates.csv`、`tests/in_match_teammates.json`）
-- **微信小程序的内容不上传 Evo 的 GitHub 仓库**（2026-10-24 用户决定；2026-10-26 调整：和合作者一起做的小程序「派圈助手」在私有共享仓库 `AugustHuangMX/paiquan-miniprogram` 里，集成 Evo 的代码放那里没问题）：`miniprogram/`、`docs/小程序.md`，以及 Evo 里绑定、上传战绩的 `code/cloud_sync.py`、`code/panel_cloud.py`、`code/qr.py`、`panel/templates/_cloud.html`、`tests/test_cloud_sync.py`、`tools/cloud_ping.py`（都写在 `.gitignore` 里，只在本机；之前的提交在本机分支 `local/miniprogram-history`，不推送）。GitHub 上的 Evo 没有这些文件也要能运行（找不到就不显示那一栏、不同步）；0.4.0–0.4.3 的安装包里没有它们，派圈助手 2026-10-29 过审发布后 0.5.0 起打进去（`tools/evo.spec` 的 `WITH_CLOUD = True`）。别的文档里写到小程序照常上传。推送前先查 `git log origin/main..main -- <这些路径>` 为空
+- **微信小程序的内容不上传 Evo 的 GitHub 仓库**（2026-10-24 用户决定；2026-10-26 调整：和合作者一起做的小程序「派圈助手」在私有共享仓库 `AugustHuangMX/paiquan-miniprogram` 里，集成 Evo 的代码放那里没问题）：`miniprogram/`、`docs/小程序.md`，以及 Evo 里绑定、上传战绩的 `code/cloud_sync.py`、`code/panel_cloud.py`、`panel/templates/_cloud.html`、`tests/test_cloud_sync.py`、`tools/cloud_ping.py`（都写在 `.gitignore` 里，只在本机；画二维码的 `code/qr.py` 2026-11-17 起公开：看直播页的 B站扫码登录也用它；之前的提交在本机分支 `local/miniprogram-history`，不推送）。GitHub 上的 Evo 没有这些文件也要能运行（找不到就不显示那一栏、不同步）；0.4.0–0.4.3 的安装包里没有它们，派圈助手 2026-10-29 过审发布后 0.5.0 起打进去（`tools/evo.spec` 的 `WITH_CLOUD = True`）。别的文档里写到小程序照常上传。推送前先查 `git log origin/main..main -- <这些路径>` 为空

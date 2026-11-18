@@ -34,6 +34,9 @@
   --info-text: #8EC0FF;
   --info-bg: #0F1A2B;
   --info-border: #24456E;
+  --cal-bg: #0F1C17;  /* 战绩页的校准行：淡绿底（--muted 字在上面 6.9:1） */
+  --cal-border: #1F4A3A;
+  --cal-text: #7CE8B8;
   --p1-bg: #FF5A5A; --p1-fg: #2A0A0A;
   --p2-bg: #B07CFF; --p2-fg: #1E0B3A;
   --p3-bg: #4C9AFF; --p3-fg: #06172F;
@@ -73,6 +76,9 @@
   --info-text: #1D4F99;
   --info-bg: #EEF4FC;
   --info-border: #BCD3F0;
+  --cal-bg: #EEF7F2;  /* 校准行：--muted 字在上面 5.3:1，--cal-text 4.9:1 */
+  --cal-border: #BFE0CF;
+  --cal-text: #1E7A52;
   --p1-bg: #D93636; --p1-fg: #FFFFFF;
   --p2-bg: #7A3FD1; --p2-fg: #FFFFFF;
   --p3-bg: #2266CC; --p3-fg: #FFFFFF;
@@ -148,9 +154,9 @@ a { color: inherit; text-decoration: none; }
 /* 切换账号（有 2 个以上账号时才有）：和主题按钮一起靠右 */
 .account-switch { margin-left: auto; display: flex; align-items: center; gap: 8px; margin-top: 0; margin-bottom: 0; }
 .pill ~ .account-switch, .account-switch ~ .icon-btn { margin-left: 0; }
-/* 右上角"Evo 官方合作小程序：派圈助手"（base.html，2026-10-28，每一页都有）：描边的圆角按钮，把右边的东西推到最右；
-   窗口窄时只留"派圈助手"。弹窗里的小程序码总是白底（扫码要），深色主题也一样 */
-.partner-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px;
+/* 派圈助手（2026-10-28 起在右上角，2026-11-15 挪到总览页"关注我"那一栏，按钮样子和那里的另外三个一样，见 .follow-partner）。
+   .partner-btn 是设置页鸣谢卡片里那个描边的圆角按钮。窗口窄时只留"派圈助手"。弹窗里的小程序码总是白底（扫码要），深色主题也一样 */
+.partner-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--text); font: inherit; font-size: 13px;
   cursor: pointer; transition: border-color 0.15s; }
 .partner-btn:hover { border-color: var(--muted); }
@@ -158,7 +164,6 @@ a { color: inherit; text-decoration: none; }
 .partner-icon { flex: none; width: 20px; height: 20px; margin-left: -4px; border-radius: 5px; }  /* 图标自带深色底，圆角像小程序图标 */
 .partner-label { color: var(--muted); }
 .partner-name { font-weight: 500; }
-.partner-btn ~ .pill, .partner-btn ~ .account-switch, .partner-btn ~ .icon-btn { margin-left: 0; }
 .dialog.partner-dialog { width: min(360px, calc(100vw - 32px)); }
 .partner-body { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 24px 20px; text-align: center; }
 .partner-kicker { margin: 0; color: var(--muted); font-size: 13px; }
@@ -298,6 +303,11 @@ table.matches { width: 100%; min-width: 900px; border-collapse: collapse; }
 .matches tr.row:hover .p4, .matches tr.open .p4 { box-shadow: inset 0 0 0 1px var(--dashed); }
 .p-none { border: 1px dashed var(--dashed); color: var(--muted); }
 .tag-review { margin-left: 6px; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--warn-pill-bg); border: 1px solid var(--warn-pill-border); color: var(--warn-text); }
+/* 校准行（不是一局）：淡绿底、左边"校准"两个字代替名次徽章；不能点，没有悬停效果 */
+.matches tr.cal-row { background: var(--cal-bg); border-top: 1px solid var(--cal-border); }
+.badge.cal { font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-size: 12px; padding: 3px 0;
+  border: 1px solid var(--cal-border); color: var(--cal-text); }
+.cal-title { font-weight: 600; color: var(--cal-text); }
 
 /* 传奇名字前的小头像（panel/static/legends/，见 _legend.html）：单色，颜色跟随文字，深浅主题都看得清。
    没有图标时（.blank）留出同样的位置，名字上下对齐 */
@@ -438,11 +448,12 @@ code { font-family: Consolas, monospace; font-size: 13px; padding: 1px 6px; bord
 .legend-key span { display: flex; align-items: center; gap: 6px; }
 .legend-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 
-/* 总览页最下面"关注我"：一条窄卡片，左边标题、右边两个按钮；图标单色、颜色跟随文字（做法同传奇小头像） */
-.follow-card { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; padding: 16px 24px; }
-.follow-card h2 { margin: 0; font-size: 16px; font-weight: 600; }
+/* 总览页"关注我"：一条窄卡片，没有标题（2026-11-15 用户要求去掉），B 站、小黑盒、Evo 官网和派圈助手四个按钮并列，
+   一起撑满一行（窄的时候折到下一行，每个照样撑满）；图标单色、颜色跟随文字（做法同传奇小头像），派圈助手的图标是原色的 */
+.follow-card { padding: 16px 24px; }
 .follow-links { display: flex; flex-wrap: wrap; gap: 10px; }
-.follow-links .btn { min-height: 40px; }
+.follow-links .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+.follow-partner .partner-icon { margin-left: 0; }
 .follow-icon { flex: none; width: 18px; height: 18px; background: currentColor;
   -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
 @media (forced-colors: active) { .follow-icon { forced-color-adjust: none; background: CanvasText; } }
@@ -641,7 +652,6 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .thanks-list li { overflow-wrap: anywhere; }
 .dev-list a { display: inline-block; padding: 2px 0; }
 .dev-list a:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; border-radius: 2px; }
-.credit-partner { margin-left: 0; }
 .settings-card h2, .about-card h2 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
 .setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .setting + .setting { border-top: 1px solid var(--row-border); }
@@ -933,6 +943,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .maps-left { margin-top: 8px; color: var(--muted); font-size: 13px; }
 .maps-left .num { color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; }  /* 每秒变，宽度不乱跳 */
 .maps-next { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.maps-at time { font-variant-numeric: tabular-nums; }  /* 换图的时刻：和"下一张"一样的浅色（2026-11-13 用户定的） */
 .maps-error { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
 /* 还没问过：卡片上只问一句，点了"显示"才联网 */
 .maps-ask-text { margin: 0; color: var(--muted); line-height: 1.7; }
@@ -943,6 +954,44 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .maps-ask-foot { margin-left: 6px; color: var(--muted); font-size: 12px; }
 @media (max-width: 760px) {
   .maps-row { grid-template-columns: 1fr; }
+}
+
+/* ---------- 右上角：Evo 占用（_usage.html，2026-11-15 用户要求）----------
+   顶部那一行、原来派圈助手按钮的位置，每一页都有：描边的圆角按钮（和原来派圈助手的一样），把右边的东西推到最右；
+   窗口窄时不写"Evo 占用"。点了在按钮下面展开一块（右边和按钮对齐），两格：现在、最近 N 局对局中的平均，样子照"当前地图"的格子 */
+.usage-top { position: relative; margin-left: auto; }
+.usage-top ~ .pill, .usage-top ~ .account-switch, .usage-top ~ .icon-btn { margin-left: 0; }
+.usage-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 14px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--text); font: inherit; font-size: 13px;
+  cursor: pointer; transition: border-color 0.15s; }
+.usage-btn:hover, .usage-btn[aria-expanded="true"] { border-color: var(--muted); }
+.usage-btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.usage-btn-icon { flex: none; margin-left: -2px; color: var(--muted); }
+.usage-btn-label { margin-right: 4px; color: var(--muted); }
+.usage-btn-key { color: var(--muted); }
+/* 每 2 秒变：等宽数字，留出"10.0%""1234 MB"的宽度，按钮不跟着变宽变窄 */
+.usage-btn-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-btn-value[data-usage="cpu"] { min-width: 3.3em; margin-right: 4px; }
+.usage-btn-value[data-usage="memory"] { min-width: 4.3em; }
+.usage-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; display: flex; flex-direction: column; gap: 10px;
+  width: min(360px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card); box-shadow: 0 16px 48px rgb(0 0 0 / 0.45); }
+[data-theme="light"] .usage-panel { box-shadow: 0 16px 40px rgb(0 0 0 / 0.12); }
+.usage-panel[hidden] { display: none; }
+.usage-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.usage-panel-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.usage-slot { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; min-width: 0;
+  border: 1px solid var(--row-border); border-radius: 6px; background: var(--inset); }
+.usage-metrics { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 2px; }
+.usage-metrics > div { display: flex; align-items: baseline; gap: 8px; }
+.usage-key { color: var(--muted); font-size: 13px; }
+/* 每 2 秒变：等宽数字，留出"100.0%""1234 MB"的宽度，数字变长变短时旁边的不挪 */
+.usage-value { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-value[data-usage="cpu"] { min-width: 4.2em; }
+.usage-value[data-usage="memory"] { min-width: 4.6em; }
+.usage-foot { margin-top: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .usage-btn-label { display: none; }
 }
 
 /* ---------- 赛季页：录入历史赛季数据（panel_seasons.py、seasons.html、_season_import.html） ---------- */
@@ -1027,3 +1076,233 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .curve-caption { margin: 8px 0 0 48px; color: var(--muted); font-size: 12px; }
 .curve-plot svg { animation: evo-wipe 800ms cubic-bezier(0.4, 0, 0.2, 1) 100ms backwards; }  /* 和总览页的走势图一样从左往右画出来 */
 .curve-end { animation: evo-pop 300ms cubic-bezier(0.3, 1.6, 0.6, 1) 800ms backwards; }
+
+/* ---------- 赛事页（panel_esports.py、esports.html，2026-11-17 用户定的；样子照用户给的样稿）----------
+   颜色都用上面的变量。"进行中"的红字用 --bad（浅色主题下 --accent 在淡红底上不到 4.5:1），
+   "看直播"按钮用 --p1-bg / --p1-fg（深色主题下白字在 --accent 上只有 3.1:1） */
+.es-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.es-section > h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.es-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.es-live-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 900px) { .es-live-grid { grid-template-columns: minmax(0, 1fr); } }
+.es-card { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.es-card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.es-live-tag { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 600;
+  color: var(--bad); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.es-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.es-tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px; color: var(--muted); }
+.es-when { margin-left: auto; font-size: 13px; color: var(--muted); }
+.es-card h3 { margin: 0; font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.es-card-sub { margin: 2px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+/* "几位选手在播"晚一点才到：这一行的高度由按钮定，字到了卡片不变高 */
+.es-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 38px; }
+.es-count { font-size: 13px; color: var(--muted); }
+.es-count .num { color: var(--text); }
+.watch-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 20px; border-radius: 6px;
+  background: var(--p1-bg); color: var(--p1-fg); font-size: 14px; font-weight: 600; white-space: nowrap; transition: filter 0.15s; }
+.watch-btn:hover { filter: brightness(1.08); }
+.watch-btn:active { transform: translateY(1px); }
+.watch-btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.es-none { margin: 0; padding: 20px 24px; color: var(--muted); border-style: dashed; border-color: var(--dashed); }
+.es-list { margin: 0; padding: 0; list-style: none; }
+.es-row { display: grid; grid-template-columns: 128px minmax(0, 1fr) 120px 160px; align-items: center; gap: 16px; padding: 14px 24px; border-top: 1px solid var(--row-border); }
+.es-row:first-child { border-top: 0; }
+.es-row-day { font-size: 12px; color: var(--muted); }
+.es-row-time { display: block; font-size: 18px; }
+.es-row-main { min-width: 0; }
+.es-row-name { font-weight: 600; }
+.es-row-sub, .es-row-teams, .es-row-note { font-size: 13px; color: var(--muted); }
+.es-row-teams .num { color: inherit; }
+.es-row-note { text-align: right; }
+.es-row-btn { padding: 6px 12px; font-size: 13px; }  /* 即将开始的"看名单和直播"：描边按钮，比红色的"看直播"低一级 */
+.es-row-btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.es-ended { color: var(--muted); }  /* 最近结束：整行灰色（--muted 在卡片上深色 7:1、浅色 5.9:1） */
+@media (max-width: 760px) {
+  .es-row { grid-template-columns: 96px minmax(0, 1fr); }
+  .es-row-teams, .es-row-note { grid-column: 2; text-align: left; }
+}
+.es-foot { margin: 0; font-size: 12px; color: var(--muted); }
+.es-empty-title { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: var(--text); }
+.es-empty-title + .small { margin: 0; }
+
+/* ---------- 看直播页（panel_esports.py、esports_watch.html，2026-11-17 用户定的；样子照用户给的样稿）----------
+   占满整个窗口：左边播放器那一栏和右边的队伍列表各自滚动，页面本身不滚。
+   平台的色点（用户给的颜色）：深色主题直接用；浅色主题在白底上不到 3:1，换成同一色相深一些的（下面 --pf-*）。
+   播放器那一块不分主题，一直是深色的，里面的色点用原来的亮色 */
+:root, [data-theme="dark"] { --pf-douyu: #FF7A2F; --pf-huya: #F2B705; --pf-bilibili: #FB7299; --pf-douyin: #25D9E8; }
+[data-theme="light"] { --pf-douyu: #D4561A; --pf-huya: #9A7400; --pf-bilibili: #D63F75; --pf-douyin: #0C8794; }
+.es-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.es-dot.pf-douyu { background: var(--pf-douyu); }
+.es-dot.pf-huya { background: var(--pf-huya); }
+.es-dot.pf-bilibili { background: var(--pf-bilibili); }
+.es-dot.pf-douyin { background: var(--pf-douyin); }
+.es-avatar { position: relative; flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--nav-on-bg); font-size: 12px; font-weight: 700; }
+.es-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+
+.wrap.watch-wrap { max-width: none; padding: 0; gap: 0; height: 100vh; }
+.in-app .wrap.watch-wrap { height: 100%; }
+.in-app body:has(.watch-wrap) { overflow: hidden; scrollbar-gutter: auto; }  /* 两栏各自滚动，不给整页留滚动条的位置 */
+.watch-wrap > .page { flex: 1; min-height: 0; gap: 0; }
+.watch-wrap > .page > :not(.watch):not(script):not(dialog) { margin: 12px 20px 0; }  /* 顶部的提示条（更新、公告……）照样显示；弹窗不算（它要居中） */
+.watch { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
+.watch-main { min-width: 0; overflow-y: auto; padding: 14px 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+.watch-head { display: flex; align-items: center; gap: 12px; min-height: 32px; }
+.watch-back { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px 0 6px; border-radius: 6px; color: var(--muted); font-size: 13px; }
+.watch-back:hover { background: var(--nav-on-bg); color: var(--text); }
+.watch-sep { flex: none; width: 1px; height: 14px; background: var(--border); }
+.watch-title { margin: 0; min-width: 0; font-size: 15px; font-weight: 700; }
+.watch-stage { flex: none; font-size: 13px; color: var(--muted); }
+.watch-mark { flex: none; margin-left: auto; }
+
+.watch-apex { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border-radius: 8px; font-size: 13px;
+  border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-text); }
+.watch-apex[hidden], .watch-info[hidden], .watch-mates[hidden], .watch-chips[hidden] { display: none; }
+.watch-apex svg { flex: none; }
+.watch-apex .btn { padding: 6px 14px; font-size: 13px; }
+
+/* 播放器：16:9；窗口很大时不让它高过窗口（否则要滚动才看得到下面的按钮） */
+.watch-stage-box { position: relative; flex: none; width: 100%; max-width: max(480px, calc((100vh - 300px) * 16 / 9)); aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
+  background: #161A22; color: #ECEEF2; --pf-douyu: #FF7A2F; --pf-huya: #F2B705; --pf-bilibili: #FB7299; --pf-douyin: #25D9E8; }
+.watch-screen { position: absolute; inset: 0; }
+.watch-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+.watch-chips { position: absolute; top: 12px; left: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; pointer-events: none; }
+.watch-chip-live, .watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; }
+.watch-chip-live { background: #FF5A5A; color: #2A0A0A; font-weight: 700; }
+.watch-chip-live-dot { width: 6px; height: 6px; border-radius: 50%; background: #2A0A0A; }
+.watch-chip { background: rgb(8 9 12 / 0.72); color: #ECEEF2; }
+.watch-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+.watch-msg-title { margin: 0; font-size: 17px; font-weight: 700; }
+.watch-msg-text { margin: 0; max-width: 420px; font-size: 13px; line-height: 1.7; color: #B4BAC6; }
+.watch-primary { font: inherit; margin-top: 8px; display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;
+  background: #FF5A5A; color: #2A0A0A; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.watch-primary:hover { filter: brightness(1.08); }
+.watch-primary:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
+
+.watch-secondary { font: inherit; display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border: 1px solid rgb(236 238 242 / 0.28); border-radius: 8px; cursor: pointer;
+  background: rgb(8 9 12 / 0.55); color: #ECEEF2; font-size: 13px; white-space: nowrap; }
+.watch-secondary:hover { background: rgb(8 9 12 / 0.8); }
+.watch-secondary:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
+/* Evo 自己的播放器（斗鱼；mpegts.js）：画面 + 下面一条自己的控制条。和播放器那一块一样不分主题，一直是深色的 */
+.watch-player { position: absolute; inset: 0; background: #000000; }
+.watch-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: #000000; }
+.watch-wait { position: absolute; inset: 0 0 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 14px; color: #B4BAC6; pointer-events: none; }
+.watch-wait[hidden], .watch-hint[hidden], .watch-quality-menu[hidden] { display: none; }
+.watch-wait .watch-primary { pointer-events: auto; }
+.watch-hint { font: inherit; position: absolute; left: 50%; bottom: 60px; transform: translateX(-50%); padding: 8px 14px; border: 1px solid rgb(236 238 242 / 0.28); border-radius: 8px; cursor: pointer;
+  background: rgb(8 9 12 / 0.82); color: #ECEEF2; font-size: 13px; white-space: nowrap; }
+.watch-hint:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
+.watch-controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 10px; background: rgb(8 9 12 / 0.72); color: #ECEEF2; }
+.watch-ctl { font: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; height: 32px; padding: 0 8px; border: 0; border-radius: 6px; cursor: pointer;
+  background: transparent; color: #ECEEF2; font-size: 12px; white-space: nowrap; }
+.watch-ctl:hover:not(:disabled) { background: rgb(236 238 242 / 0.12); }
+.watch-ctl:disabled { cursor: default; }
+.watch-ctl:focus-visible, .watch-volume:focus-visible, .watch-quality-item:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
+.watch-volume { width: 84px; height: 4px; accent-color: #ECEEF2; cursor: pointer; }
+.watch-quality { position: relative; }
+.watch-quality-menu { position: absolute; right: 0; bottom: 40px; display: flex; flex-direction: column; gap: 2px; min-width: 150px; max-width: 260px; padding: 6px; border: 1px solid rgb(236 238 242 / 0.18); border-radius: 8px;
+  background: rgb(8 9 12 / 0.94); }
+.watch-quality-item { font: inherit; display: flex; align-items: center; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; cursor: pointer; background: transparent; color: #ECEEF2; font-size: 13px; text-align: left; white-space: nowrap; }
+.watch-quality-item:hover { background: rgb(236 238 242 / 0.12); }
+.watch-quality-item.on { background: rgb(236 238 242 / 0.16); font-weight: 600; }
+.watch-quality-item.on::after { content: "✓"; margin-left: auto; padding-left: 12px; }
+.watch-quality-note { margin: 4px 4px 2px; font-size: 12px; line-height: 1.5; color: #B4BAC6; white-space: normal; }
+/* 全屏（播放器那一块占满窗口）。2026-11-17 用户在 Evo 窗口里试：全屏以后控制条和左上角的标记看不见、但点得到。
+   画面上下有黑边，控制条和标记正好都在黑边里：Windows 上的浏览器内核会把"全屏、带黑边的视频"连黑边一起直接交给显卡画，
+   盖住了黑边位置上别的东西（推断的，Claude 这边没重现出来）。所以全屏时：
+   - 播放器缩成居中的 16:9 一块，控制条和标记都压在画面上，不放在黑边里
+   - 黑边不用纯黑（#050506，看起来一样）、视频不完全不透明（0.999）：都是为了不让它走"直接交给显卡"那条路 */
+.watch-stage-box:fullscreen { max-width: none; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; background: #050506; }
+.watch-stage-box:fullscreen .watch-screen { display: flex; align-items: center; justify-content: center; }
+.watch-stage-box:fullscreen .watch-player { position: relative; inset: auto; flex: none; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); }
+.watch-stage-box:fullscreen .watch-video { opacity: 0.999; }
+.watch-stage-box:fullscreen .watch-chips { top: calc((100vh - min(100vh, 100vw * 9 / 16)) / 2 + 12px); left: calc((100vw - min(100vw, 100vh * 16 / 9)) / 2 + 12px); }
+
+.watch-info { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.watch-avatar { width: 44px; height: 44px; font-size: 17px; }
+.watch-who { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 2px; }
+.watch-who-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.watch-name { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.watch-team, .watch-live-title { font-size: 13px; color: var(--muted); }
+.watch-link { padding: 7px 14px; border-radius: 8px; font-size: 13px; gap: 6px; }
+.watch-link:focus-visible, .watch-back:focus-visible, .watch-apex .btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.watch-login[hidden] { display: none; }
+.watch-login { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+/* 平台的扫码登录（B站）：二维码总是白底（扫码要），深色主题也一样 */
+.dialog.watch-login-dialog { width: min(380px, calc(100vw - 32px)); }
+.watch-login-body { display: flex; flex-direction: column; gap: 14px; padding: 24px; }
+.watch-login-qr { align-self: center; width: 232px; height: 232px; padding: 6px; border-radius: 12px; background: #FFFFFF; box-shadow: 0 0 0 1px var(--border); }
+.watch-login-qr[hidden], #login-refresh[hidden], #login-logout[hidden] { display: none; }
+.watch-login-qr img { display: block; width: 100%; height: 100%; }
+.watch-login-status { margin: 0; min-height: 22px; line-height: 1.6; }
+.watch-login-dialog .dialog-actions .btn-text { margin-right: auto; color: var(--bad); }
+
+.watch-mates { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.watch-mates-label { margin-right: 4px; font-size: 12px; color: var(--muted); }
+.watch-mates-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-mate { font: inherit; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 16px;
+  background: transparent; color: var(--text); font-size: 13px; }
+button.watch-mate { cursor: pointer; }
+button.watch-mate:hover { background: var(--nav-on-bg); }
+button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.watch-mate.on { background: var(--nav-on-bg); border-color: var(--accent); }
+.watch-mate.dis { color: var(--muted); border-style: dashed; border-color: var(--dashed); }  /* 没开播：灰色、虚线框 */
+.watch-mate-sub { font-size: 12px; color: var(--muted); }
+
+.watch-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--card); border-left: 1px solid var(--border); }
+.watch-side-head { padding: 14px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
+.watch-side-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.watch-side-title h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.watch-count { font-size: 12px; color: var(--muted); }
+.watch-count-live { color: var(--text); }
+.watch-seg { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.watch-seg button { font: inherit; flex: 1; height: 30px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
+.watch-seg button:hover { color: var(--text); }
+.watch-seg button.on { background: var(--nav-on-bg); color: var(--nav-on-text); font-weight: 600; }
+.watch-seg button:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.watch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 2px; }
+.watch-team-box[hidden] { display: none; }
+.watch-team-box > summary { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px 0 6px; border-radius: 8px; cursor: pointer; list-style: none; }
+.watch-team-box > summary::-webkit-details-marker { display: none; }
+.watch-team-box > summary:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.watch-team-box > summary:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: -2px; }
+.watch-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
+.watch-team-box[open] .watch-chev { transform: rotate(90deg); }
+.watch-team-logo { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: var(--nav-on-bg); font-size: 13px; font-weight: 700; }
+/* 队徽：透明底的图，深色、浅色主题都放在深色方块里（和派圈助手一样）。队徽用的是派圈那一批（Liquipedia 给深色背景用的不带字的版本）：
+   851 张里放在浅色底上有 345 张看不清，放在 #14171F 上 54 张（2026-11-18 量的） */
+.watch-team-logo.has-img { padding: 2px; overflow: hidden; background: #14171F; }
+/* 主舞台那一栏：队徽的位置放一个"屏幕"图标，下面一条线把它和队伍隔开 */
+.watch-team-logo.is-main { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.watch-main-box { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--border); }
+.watch-team-logo img { width: 100%; height: 100%; object-fit: contain; }
+.watch-team-name { flex: 1; min-width: 0; font-weight: 600; }
+.watch-team-live { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.watch-team-live.on { color: var(--bad); }  /* 红点 + "N 人在播"：字用 --bad（浅色主题下 --accent 在白底上不到 4.5:1） */
+.watch-players { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 2px; }
+.watch-p { font: inherit; display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.watch-p:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.watch-p:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: -2px; }
+.watch-p.sel { background: var(--nav-on-bg); border-color: var(--border); }
+.watch-p:disabled { color: var(--muted); cursor: default; }
+.watch-p:disabled .es-avatar { background: var(--bg); border: 1px solid var(--border); font-weight: 600; }
+.watch-p.live .es-avatar::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); border: 2px solid var(--card); }
+.watch-p-name { flex: 1; min-width: 0; font-size: 13px; }
+.watch-p.live .watch-p-name { font-weight: 600; }
+.watch-p-plat { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.watch-p-time { flex: none; min-width: 42px; text-align: right; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.watch-empty { margin: 0; padding: 8px 10px; font-size: 12px; color: var(--muted); }
+.watch-empty[hidden] { display: none; }
+.watch-side-foot { margin: 0; padding: 12px 16px 14px; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.6; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .watch-chev { transition: none; } }
+/* 窗口窄：两栏叠起来，整页滚动 */
+@media (max-width: 900px) {
+  .wrap.watch-wrap, .in-app .wrap.watch-wrap { height: auto; }
+  .in-app body:has(.watch-wrap) { overflow-y: auto; }
+  .watch { grid-template-columns: minmax(0, 1fr); }
+  .watch-main { overflow: visible; }
+  .watch-side { border-left: 0; border-top: 1px solid var(--border); }
+  .watch-list { overflow: visible; }
+}

@@ -22,6 +22,9 @@
   数据页"全体玩家"按全队三个人算，用过的人不用重新问）；0.4.2 起还有自己每把武器拿在手上几秒（weapons，
   如 {"r301": 192}；只算第一次拿到武器 60 秒以后的，和数据页"最常用武器"一样。2026-10-28 用户决定：数据页"全体玩家"
   显示大家常用的武器，用过的人不用重新问）。没读出来的项是空的（null）
+- 每局对局中 Evo 自己的占用（usage，2026-11-15 用户决定；只发同意以后的、最近 10 局里还没发过的，见 evo_usage.py）：
+  一串乱码的编号、日期、Evo 版本号、这一段多少分钟、Evo 平均占一个核的百分之几（和电脑有几个核无关）、
+  内存的平均和最高（MB）。整台电脑的 CPU、有几个核这些不发
 不发：游戏名、ID、队友的名字和 ID、截图、日志、备注（可能有用户自己写的字）、文件路径、电脑信息。
 服务器不存 IP 地址（Cloudflare 本身能看到，见隐私政策）。
 
@@ -49,6 +52,7 @@ import urllib.request
 from datetime import datetime, timedelta
 
 import app_settings
+import evo_usage
 import game_aspect
 import game_lang
 import storage
@@ -167,6 +171,30 @@ def match_payload(conn, row, install):
             "weapons": weapon_payload(conn, row["match_id"])}
 
 
+def usage_payload(install, row):
+    """一局对局中 Evo 自己的占用（evo_usage.MatchMeter 记的那一行）：只有 Evo 的数字。CPU 发占一个核的 %，
+    看不出电脑有几个核；整台电脑的 CPU 不发。编号由匿名编号和结束的时刻算出来，只用来认出"又发了同一局"。"""
+    key = hashlib.sha256(f"{install}|usage|{row['at']}".encode("utf-8")).hexdigest()[:20]
+    return {"k": key, "day": str(row["at"])[:10], "version": row.get("version"), "minutes": row["minutes"],
+            "cpu_core": row["cpu_core"], "memory": row["memory"], "memory_peak": row["memory_peak"]}
+
+
+def usage_pending(install, sent, db_path=DB_PATH):
+    """要发的对局中占用：同意以后的、没发过的。返回 [(摘要, 内容)]。"""
+    since = app_settings.get(SINCE_KEY)
+    if not isinstance(since, str):
+        return []
+    out = []
+    for row in evo_usage.recent(evo_usage.usage_path(db_path)):
+        if str(row["at"]) < since:
+            continue
+        payload = usage_payload(install, row)
+        digest = _digest(payload)
+        if sent.get(payload["k"]) != digest:
+            out.append((digest, payload))
+    return out
+
+
 def _digest(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
@@ -242,8 +270,9 @@ def _ping_sent(day):
 
 
 def send(db_path=DB_PATH, now=None):
-    """发送一次：今天还没发过日活就带上，加上没发过、或发过以后又变了的局。没同意时什么都不做，返回 None。
-    没有要发的也不联网。返回 {"ok", "matches"（发了几局）, "ping"（发了日活没有）, "error", "at"}，有联网时记进设置。"""
+    """发送一次：今天还没发过日活就带上，加上没发过、或发过以后又变了的局，和没发过的对局中占用（放在第一个请求里）。
+    没同意时什么都不做，返回 None。没有要发的也不联网。
+    返回 {"ok", "matches"（发了几局）, "usage"（发了几局的占用）, "ping"（发了日活没有）, "error", "at"}，有联网时记进设置。"""
     if consent() is not True:
         return None
     with _lock:
@@ -255,23 +284,29 @@ def send(db_path=DB_PATH, now=None):
             todo = pending(conn, install, sent, now)
         finally:
             conn.close()
+        usage = usage_pending(install, sent, db_path)
         days = _ping_days(today)
-        result = {"ok": True, "matches": 0, "ping": False, "error": None, "at": now.strftime("%Y-%m-%d %H:%M")}
-        if not days and not todo:
+        result = {"ok": True, "matches": 0, "usage": 0, "ping": False, "error": None,
+                  "at": now.strftime("%Y-%m-%d %H:%M")}
+        if not days and not todo and not usage:
             return result
         batches = [todo[start:start + BATCH] for start in range(0, len(todo), BATCH)]
         batches += [[]] * (len(days) - len(batches))  # 每个请求带一天的日活，日活比局多时多出来的单独发
+        batches = batches or [[]]  # 只有对局中的占用要发
         ping = ping_payload(today) if days else None
         try:
             for i, batch in enumerate(batches):
                 body = {"id": install, "version": storage.APP_VERSION, "matches": [p for _, p in batch]}
                 if i < len(days):
                     body["ping"] = {**ping, "day": days[i]}
+                if i == 0 and usage:  # 最多 10 局，放在第一个请求里
+                    body["usage"] = [p for _, p in usage]
                 _post("/v1/report", body)
-                for digest, payload in batch:
+                for digest, payload in batch + (usage if i == 0 else []):
                     sent[payload["k"]] = digest
                 _save_sent(sent)
                 result["matches"] += len(batch)
+                result["usage"] += len(body.get("usage", []))
                 if "ping" in body:
                     _ping_sent(days[i])
                     result["ping"] = True
@@ -289,6 +324,9 @@ def preview(conn):
     row = conn.execute("SELECT * FROM matches ORDER BY ended_at DESC, match_id DESC LIMIT 1").fetchone()
     body = {"id": install, "version": storage.APP_VERSION, "ping": ping_payload(datetime.now().strftime("%Y-%m-%d")),
             "matches": [match_payload(conn, row, install)] if row else []}
+    usage = evo_usage.recent()
+    if usage:
+        body["usage"] = [usage_payload(install, usage[-1])]
     return json.dumps(body, ensure_ascii=False, indent=2)
 
 
