@@ -11,9 +11,9 @@
 
 两张表在 E:\\Evo\\esports\\（不进 git：里面是别人的房间号），用 Excel 或 WPS 改，存成 CSV；GBK、UTF-8 都认。
 - 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名。平台只能写 斗鱼 / 虎牙 / B站 / 抖音；房间号只写数字（抖音的也可以写主播的抖音号：字母、数字、下划线，存的时候转成小写）；最后一列可以空。
-  不开直播的选手也写进来（一支队要正好 3 个人）：平台写「不直播」，房间号空着
+  不开直播的选手也写进来：平台写「不直播」，房间号空着。一支队几个人都行（2026-11-18 用户定的：不加 3 人的限制）
 - 赛程.csv：名称,类型,阶段,开始,结束,队伍。类型是 联赛 / 训练赛 / 杯赛；时间写北京时间 2026-11-17 19:00；
-  队伍用顿号「、」隔开，每个队名都要在选手库里、正好 3 个人。
+  队伍用顿号「、」隔开，每个队名都要在选手库里。
   可以多一列「主舞台」（第 7 列，没有这一列也行）：这场赛事播导播视角的直播间，写"平台 房间号 名字"，多路用顿号隔开，
   如 B站 7734200 官方直播、斗鱼 9999 某解说；最多 8 路。它们不进选手库，页面上排在队伍的最前面
 有错就指出是哪个文件第几行，不上传。结束超过 7 天的赛事不放进去（赛事页只显示最近 7 天的）；选手只放这些赛事用到的。
@@ -51,16 +51,15 @@ NO_STREAM = esports_data.NO_STREAM_NAME  # 选手库里平台写"不直播"：�
 PLAYER_PLATFORMS = {**PLATFORM_KEYS, NO_STREAM: esports_data.NO_STREAM}  # 选手能写的平台（主舞台不能写"不直播"）
 PLATFORM_NAMES = {**live_status.NAMES, esports_data.NO_STREAM: NO_STREAM}
 TYPE_KEYS = {"联赛": "league", "训练赛": "scrim", "杯赛": "cup"}
-TEAM_SIZE = 3
 USUAL_TEAMS = 20
 EXAMPLE = "示例"
 TIME_RE = re.compile(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\s+(\d{1,2})[:：](\d{2})(?::\d{2})?")
 GUIDE = """赛事数据怎么填（python tools/esports.py --init 生成的说明）
 
 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名
-  - 一个选手一行；一支队正好 3 个人；一个选手只能在一支队
+  - 一个选手一行；一个选手只能在一支队；一支队几个人都行（不足 3 人、超过 3 人都可以）
   - 平台只能写：斗鱼 / 虎牙 / B站 / 抖音 / 不直播
-  - 不开直播的选手也要写进来（一支队要凑满 3 个人）：平台写「不直播」，房间号空着。Evo 里照样列在队里，标"不直播"
+  - 不开直播的选手也可以写进来：平台写「不直播」，房间号空着。Evo 里照样列在队里，标"不直播"
   - 房间号只写数字，就是直播间地址最后那串数字（虎牙要数字房间号，不要写英文别名）。
     抖音的地址 live.douyin.com/ 后面有的是字母（主播的抖音号，如 xxfps），照着写就行，大小写都可以
   - Liquipedia页面名可以空着
@@ -214,11 +213,7 @@ def check_players(rows, errors):
                 rooms[(platform, room)] = line
             players.append({"line": line, "name": name, "team": team, "platform": PLAYER_PLATFORMS[platform],
                             "room": room, "liquipedia": row["Liquipedia页面名"]})
-    for team, lines in teams.items():
-        if len(lines) != TEAM_SIZE:
-            errors.append(f"{PLAYERS_NAME}：战队「{team}」有 {len(lines)} 个人（第 {'、'.join(map(str, lines))} 行），"
-                          f"要正好 {TEAM_SIZE} 个")
-    return players, set(teams)
+    return players, set(teams)  # 一支队几个人不限（原来要正好 3 个，2026-11-18 用户定了去掉）
 
 
 def check_events(rows, known_teams, errors, notes):

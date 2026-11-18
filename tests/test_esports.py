@@ -408,7 +408,7 @@ def tool_checks(out):
         code, text, data = run_tool(folder, bad_roster, bad_schedule)
     wanted = ["选手库.csv 第 3 行：平台「快手」不认识", "选手库.csv 第 4 行：房间号「10x3」只能是数字",
               "选手库.csv 第 5 行：选手「阿一」在第 2 行已经写过", "选手库.csv 第 6 行：斗鱼 房间 101 在第 2 行已经写过",
-              "选手库.csv 第 7 行：「选手」是空的", "战队「两个人的队」有 2 个人（第 8、9 行）",
+              "选手库.csv 第 7 行：「选手」是空的",
               "赛程.csv 第 2 行：结束", "赛程.csv 第 3 行：类型「友谊赛」不认识", "赛程.csv 第 3 行：开始「明天晚上」要写成",
               "赛程.csv 第 3 行：队伍「星火电竞」写了 2 次", "队伍「星火电竟」不在选手库.csv里（是不是「星火电竞」？）",
               "赛程.csv 第 4 行：「名称」是空的", "赛程.csv 第 4 行：队伍要用顿号「、」隔开"]
@@ -416,6 +416,13 @@ def tool_checks(out):
     if missing:
         print("    没指出来的：", missing)
     out["每种写错都指出是哪个文件第几行，一次全列出来，不生成文件"] = code == 1 and data is None and not missing
+    out["一支队几个人不限（原来要正好 3 个）：两个人的队不算写错"] = "两个人的队」有" not in text and "要正好" not in text
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(folder, ["独一,一个人的队,斗鱼,1,", *[f"多{n},五个人的队,斗鱼,{10 + n}," for n in range(5)]],
+                                    [f"训练赛,训练赛,,{day(0, '19:00')},{day(0, '23:00')},一个人的队、五个人的队"])
+    out["一个人的队、五个人的队都能发：名单里每支队有几个人就是几个人"] = (
+        code == 0 and data is not None and [p["team"] for p in data["players"]].count("一个人的队") == 1
+        and [p["team"] for p in data["players"]].count("五个人的队") == 5 and esports_data.clean(data)["players"] == data["players"])
     letters = ["阿一,字母队,抖音,XXFPS,", "阿二,字母队,抖音,NOVA_Tt1seven,", "阿三,字母队,抖音,197427647791,"]
     one_event = [f"训练赛,训练赛,,{day(0, '19:00')},{day(0, '23:00')},字母队"]
     with tempfile.TemporaryDirectory() as folder:
@@ -434,7 +441,7 @@ def tool_checks(out):
     with tempfile.TemporaryDirectory() as folder:
         code, text, data = run_tool(folder, ["甲一,安静队,斗鱼,11,", "甲二,安静队,不直播,,", "甲三,安静队,不直播,,Jia3"], quiet_event)
     hashed = "none-" + hashlib.sha256("甲二".encode("utf-8")).hexdigest()[:12]
-    out["选手库里平台写「不直播」、房间号空着：照样算队里的人（凑满 3 个），id 是 none- 加选手名的哈希；两个不直播的不算重复"] = (
+    out["选手库里平台写「不直播」、房间号空着：照样算队里的人，id 是 none- 加选手名的哈希；两个不直播的不算重复"] = (
         code == 0 and data is not None and "不直播 2" in text
         and [(p["id"], p["platform"], p["room"]) for p in data["players"]][:2] == [("douyu-11", "douyu", "11"), (hashed, "none", "")]
         and data["players"][2]["id"].startswith("none-") and data["players"][2]["id"] != hashed
