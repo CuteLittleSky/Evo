@@ -493,7 +493,8 @@ def panel_checks(out):
                {"id": "bilibili-6", "name": "Sol", "team": "甲队", "platform": "bilibili", "room": "6"},
                {"id": "douyin-800", "name": "Rei", "team": "甲队", "platform": "douyin", "room": "800"}]
     event = {"id": "live", "name": "联赛", "type": "联赛", "stage": "", "start": (now - timedelta(hours=1)).isoformat(),
-             "end": (now + timedelta(hours=3)).isoformat(), "teams": ["甲队"]}
+             "end": (now + timedelta(hours=3)).isoformat(), "teams": ["甲队"],
+             "main": [{"id": "douyu-777", "name": "官方直播", "platform": "douyu", "room": "777"}]}  # 主舞台的一路
 
     def serve(platforms=None):
         path = Path(folder) / "esports.json"
@@ -517,8 +518,8 @@ def panel_checks(out):
         data = json.loads(page.split('id="watch-data">')[1].split("</script>")[0])
         plays = {p["id"]: p["play"] for p in data["players"]}
         out["看直播页：斗鱼、抖音选手带着问清晰度的接口，B站的没有（用官方播放器）；播放器从面板自己的文件加载，不联网"] = (
-            plays == {"douyu-520013": "/esports/play/douyu-520013", "douyu-520014": "/esports/play/douyu-520014", "bilibili-6": None,
-                      "douyin-800": "/esports/play/douyin-800"}
+            plays == {"douyu-777": "/esports/play/douyu-777", "douyu-520013": "/esports/play/douyu-520013",
+                      "douyu-520014": "/esports/play/douyu-520014", "bilibili-6": None, "douyin-800": "/esports/play/douyin-800"}
             and data["mpegts_url"] == "/static/vendor/mpegts.js")
         script = client.get("/static/vendor/mpegts.js")
         out["mpegts.js 和它的许可证随面板一起发，类型是脚本"] = (
@@ -570,6 +571,9 @@ def panel_checks(out):
             hevc.status_code == 502 and hevc.get_json()["reason"] == "not_h264"
             and dead.status_code == 502 and dead.get_json()["reason"] == "upstream")
 
+        stage = client.get("/esports/play/douyu-777").get_json()
+        out["主舞台的直播间（不在选手名单里）也能问到播放地址"] = (
+            stage["ok"] and stage["stream"] == f"/esports/stream/douyu-777?q=4&t={token}" and ("resolve", "777", None) in fake.asked)
         direct = client.get("/esports/play/douyin-800").get_json()
         named = client.get("/esports/play/douyin-800?q=hd").get_json()
         shouted = client.get("/esports/play/douyin-800?q=HD!").get_json()

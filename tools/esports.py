@@ -12,7 +12,9 @@
 两张表在 E:\\Evo\\esports\\（不进 git：里面是别人的房间号），用 Excel 或 WPS 改，存成 CSV；GBK、UTF-8 都认。
 - 选手库.csv：选手,战队,平台,房间号,Liquipedia页面名。平台只能写 斗鱼 / 虎牙 / B站 / 抖音；房间号只写数字（抖音的也可以写主播的抖音号：字母、数字、下划线，存的时候转成小写）；最后一列可以空
 - 赛程.csv：名称,类型,阶段,开始,结束,队伍。类型是 联赛 / 训练赛 / 杯赛；时间写北京时间 2026-11-17 19:00；
-  队伍用顿号「、」隔开，每个队名都要在选手库里、正好 3 个人
+  队伍用顿号「、」隔开，每个队名都要在选手库里、正好 3 个人。
+  可以多一列「主舞台」（第 7 列，没有这一列也行）：这场赛事播导播视角的直播间，写"平台 房间号 名字"，多路用顿号隔开，
+  如 B站 7734200 官方直播、斗鱼 9999 某解说；最多 8 路。它们不进选手库，页面上排在队伍的最前面
 有错就指出是哪个文件第几行，不上传。结束超过 7 天的赛事不放进去（赛事页只显示最近 7 天的）；选手只放这些赛事用到的。
 平台开关记在线上的文件里：平常上传时照线上现在的开关，--off / --on 只改开关、不动别的。
 只传 R2（https://dl.evotracker.cn/esports.json ，和 notice.json 一起）：COS 停用中，Evo 也只读 R2。
@@ -38,6 +40,8 @@ TABLES = ROOT / "esports"
 PLAYERS_NAME, EVENTS_NAME, GUIDE_NAME = "选手库.csv", "赛程.csv", "填写说明.txt"
 PLAYER_COLUMNS = ["选手", "战队", "平台", "房间号", "Liquipedia页面名"]
 EVENT_COLUMNS = ["名称", "类型", "阶段", "开始", "结束", "队伍"]
+EVENT_EXTRA = ["主舞台"]  # 赛程.csv 可以有、也可以没有的列（接在后面）
+MAIN_RE = re.compile(r"(\S+)\s+(\S+)\s+(.+)")  # 主舞台的一路：平台 房间号 名字
 NAME, TEST_NAME = "esports.json", "esports_test.json"
 CONTENT_TYPE = "application/json; charset=utf-8"
 PLATFORM_KEYS = {name: key for key, name in live_status.NAMES.items()}  # {"斗鱼": "douyu", ...}
@@ -61,6 +65,8 @@ GUIDE = """赛事数据怎么填（python tools/esports.py --init 生成的说�
   - 开始、结束写北京时间，如 2026-11-17 19:00（Excel 改成 2026/11/17 19:00 也认）
   - 队伍：队名用顿号「、」隔开，每个队名要和选手库里的一模一样
   - 阶段可以空着
+  - 后面可以再加一列「主舞台」（没有这一列也行）：这场赛事播导播视角的直播间（官方直播、解说的直播间），
+    写"平台 房间号 名字"，多路用顿号「、」隔开，如：B站 7734200 官方直播、斗鱼 9999 某解说。最多 8 路
 
 改完以后（在 E:\\Evo 里运行）：
   python tools/esports.py --check     检查两张表，再把每个房间问一遍
@@ -75,9 +81,9 @@ def now_beijing():
 
 # ---------- 读表 ----------
 
-def read_table(path, columns):
+def read_table(path, columns, extra=()):
     """读一张 CSV，返回 [(行号, {列名: 内容}), ...]（空行跳过）。GBK（中文 Windows 上 Excel 默认存的）、UTF-8
-    （带不带 BOM）、UTF-16（Excel 的"Unicode 文本"）都认。"""
+    （带不带 BOM）、UTF-16（Excel 的"Unicode 文本"）都认。extra：可以有、也可以没有的列（接在 columns 后面；没有就当作空的）。"""
     try:
         raw = path.read_bytes()
     except OSError:
@@ -96,13 +102,15 @@ def read_table(path, columns):
     header = [cell.strip() for cell in rows[0]] if rows else []
     while header and not header[-1]:
         header.pop()
-    if header != columns:
-        raise Stop(f"{path.name} 第 1 行（表头）要是：{','.join(columns)}\n    现在是：{','.join(header)}")
+    if header != columns and header != [*columns, *extra]:
+        raise Stop(f"{path.name} 第 1 行（表头）要是：{','.join(columns)}"
+                   + (f"（后面可以再加：{','.join(extra)}）" if extra else "") + f"\n    现在是：{','.join(header)}")
+    names = [*columns, *extra]
     out = []
     for number, row in enumerate(rows[1:], start=2):
-        cells = [" ".join(cell.split()) for cell in row] + [""] * len(columns)
+        cells = [" ".join(cell.split()) for cell in row] + [""] * len(names)
         if any(cells):
-            out.append((number, dict(zip(columns, cells))))
+            out.append((number, dict(zip(names, cells))))
     return out
 
 
@@ -114,6 +122,47 @@ def parse_time(text):
         return datetime(*(int(part) for part in found.groups()), tzinfo=live_status.BEIJING)
     except ValueError:
         return None
+
+
+def check_room(platform, room):
+    """房间号写得对不对。platform 是中文的平台名。返回 (要存的房间号, 哪里不对或 None)。
+    抖音可以写主播的抖音号（字母、数字、下划线），存的时候转成小写：抖音不分大小写，转了以后 XXFPS 和 xxfps 才查得出是同一个房间，
+    id 也不会变。"""
+    if platform == "抖音":
+        if live_status.room_ok("douyin", room):
+            return room.lower(), None
+        return room, f"房间号「{room}」只能是字母、数字、下划线（直播间地址 live.douyin.com/ 后面那一段）"
+    if not live_status.ROOM_RE.fullmatch(room):
+        return room, f"房间号「{room}」只能是数字（直播间地址最后那串数字）"
+    return room, None
+
+
+def check_main(text, where, errors):
+    """赛程里「主舞台」那一格 → [{"platform", "room", "name"}, ...]（平台是英文的）；问题写进 errors。"""
+    entries = [entry.strip() for entry in text.split("、") if entry.strip()]
+    found, seen = [], set()
+    if len(entries) > esports_data.MAIN_MAX:
+        errors.append(f"{where}：主舞台最多 {esports_data.MAIN_MAX} 路（现在 {len(entries)} 路）")
+    for entry in entries:
+        parts = MAIN_RE.fullmatch(entry)
+        if not parts:
+            errors.append(f"{where}：主舞台「{entry}」要写成：平台 房间号 名字（如 B站 7734200 官方直播），多路用顿号「、」隔开")
+            continue
+        platform, room, name = parts.groups()
+        if platform not in PLATFORM_KEYS:
+            errors.append(f"{where}：主舞台的平台「{platform}」不认识，只能写 {' / '.join(PLATFORM_KEYS)}")
+            continue
+        room, problem = check_room(platform, room)
+        if problem:
+            errors.append(f"{where}：主舞台的{problem}")
+        elif len(name) > 40:
+            errors.append(f"{where}：主舞台的名字最多 40 个字")
+        elif (platform, room) in seen:
+            errors.append(f"{where}：主舞台里 {platform} 房间 {room} 写了两次")
+        else:
+            seen.add((platform, room))
+            found.append({"platform": PLATFORM_KEYS[platform], "room": room, "name": name})
+    return found
 
 
 def check_players(rows, errors):
@@ -130,12 +179,12 @@ def check_players(rows, errors):
         if platform and platform not in PLATFORM_KEYS:
             errors.append(f"{where}：平台「{platform}」不认识，只能写 {' / '.join(PLATFORM_KEYS)}")
             bad = True
-        if room and platform == "抖音" and live_status.room_ok("douyin", room):
-            room = room.lower()  # 抖音不分大小写：转成小写，XXFPS 和 xxfps 才查得出是同一个房间，选手的 id 也不会变
-        elif room and platform == "抖音":
-            errors.append(f"{where}：房间号「{room}」只能是字母、数字、下划线（直播间地址 live.douyin.com/ 后面那一段）")
-            bad = True
-        elif room and not live_status.ROOM_RE.fullmatch(room):
+        if room and platform in PLATFORM_KEYS:
+            room, problem = check_room(platform, room)
+            if problem:
+                errors.append(f"{where}：{problem}")
+                bad = True
+        elif room and not live_status.ROOM_RE.fullmatch(room):  # 平台写错了：房间号照数字查，两处错一次都指出来
             errors.append(f"{where}：房间号「{room}」只能是数字（直播间地址最后那串数字）")
             bad = True
         if max(len(name), len(team)) > 40:
@@ -163,7 +212,8 @@ def check_players(rows, errors):
 
 
 def check_events(rows, known_teams, errors, notes):
-    """赛程 → [{"line", "name", "type", "stage", "start", "end", "teams"}, ...]；问题写进 errors，提醒写进 notes。"""
+    """赛程 → [{"line", "name", "type", "stage", "start", "end", "teams", "main"}, ...]；问题写进 errors，提醒写进 notes。
+    main：主舞台（没写是空的）。"""
     events = []
     for line, row in rows:
         where = f"{EVENTS_NAME} 第 {line} 行"
@@ -194,9 +244,10 @@ def check_events(rows, known_teams, errors, notes):
                     errors.append(f"{where}：队伍「{team}」不在{PLAYERS_NAME}里" + (f"（是不是「{close[0]}」？）" if close else ""))
             if len(teams) != USUAL_TEAMS:
                 notes.append(f"{where}：「{row['名称']}」有 {len(teams)} 支队（一般是 {USUAL_TEAMS} 支），没写错就不用管")
+        main = check_main(row.get("主舞台", ""), where, errors)
         if len(errors) == before:
             events.append({"line": line, "name": row["名称"], "type": row["类型"], "stage": row["阶段"],
-                           "start": start, "end": end, "teams": teams})
+                           "start": start, "end": end, "teams": teams, "main": main})
     return events
 
 
@@ -204,7 +255,7 @@ def load_tables(folder):
     """读两张表并检查。返回 (选手, 赛事, 提醒)；有错把每一条都打印出来再停下。"""
     errors, notes = [], []
     players, teams = check_players(read_table(folder / PLAYERS_NAME, PLAYER_COLUMNS), errors)
-    events = check_events(read_table(folder / EVENTS_NAME, EVENT_COLUMNS), teams, errors, notes)
+    events = check_events(read_table(folder / EVENTS_NAME, EVENT_COLUMNS, EVENT_EXTRA), teams, errors, notes)
     if errors:
         raise Stop(f"表里有 {len(errors)} 处要改：\n" + "\n".join(f"  · {error}" for error in errors))
     return players, events, notes
@@ -229,6 +280,9 @@ def build(players, events, switches, notes, now=None, teams=None):
         ids.add(eid)
         kept.append({"id": eid, "name": event["name"], "type": event["type"], "stage": event["stage"],
                      "start": event["start"].isoformat(), "end": event["end"].isoformat(), "teams": event["teams"]})
+        if event.get("main"):  # 主舞台：有才写这一项
+            kept[-1]["main"] = [{"id": f"{m['platform']}-{m['room']}", "name": m["name"], "platform": m["platform"],
+                                 "room": m["room"]} for m in event["main"]]
     used = {team for event in kept for team in event["teams"]}
     data = {"version": esports_data.VERSION, "updated": now.isoformat(timespec="seconds"),
             "platforms": {key: switches.get(key) is not False for key in live_status.PLATFORMS},
@@ -240,7 +294,9 @@ def build(players, events, switches, notes, now=None, teams=None):
     if logos:
         data["teams"] = {team: logos[team] for team in sorted(logos)}
     checked = esports_data.clean(data)  # Evo 读的时候会不会去掉哪一条
-    if len(checked["players"]) != len(data["players"]) or len(checked["events"]) != len(data["events"]):
+    streams = lambda found: sum(len(event.get("main") or []) for event in found["events"])  # noqa: E731
+    if (len(checked["players"]) != len(data["players"]) or len(checked["events"]) != len(data["events"])
+            or streams(checked) != streams(data)):
         raise Stop("生成的文件里有 Evo 会去掉的条目（名字里有特别的字符？），告诉 Claude 查一下")
     return data
 
@@ -263,7 +319,8 @@ def describe(data, now=None):
         start, end = esports_data.parse_time(event["start"]), esports_data.parse_time(event["end"])
         lines.append(f"    [{words[esports_data.status(event, now)]}] {start:%m-%d %H:%M}–{end:%H:%M} {event['type']} "
                      f"{event['name']}" + (f" · {event['stage']}" if event["stage"] else "")
-                     + f" · {len(event['teams'])} 支队 {len(esports_data.event_players(data, event))} 人")
+                     + f" · {len(event['teams'])} 支队 {len(esports_data.event_players(data, event))} 人"
+                     + (f" · 主舞台 {len(event['main'])} 路" if event.get("main") else ""))
     return "\n".join(lines)
 
 
@@ -417,6 +474,7 @@ def main():
         for note in notes:
             print(f"提醒：{note}")
         examples = [text for text in [p["name"] for p in data["players"]] + [e["name"] for e in data["events"]]
+                    + [m["name"] for e in data["events"] for m in e.get("main") or []]
                     if EXAMPLE in text]
         if examples:
             raise Stop(f"表里还有示例数据（{'、'.join(examples[:5])}），删掉再上传")

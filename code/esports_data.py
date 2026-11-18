@@ -15,7 +15,10 @@ esports.json 由 tools/esports.py 从两张 CSV 表生成、上传：
 - platforms：远程开关。某个平台是 false，Evo 就不在窗口里播它，改成"去 X 看"。没写的平台当作 true
 - players：id 只有字母、数字、- 和 _；platform 是 config/watch.json 里的四个之一；room 只能是数字，
   抖音的还可以是主播的抖音号（字母、数字、下划线；live_status.room_ok()）
-- events：type 是 联赛 / 训练赛 / 杯赛；start、end 带时区，end 晚于 start；teams 是队名，对应 players 里的 team
+- events：type 是 联赛 / 训练赛 / 杯赛；start、end 带时区，end 晚于 start；teams 是队名，对应 players 里的 team。
+  main（可以没有）：这场赛事的**主舞台**，就是播导播视角的直播间（官方直播、解说的直播间），最多 8 路，照写的顺序：
+  [{"id": "bilibili-7734200", "name": "官方直播", "platform": "bilibili", "room": "7734200"}]。它们不在 players 里、不算哪支队；
+  写得不对的那一路去掉，和这场赛事名单里某位选手同一个 id 的那一路也去掉（event_main()）
 - teams（可以没有）：队徽。键是队名，logo 是公开存储桶 esports/logos/ 下的文件名（小写字母和数字 + .png / .webp，
   协作网页上传时起的）。**只写文件名、不写网址**：Evo 自己拼成 config/watch.json 里 logo_url 那个地址（logo_url()）。
   没有队徽的队不写；名单里没有的队、文件名写得不对的那一条去掉
@@ -50,6 +53,8 @@ FRESH_SECONDS = 60     # 这么久以内下载过就不重下
 RECENT_DAYS = 7        # "最近结束"只留这么多天
 TYPES = ("联赛", "训练赛", "杯赛")
 ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
+MAIN_MAX = 8           # 一场赛事的主舞台最多几路
+MAIN_TEAM = "主舞台"   # 主舞台的直播间在页面上"算哪支队"
 LOGO_RE = re.compile(r"[a-z0-9]{8,40}\.(png|webp)")  # 队徽的文件名：拼不出别的文件夹、别的网站
 LIVE, UPCOMING, ENDED = "live", "upcoming", "ended"
 
@@ -90,6 +95,18 @@ def clean_player(raw):
             "liquipedia": _text(raw.get("liquipedia"), 100, required=False) or ""}
 
 
+def clean_stream(raw):
+    """主舞台的一路直播间：{"id", "name", "platform", "room"}；写得不对返回 None。"""
+    if not isinstance(raw, dict):
+        return None
+    pid, name, platform, room = raw.get("id"), _text(raw.get("name"), 40), raw.get("platform"), raw.get("room")
+    if not isinstance(pid, str) or not ID_RE.fullmatch(pid) or name is None:
+        return None
+    if not isinstance(platform, str) or not live_status.room_ok(platform, room):
+        return None
+    return {"id": pid, "name": name, "platform": platform, "room": room}
+
+
 def clean_event(raw):
     if not isinstance(raw, dict):
         return None
@@ -104,8 +121,12 @@ def clean_event(raw):
         team = _text(team, 40)
         if team is not None and team not in names:
             names.append(team)
-    return {"id": eid, "name": name, "type": raw["type"], "stage": stage, "start": start.isoformat(),
-            "end": end.isoformat(), "teams": names[:60]}
+    event = {"id": eid, "name": name, "type": raw["type"], "stage": stage, "start": start.isoformat(),
+             "end": end.isoformat(), "teams": names[:60]}
+    main = _unique(raw["main"][:MAIN_MAX], clean_stream) if isinstance(raw.get("main"), list) else []
+    if main:  # 没有主舞台的赛事不带这一项（和以前的文件一模一样）
+        event["main"] = main
+    return event
 
 
 def clean_teams(raw, known):
@@ -237,6 +258,21 @@ def event_teams(data, event):
 
 def event_players(data, event):
     return [player for _, players in event_teams(data, event) for player in players]
+
+
+def event_main(data, event):
+    """这场赛事的主舞台（播导播视角的直播间），照赛程里写的顺序：[{"id", "name", "platform", "room"}, ...]。
+    和名单里某位选手同一个 id 的不算（页面上按 id 认人）。"""
+    taken = {player["id"] for player in event_players(data, event)}
+    return [stream for stream in event.get("main") or [] if stream["id"] not in taken]
+
+
+def find_stream(data, stream_id):
+    """按 id 找一个直播间：名单里的选手，或者某场赛事主舞台的一路；没有返回 None。"""
+    found = next((player for player in data["players"] if player["id"] == stream_id), None)
+    if found is None:
+        found = next((stream for event in data["events"] for stream in event.get("main") or [] if stream["id"] == stream_id), None)
+    return found
 
 
 if __name__ == "__main__":

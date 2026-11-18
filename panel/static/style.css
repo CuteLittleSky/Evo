@@ -1272,6 +1272,9 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 /* 队徽：透明底的图，深色、浅色主题都放在深色方块里（和派圈助手一样）。队徽用的是派圈那一批（Liquipedia 给深色背景用的不带字的版本）：
    851 张里放在浅色底上有 345 张看不清，放在 #14171F 上 54 张（2026-11-18 量的） */
 .watch-team-logo.has-img { padding: 2px; overflow: hidden; background: #14171F; }
+/* 主舞台那一栏：队徽的位置放一个"屏幕"图标，下面一条线把它和队伍隔开 */
+.watch-team-logo.is-main { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.watch-main-box { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--border); }
 .watch-team-logo img { width: 100%; height: 100%; object-fit: contain; }
 .watch-team-name { flex: 1; min-width: 0; font-weight: 600; }
 .watch-team-live { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }

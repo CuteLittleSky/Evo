@@ -35,7 +35,7 @@ NOW = datetime.now().astimezone().replace(microsecond=0)
 TEAMS = ("甲队", "<b>乙队</b>", "丙队")
 
 
-def serve(folder, platforms=None, teams=None):
+def serve(folder, platforms=None, teams=None, main=None):
     players = []
     for team, platform in zip(TEAMS, ("douyu", "bilibili", "douyin")):
         players += [{"id": f"{platform}-{n}", "name": f"{team[:1]}{n}号" if n > 1 else "kite</script>", "team": team,
@@ -46,6 +46,8 @@ def serve(folder, platforms=None, teams=None):
               {"id": "soon", "name": "明天的训练赛", "type": "训练赛", "stage": "",
                "start": (NOW + timedelta(days=1)).isoformat(), "end": (NOW + timedelta(days=1, hours=3)).isoformat(),
                "teams": ["甲队"]}]
+    if main:
+        events[0]["main"] = main
     path = Path(folder) / "esports.json"
     path.write_text(json.dumps({"version": 1, "updated": NOW.isoformat(), "players": players, "events": events,
                                 "platforms": platforms or {}, **({"teams": teams} if teams else {})}), encoding="utf-8")
@@ -176,6 +178,38 @@ def main():
         and 'src="https://dl.evotracker.cn/esports/logos/3fa9c1d2e4b5a6f7.webp"' in marks[1]
         and 'referrerpolicy="no-referrer"' in marks[1] and 'alt=""' in marks[1]
         and [text(m) for m in (marks[0], marks[2], marks[3])] == ["丙", "<", "没"] and "example.invalid" not in with_logo)
+    serve(folder, main=[{"id": "bilibili-900", "name": "官方直播", "platform": "bilibili", "room": "900"},
+                        {"id": "douyin-xxfps", "name": "<i>解说</i>", "platform": "douyin", "room": "xxfps"},
+                        {"id": "douyu-1", "name": "和选手同一个 id", "platform": "douyu", "room": "101"}])
+    staged = client.get("/esports/live/watch").get_data(as_text=True)
+    stage_boxes = re.findall(r'<details class="watch-team-box[^>]*>.*?</details>', staged, re.S)
+    stage_data = page_data(staged)
+    out["赛程里写了主舞台：右边最上面多一栏\"主舞台\"（默认展开、图标不是队名的字），下面照旧是队伍；\"全部 N 支\"不数它"] = (
+        len(stage_boxes) == 5 and 'data-main open' in stage_boxes[0] and 'class="watch-team-logo is-main"' in stage_boxes[0]
+        and "主舞台" in text(stage_boxes[0]) and "官方直播" in text(stage_boxes[0]) and "<i>解说</i>" in text(stage_boxes[0])
+        and "<i>解说</i>" not in staged and len(re.findall(r'<button type="button" class="watch-p"', stage_boxes[0])) == 2
+        and all("data-main" not in box for box in stage_boxes[1:]) and "全部 4 支" in text(staged)
+        and len(re.findall(r'<details class="watch-team-box[^>]*>', raw)) == 4 and "data-main" not in raw.split("<script>")[0])
+    out["给脚本的数据：主舞台的两路排在最前面、标着是主舞台；和选手同一个房间的那一路不算；网址里的 p 也能选主舞台"] = (
+        [(p["id"], p["main"], p["team"]) for p in stage_data["players"][:3]] == [
+            ("bilibili-900", True, "主舞台"), ("douyin-xxfps", True, "主舞台"), ("douyin-1", False, "丙队")]
+        and len(stage_data["players"]) == 11 and stage_data["players"][0]["url"] == "https://live.bilibili.com/900"
+        and stage_data["players"][1]["url"] == "https://live.douyin.com/xxfps"
+        and page_data(client.get("/esports/live/watch?p=douyin-xxfps").get_data(as_text=True))["selected"] == "douyin-xxfps")
+    asked_ids = []
+    real_query = live_status.query
+    live_status.query = lambda players, get=None: (asked_ids.extend(p["id"] for p in players) or
+                                                   {p["id"]: live_status.result("offline") for p in players})
+    try:
+        panel_esports._status.update(at=0.0, found={})
+        got = client.get("/esports/live/status").get_json()
+        count = client.get("/esports/live").get_json()
+    finally:
+        live_status.query = real_query
+        panel_esports._status.update(at=0.0, found={})
+    out["查开播状态时主舞台的直播间也查；赛事页\"几位选手在播\"不数主舞台"] = (
+        asked_ids[:2] == ["bilibili-900", "douyin-xxfps"] and len(got["players"]) == 11
+        and count["events"]["live"]["total"] == 9)
     serve(folder)
     home = client.get("/esports").get_data(as_text=True)
     out["别的页面照旧有顶部导航和主题按钮"] = '<nav class="nav"' in home and 'id="theme-toggle"' in home

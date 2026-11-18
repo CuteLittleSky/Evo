@@ -10,7 +10,8 @@
   60 秒内再问不重查。只在这一页开着时查，不在后台查
 
 看直播页 /esports/<赛事>/watch（esports_watch.html，占满整个窗口，没有顶部导航）
-- 左边：返回、赛事名、播放器、选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点
+- 左边：返回、赛事名、播放器、选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
+  赛程里这场赛事写了主舞台（播导播视角的直播间）时，右边最上面多一栏"主舞台"，和队伍并列（2026-11-18 用户要的）
 - 页面上先把名单画好，谁在播由脚本问 GET /esports/<赛事>/status：页面开着、看得见时每 60 秒问一次
   （这里 50 秒内不重查，开播、下播后 2 分钟内页面跟着变）。顺便带上平台开关（esports.json 10 分钟内下载过就不重下）
 - 能在窗口里播的平台：配置里有 embed_url 的用平台官方的嵌入播放器（现在是 B站）；配置里 player 是 flv（斗鱼，经过
@@ -105,21 +106,27 @@ def safe_image(url):
 
 
 def roster(data, event):
-    """看直播页要的名单：[{"name": 队名, "initial": 第一个字, "logo": 队徽地址或 None, "players": [选手, ...]}, ...]。
-    选手：id、名字、队名、平台、房间号、直播间地址；embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时
+    """看直播页要的名单：[{"name": 队名, "initial": 第一个字, "logo": 队徽地址或 None, "main": 是不是主舞台,
+    "players": [选手, ...]}, ...]。这场赛事有主舞台（播导播视角的直播间）时它排在最前面，"选手"是那几路直播间。
+    选手：id、名字、队名、平台、房间号、直播间地址、main；embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时
     问清晰度和播放地址的接口（都没有就是不能在窗口里播）。"""
+    def member(player, team, main=False):
+        embed = EMBED.get(player["platform"])
+        return {"id": player["id"], "name": player["name"], "initial": player["name"][:1].upper(),
+                "team": team, "main": main, "platform": player["platform"],
+                "platform_name": live_status.NAMES[player["platform"]], "room": player["room"],
+                "url": live_status.room_url(player["platform"], player["room"]),
+                "embed": embed.format(room=player["room"]) if embed else None,
+                "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None}
+
     teams = []
+    main = esports_data.event_main(data, event)
+    if main:
+        teams.append({"key": "main", "name": esports_data.MAIN_TEAM, "initial": esports_data.MAIN_TEAM[:1], "logo": None,
+                      "main": True, "players": [member(stream, esports_data.MAIN_TEAM, True) for stream in main]})
     for index, (team, players) in enumerate(esports_data.event_teams(data, event)):
-        members = []
-        for player in players:
-            embed = EMBED.get(player["platform"])
-            members.append({"id": player["id"], "name": player["name"], "initial": player["name"][:1].upper(),
-                            "team": team, "platform": player["platform"],
-                            "platform_name": live_status.NAMES[player["platform"]], "room": player["room"],
-                            "url": live_status.room_url(player["platform"], player["room"]),
-                            "embed": embed.format(room=player["room"]) if embed else None,
-                            "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None})
-        teams.append({"key": f"t{index}", "name": team, "initial": team[:1].upper(), "players": members,
+        teams.append({"key": f"t{index}", "name": team, "initial": team[:1].upper(), "main": False,
+                      "players": [member(player, team) for player in players],
                       "logo": esports_data.logo_url(data, team)})  # 队徽的地址，没有是 None（页面用队名第一个字）
     return teams
 
@@ -167,6 +174,7 @@ def watch(event_id):
     wanted = request.args.get("p")
     return render_template(
         "esports_watch.html", event=view(event, datetime.now().astimezone()), teams=teams,
+        team_count=sum(not team["main"] for team in teams),  # "全部 N 支"只数队伍，不数主舞台
         total=len(ids), selected=wanted if wanted in ids else None,
         page_data={"players": [player for team in teams for player in team["players"]],
                    "platforms": data["platforms"], "selected": wanted if wanted in ids else None,
@@ -186,7 +194,7 @@ def status(event_id):
     event = esports_data.find_event(data, event_id) if data else None
     if event is None:
         return jsonify(error="gone"), 404
-    players = esports_data.event_players(data, event)
+    players = esports_data.event_main(data, event) + esports_data.event_players(data, event)  # 主舞台的直播间也查
     found = players_status(players, WATCH_STATUS_SECONDS) if players else {}
     return jsonify(checked=time.time(), platforms=data["platforms"], players={
         pid: {"state": got["state"], "loop": got["loop"], "title": got["title"], "since": got["since"],
@@ -203,7 +211,7 @@ def _player(player_id):
     """名单里的这位选手和现在的赛事数据；不能用 Evo 自己的播放器播（不在名单里、平台不支持、平台开关关了）返回 None。"""
     saved = esports_data.cached()
     data = saved["data"] if saved else None
-    player = next((p for p in data["players"] if p["id"] == player_id), None) if data else None
+    player = esports_data.find_stream(data, player_id) if data else None  # 名单里的选手，或者主舞台的一路
     if player is None or player["platform"] not in PLAYERS or data["platforms"].get(player["platform"]) is False:
         return None
     login = LOGINS.get(player["platform"])

@@ -81,17 +81,20 @@
         <span class="watch-count" id="watch-count" role="status" aria-atomic="true">正在看谁在播…</span>
       </div>
       <div class="watch-seg" role="group" aria-label="筛选队伍">
-        <button type="button" class="on" aria-pressed="true" data-filter="all">全部 <span class="num">{{ teams|length }}</span> 支</button>
+        <button type="button" class="on" aria-pressed="true" data-filter="all">全部 <span class="num">{{ team_count }}</span> 支</button>
         <button type="button" aria-pressed="false" data-filter="live">有人在播的</button>
       </div>
     </div>
     <div class="watch-list" id="watch-list">
       {% for team in teams %}
-      <details class="watch-team-box" data-team="{{ team.key }}">
+      {# 主舞台（赛程里这场赛事写了播导播视角的直播间才有）：排在最前面，默认展开，和队伍一样的一栏 #}
+      <details class="watch-team-box{% if team.main %} watch-main-box{% endif %}" data-team="{{ team.key }}"{% if team.main %} data-main open{% endif %}>
         <summary>
           <svg class="watch-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
           {# 队徽（赛程文件里有才有，图片放在 dl.evotracker.cn）；没有、加载不出来（下面的脚本换掉）就用队名的第一个字 #}
-          {% if team.logo %}
+          {% if team.main %}
+          <span class="watch-team-logo is-main" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M8 21h8M12 17v4"></path><path d="M10.5 8.8v4.4l3.6-2.2z" fill="currentColor" stroke="none"></path></svg></span>
+          {% elif team.logo %}
           <span class="watch-team-logo has-img" aria-hidden="true" data-initial="{{ team.initial }}"><img src="{{ team.logo }}" alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"></span>
           {% else %}
           <span class="watch-team-logo" aria-hidden="true">{{ team.initial }}</span>
@@ -208,20 +211,21 @@
           time.textContent = !st.status ? "…" : live ? clock(s.since) : s && s.state === "error" ? "没查到" : "未开播";
           if (live) time.title = spoken(s.since); else time.removeAttribute("title");
         });
-        liveTotal += n;
+        var main = box.hasAttribute("data-main");
+        if (!main) liveTotal += n;
         var tag = box.querySelector("[data-team-live]");
         tag.textContent = "";
         tag.classList.toggle("on", n > 0);
         if (!st.status) tag.textContent = "…";
-        else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), " 人在播");
-        else tag.textContent = "没人在播";
+        else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), main ? " 路在播" : " 人在播");
+        else tag.textContent = main ? "没在播" : "没人在播";
         box.hidden = st.filter === "live" && !!st.status && n === 0;
         if (!box.hidden) shown++;
       });
       $("watch-none").hidden = shown > 0;
       var count = $("watch-count");
       count.textContent = "";
-      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.length), " 人");
+      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.filter(function (x) { return !x.main; }).length), " 人");
       else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
     }
 
@@ -329,7 +333,8 @@
         loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有 720p，用手机扫码登录以后能看原画";
       }
 
-      var mates = data.players.filter(function (x) { return x.team === p.team; }).map(function (m) {
+      $("watch-mates-label").textContent = p.main ? "主舞台" : "同队视角";
+      var mates = data.players.filter(function (x) { return x.team === p.team && !!x.main === !!p.main; }).map(function (m) {
         if (!isLive(m.id)) {
           var off = el("span", "watch-mate dis");
           off.append(m.name, el("span", "watch-mate-sub", st.status ? "未开播" : "…"));

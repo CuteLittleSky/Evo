@@ -103,6 +103,23 @@ def format_checks(out):
         and esports_data.logo_url(with_logos, "网址") is None and esports_data.logo_url(with_logos, "没有这支队") is None
         and esports_data.logo_url({"players": [], "events": []}, "示例战队") is None and esports_data.logo_url(None, "示例战队") is None
         and esports_data.logo_url({"teams": {"示例战队": {"logo": "../x.png"}}}, "示例战队") is None)
+    def stream(pid, name="官方直播", platform="bilibili", room="7734200"):
+        return {"id": pid, "name": name, "platform": platform, "room": room}
+
+    wanted = [stream("bilibili-7734200"), stream("douyin-xxfps", "某解说", "douyin", "xxfps")]
+    odd = [*wanted, stream("x1", platform="kuaishou"), stream("x2", platform="douyu", room="abc"), stream("x3", name=""),
+           stream("有中文"), "不是字典", stream("bilibili-7734200", "同一个 id 写了两次")]
+    staged = esports_data.clean(file(events=[event(main=odd), event(eid="e2"), event(eid="e3", main="官方直播"),
+                                             event(eid="e4", main=[stream(f"b{n}", room=str(n)) for n in range(12)])]))
+    out["主舞台：每场赛事可以带几路播导播视角的直播间，照写的顺序；写得不对的那一路去掉；最多 8 路；没有主舞台的赛事不带这一项"] = (
+        staged["events"][0]["main"] == wanted and "main" not in staged["events"][1] and "main" not in staged["events"][2]
+        and [m["id"] for m in staged["events"][3]["main"]] == [f"b{n}" for n in range(8)] and len(staged["events"]) == 4)
+    both = esports_data.clean(file([player(pid="douyu-1")], [event(main=[stream("douyu-1", platform="douyu", room="1"), wanted[0]])]))
+    out["主舞台里和这场赛事的选手同一个 id 的那一路不算；按 id 找得到选手，也找得到主舞台的直播间"] = (
+        esports_data.event_main(both, both["events"][0]) == [wanted[0]]
+        and esports_data.event_main(staged, staged["events"][1]) == []
+        and esports_data.find_stream(both, "douyu-1")["name"] == "示例选手"
+        and esports_data.find_stream(both, "bilibili-7734200") == wanted[0] and esports_data.find_stream(both, "nobody") is None)
     broken = 0
     for data in ([], {"version": 2, "players": [], "events": []}, {"version": 1, "players": []}, None):
         try:
@@ -330,11 +347,11 @@ def sign_checks(out):
         and url.startswith("https://example.invalid/x/?b=1+2&a=%E4%B8%AD&a_bogus=") and url.endswith("%3D"))
 
 
-def run_tool(folder, players, events, encoding="utf-8-sig", *more):
+def run_tool(folder, players, events, encoding="utf-8-sig", *more, event_columns="名称,类型,阶段,开始,结束,队伍"):
     """把两张表写进 folder，运行 tools/esports.py --out，返回 (退出码, 打印的字, 生成的内容或 None)。"""
     folder = Path(folder)
     (folder / "选手库.csv").write_bytes(("选手,战队,平台,房间号,Liquipedia页面名\r\n" + "\r\n".join(players) + "\r\n").encode(encoding))
-    (folder / "赛程.csv").write_bytes(("名称,类型,阶段,开始,结束,队伍\r\n" + "\r\n".join(events) + "\r\n").encode(encoding))
+    (folder / "赛程.csv").write_bytes((event_columns + "\r\n" + "\r\n".join(events) + "\r\n").encode(encoding))
     target = folder / "out.json"
     target.unlink(missing_ok=True)
     done = subprocess.run([sys.executable, str(TOOL), "--dir", str(folder), "--out", str(target), *more],
@@ -404,6 +421,30 @@ def tool_checks(out):
     out["抖音大小写不同的同一个房间查得出来；带点的、别的平台写字母的照样不行"] = (
         code == 1 and data is None and "第 3 行：抖音 房间 xxfps 在第 2 行已经写过" in text
         and "第 4 行：房间号「a.b」只能是字母、数字、下划线" in text and "第 5 行：房间号「xxfps」只能是数字" in text)
+    seven = "名称,类型,阶段,开始,结束,队伍,主舞台"
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(
+            folder, letters, [one_event[0] + ",B站 7734200 官方直播、 抖音  XXFPS  某某 解说 ", one_event[0].replace("19:00", "20:00") + ","],
+            event_columns=seven)
+    out["赛程表可以多一列「主舞台」（平台 房间号 名字，多路用顿号隔开）：生成时拼好 id，抖音的房间号转小写；没写的赛事不带这一项"] = (
+        code == 0 and data is not None and "主舞台 2 路" in text
+        and data["events"][0]["main"] == [
+            {"id": "bilibili-7734200", "name": "官方直播", "platform": "bilibili", "room": "7734200"},
+            {"id": "douyin-xxfps", "name": "某某 解说", "platform": "douyin", "room": "xxfps"}]
+        and "main" not in data["events"][1] and esports_data.clean(data)["events"] == data["events"])
+    with tempfile.TemporaryDirectory() as folder:
+        many = "、".join(f"B站 {n} 第{n}路" for n in range(1, 10))
+        code, text, data = run_tool(folder, letters, [
+            one_event[0] + ",快手 1 某台、B站 abc 官方、只有两段 1、B站 5 甲、B站 5 乙、抖音 a.b 解说、B站 6 " + "长" * 41,
+            one_event[0].replace("19:00", "20:00") + "," + many], event_columns=seven)
+    wanted = ["第 2 行：主舞台的平台「快手」不认识", "第 2 行：主舞台的房间号「abc」只能是数字", "第 2 行：主舞台「只有两段 1」要写成：平台 房间号 名字",
+              "第 2 行：主舞台里 B站 房间 5 写了两次", "第 2 行：主舞台的房间号「a.b」只能是字母、数字、下划线",
+              "第 2 行：主舞台的名字最多 40 个字", "第 3 行：主舞台最多 8 路（现在 9 路）"]
+    missing = [w for w in wanted if w not in text]
+    if missing:
+        print("    没指出来的：", missing)
+    out["主舞台写错了（平台、房间号、少了名字、同一个房间写两次、名字太长、超过 8 路）都指出是第几行，不生成文件"] = (
+        code == 1 and data is None and not missing)
     sys.path.insert(0, str(TOOL.parent))
     import esports as tool  # tools/esports.py
     members = [{"line": n, "name": f"选手{n}", "team": team, "platform": "douyu", "room": str(n), "liquipedia": ""}
