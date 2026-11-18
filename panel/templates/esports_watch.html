@@ -36,6 +36,14 @@
       <button type="button" class="btn" id="watch-apex-close">关闭直播</button>
     </div>
 
+    {# 登录了平台、Evo 自己的播放器却没播成，退回了官方播放器（最高 720p）：说明白，给一个再试的按钮。
+       0.6.0 是悄悄退回去的，玩家只看到"登录了也没有原画" #}
+    <div class="watch-apex" id="watch-failed" role="status" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l9.5 17h-19z"></path><path d="M12 10v4.5M12 17.5v.5"></path></svg>
+      <span class="grow" id="watch-failed-text"></span>
+      <button type="button" class="btn" id="watch-failed-retry">再试一次</button>
+    </div>
+
     <div class="watch-stage-box">
       {# 画面左上角一直标着平台和房间号（用户定的底线：不藏平台） #}
       <div class="watch-chips" id="watch-chips" hidden>
@@ -517,7 +525,9 @@
       var seq = st.playSeq;  // 这次开播的编号：换了人、换了清晰度以后，晚到的回包和事件都不算数
       function failed(detail) {
         if (seq !== st.playSeq) return;
-        st.playFailed[p.id] = detail || "没播成";
+        st.playFailed[p.id] = failText(detail);
+        // 告诉后台一声，写进运行记录（玩家反馈"播不了"时好查）
+        post(data.failed_url + encodeURIComponent(p.id), { reason: String(detail || "") }).catch(function () {});
         render();
       }
       function fillMenu(info) {
@@ -554,7 +564,8 @@
         if (seq !== st.playSeq) return;
         if (!info.ok) throw new Error(info.detail || "没取到播放地址");
         fillMenu(info);
-        var player = mpegts.createPlayer({ type: "flv", isLive: true, url: info.stream },
+        // 斗鱼、抖音是 FLV；B站经本机中转来的是接好的 TS 流（info.kind 是 "mpegts"）
+        var player = mpegts.createPlayer({ type: info.kind === "mpegts" ? "mpegts" : "flv", isLive: true, url: info.stream },
           { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: false, autoCleanupSourceBuffer: true, stashInitialSize: 128 });
         st.player = player;
         player.on(mpegts.Events.ERROR, function (type, detail) { failed(detail || type); });
@@ -650,12 +661,28 @@
       if (p && data.login[p.platform]) openLogin(p.platform, p.platform_name);
     });
 
+    // 播放器报的原因写成看得懂的话（原样的那句写进运行记录）
+    function failText(detail) {
+      var text = String(detail || "");
+      if (/HttpStatusCodeInvalid/i.test(text)) return "没取到视频";
+      if (/Exception|Timeout|EarlyEof|Network/i.test(text)) return "连不上视频服务器或中途断了";
+      if (/Format|Codec|Media|MSE/i.test(text)) return "这种视频放不了";
+      return text || "没播成";
+    }
+    // 登录了、却退回了官方播放器：在播放器上面说明
+    function renderFailed() {
+      var p = st.sel ? byId[st.sel] : null;
+      var show = !!p && /^embed:/.test(st.stageKey || "") && !!st.playFailed[p.id] && !!data.login[p.platform] && loggedIn(p.platform);
+      $("watch-failed").hidden = !show;
+      if (show) $("watch-failed-text").textContent = p.platform_name + "原画没播成（" + st.playFailed[p.id] + "），现在用的是" + p.platform_name + "官方播放器，最高 720p。";
+    }
+
     function renderApex() {
       var playing = /^(embed|play):/.test(st.stageKey || "");
       $("watch-apex").hidden = !(st.apex && !st.apexOk && playing);
     }
 
-    function render() { renderList(); renderStage(); renderApex(); }
+    function render() { renderList(); renderStage(); renderApex(); renderFailed(); }
 
     function select(id) {
       st.sel = id;
@@ -730,6 +757,7 @@
         renderList();
       });
     });
+    $("watch-failed-retry").addEventListener("click", function () { if (st.sel) { delete st.playFailed[st.sel]; render(); } });
     $("watch-apex-keep").addEventListener("click", function () { st.apexOk = true; renderApex(); });
     $("watch-apex-close").addEventListener("click", function () { st.closed = true; render(); });
     document.addEventListener("visibilitychange", tick);

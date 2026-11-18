@@ -19,7 +19,8 @@
   别的平台（虎牙：用户 2026-11-18 定了不做）、平台开关关了的显示退路"去 X 看"
 - 抖音：不登录，取地址在 watch_douyin.py（只要 H.264 的档；没选过清晰度时要码率不超过配置里那个数的最好一档）
 - B站：没登录的用官方嵌入播放器（最高 720p）；玩家扫码登录了 B站（bili_login.py，登录信息加密存在本机）以后改用
-  Evo 自己的播放器播原画，页面直接连 B站的视频服务器，不经过本机中转（watch_bilibili.py）。
+  Evo 自己的播放器播原画，视频经过本机中转（watch_bilibili.py：优先 HLS，hls_relay.py；2026-11-19 改的，原来是页面直接连，
+  国内的玩家播不成）。
   登录：POST /esports/login/bilibili/start 要二维码（回画好的 SVG）、…/poll 问扫了没有、…/logout 退出；都要带面板的口令
 - Evo 自己的播放器：页面先问 GET /esports/play/<选手>?q=清晰度（有哪些清晰度、实际给的是哪一档、播放地址），
   再让播放器连 GET /esports/stream/<选手>（本机中转，flv_relay.py：只听 127.0.0.1、要带面板的口令、一次只播一路，
@@ -53,10 +54,10 @@ WATCH_STATUS_SECONDS = 50  # 看直播页：页面每 60 秒问一次，每次�
 WATCH_DATA_SECONDS = 300   # 看直播页开着时，这么久重新下载一次 esports.json（赛程改了、平台开关关了以后最慢这么久生效；
                            # 原来是 10 分钟，2026-11-18 用户要改成 5 分钟）
 EMBED = {key: platform["embed_url"] for key, platform in live_status.PLATFORMS.items() if platform.get("embed_url")}
-# 用 Evo 自己的播放器播的平台 → 取地址的模块。模块里 DIRECT 是 True 的（B站、抖音）：页面直接连平台的视频服务器；
-# 别的（斗鱼）：经过本机中转（/esports/stream）
+# 用 Evo 自己的播放器播的平台 → 取地址的模块。模块里 DIRECT 是 True 的（抖音）：页面直接连平台的视频服务器；
+# 别的（斗鱼、B站）：经过本机中转（/esports/stream）。模块里有 open_relay 的（B站）自己决定接 HLS 还是 FLV
 PLAYERS = {"douyu": watch_douyu, "bilibili": watch_bilibili, "douyin": watch_douyin}
-PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFORMS[key].get("player") in ("flv", "direct")}
+PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFORMS[key].get("player") in ("flv", "direct", "hls")}
 # 要玩家登录了才用 Evo 自己的播放器的平台 → 管登录的模块（没登录的用平台官方的嵌入播放器）
 LOGINS = {"bilibili": bili_login}
 RATE_RE = re.compile(r"-?\d{1,5}|[a-z]{1,12}")  # 清晰度：斗鱼、B站是编号，抖音是档名（origin、uhd、hd……）
@@ -183,6 +184,7 @@ def watch(event_id):
                    "platforms": data["platforms"], "selected": wanted if wanted in ids else None,
                    "status_url": url_for("esports.status", event_id=event["id"]), "game_url": url_for("esports.game"),
                    "mpegts_url": url_for("static", filename="vendor/mpegts.js"), "token": current_app.config["TOKEN"],
+                   "failed_url": url_for("esports.play_failed", player_id="_").rsplit("/", 1)[0] + "/",  # 后面接选手 id
                    # 要登录才能看高画质的平台：现在登录着没有（打开页面时隔 6 小时向平台核对一次）、登录用的三个接口
                    "accounts": {key: module.account(check=True) for key, module in LOGINS.items()},
                    "login": {key: {step: url_for(f"esports.login_{step}", platform=key) for step in ("start", "poll", "logout")}
@@ -232,8 +234,9 @@ def _rate():
 
 @bp.get("/esports/play/<player_id>")
 def play(player_id):
-    """看直播页开播前问的：{"ok": True, "qualities": [{"id", "name"}], "applied": 实际给的那一档, "stream": 播放地址}；
-    取不到是 {"ok": False, "reason": "upstream", "detail": 原因}。不能在窗口里播的选手回 404。"""
+    """看直播页开播前问的：{"ok": True, "qualities": [{"id", "name"}], "applied": 实际给的那一档, "stream": 播放地址,
+    "kind": 播放器按哪种放（"flv" / "mpegts"）}；取不到是 {"ok": False, "reason": "upstream", "detail": 原因}。
+    不能在窗口里播的选手回 404。"""
     player = _player(player_id)
     if player is None:
         return jsonify(ok=False, reason="unsupported"), 404
@@ -244,16 +247,27 @@ def play(player_id):
         log.info("看直播：%s 房间 %s 没取到地址：%s", player["platform"], player["room"], e)
         return jsonify(ok=False, reason="upstream", detail=str(e))
     if getattr(module, "DIRECT", False):  # 页面直接连平台的视频服务器
-        return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], stream=found["url"])
+        return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], stream=found["url"], kind="flv")
     module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
-    return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"],
+    return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], kind=found.get("kind", "flv"),
                    stream=url_for("esports.stream", player_id=player_id, q=found["rate"], t=current_app.config["TOKEN"]))
+
+
+@bp.post("/esports/play-failed/<player_id>")
+def play_failed(player_id):
+    """页面里的播放器没播成时告诉后台一声，只为了写进运行记录（玩家反馈"播不了"时好查；不联网）。"""
+    player = _player(player_id)
+    if player is not None:
+        reason = " ".join(str(request.form.get("reason") or "").split())[:200]
+        log.info("看直播：页面里没播成 %s 房间 %s：%s", player["platform"], player["room"], reason)
+    return jsonify(ok=True)
 
 
 @bp.get("/esports/stream/<player_id>")
 def stream(player_id):
-    """本机中转：把平台的 FLV 转给页面里的播放器（flv_relay.py）。要带面板的口令（别的网页不能让 Evo 去连平台）。
-    一次只播一路：开新的一路就停掉上一路。连不上、不是 H.264 回 502 和原因，页面显示退路。"""
+    """本机中转：把平台的视频转给页面里的播放器（斗鱼的 FLV：flv_relay.py；B站：HLS 接成一条 TS 流，hls_relay.py，
+    没有 HLS 才是 FLV）。要带面板的口令（别的网页不能让 Evo 去连平台）。
+    一次只播一路：开新的一路就停掉上一路。取不到地址、连不上、不是 H.264 回 502 和原因，页面显示退路。"""
     if request.args.get("t") != current_app.config["TOKEN"]:
         abort(403)
     player = _player(player_id)
@@ -266,8 +280,17 @@ def stream(player_id):
         first[0] = False
         return body, found["ttl"]
 
-    relay = flv_relay.Relay(open_segment, lead=live_status.PLATFORMS[player["platform"]].get("renew_lead", 5),
-                            on_event=lambda text: log.info("看直播：%s 房间 %s %s", player["platform"], player["room"], text))
+    def on_event(text):
+        log.info("看直播：%s 房间 %s %s", player["platform"], player["room"], text)
+
+    if hasattr(module, "open_relay"):  # 这个平台自己决定怎么接（B站：有 HLS 接 HLS）
+        try:
+            relay = module.open_relay(player["room"], rate, on_event=on_event)
+        except Exception as e:  # noqa: BLE001  取地址出的各种错
+            log.info("看直播：%s 房间 %s 没取到地址：%s", player["platform"], player["room"], e)
+            return jsonify(ok=False, reason="upstream", detail=str(e)), 502
+    else:
+        relay = flv_relay.Relay(open_segment, lead=live_status.PLATFORMS[player["platform"]].get("renew_lead", 5), on_event=on_event)
     with _playing_lock:
         old, _playing["relay"] = _playing["relay"], relay
     if old is not None:
@@ -277,8 +300,9 @@ def stream(player_id):
     except flv_relay.RelayError as e:
         log.info("看直播：%s 房间 %s 播不了：%s", player["platform"], player["room"], e)
         return jsonify(ok=False, reason=e.code, detail=str(e)), 502
-    log.info("看直播：开始中转 %s 房间 %s（清晰度 %s）", player["platform"], player["room"], rate)
-    return Response(relay.stream(), mimetype="video/x-flv", headers={"Cache-Control": "no-store"})
+    mimetype = getattr(relay, "mimetype", "video/x-flv")
+    log.info("看直播：开始中转 %s 房间 %s（清晰度 %s，%s）", player["platform"], player["room"], rate, mimetype)
+    return Response(relay.stream(), mimetype=mimetype, headers={"Cache-Control": "no-store"})
 
 
 @bp.post("/esports/login/<platform>/start")

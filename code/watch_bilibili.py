@@ -1,11 +1,15 @@
-"""B站：取一个直播间的视频地址（玩家登录了 B站以后，看直播页用 Evo 自己的播放器播 B站时用）。
+"""B站：取一个直播间的视频地址，并经本机中转播放（玩家登录了 B站以后，看直播页用 Evo 自己的播放器播 B站时用）。
 
-问 B站网页版自己用的取流接口 getRoomPlayInfo（照 DTV internal/platforms/bilibili/stream_url.go；只要 FLV、只要 H.264）：
-回这个房间有哪些清晰度（qn：10000 原画、400 蓝光、250 超清、150 高清）、现在给的是哪一档，和 FLV 地址。
+问 B站网页版自己用的取流接口 getRoomPlayInfo（只要 H.264；HLS 的 TS 和 FLV 两种都要）：
+回这个房间有哪些清晰度（qn：10000 原画、400 蓝光、250 超清、150 高清）、现在给的是哪一档，和视频地址。
 - **不登录最高只给超清（1280×720）**，不管要哪一档（2026-11-17 实测）；带上登录凭证（bili_login.py）才给原画。
   所以没登录的玩家不走这里，用 B站官方的嵌入播放器（用户定的）
-- 地址允许页面直接连（不看来源页，回的跨域头是 *）：**不用本机中转**，页面里的 mpegts.js 直接连 B站的视频服务器。
-  地址里带的是 B站签好的参数，不带登录凭证；登录凭证只在这里向 B站要地址时用一次，不交给页面
+- **视频经过本机中转（2026-11-19 改的，原来是页面直接连 FLV）**：0.6.0 发出去以后国内的玩家反馈"登录了也没有原画"：
+  登录着，画面却是 B站官方播放器，说明 Evo 自己的播放器没播成、退回去了。在瑞士复现不了（B站给海外的是另一批服务器）；
+  参考项目 DTV 记着国内 FLV 直连 404、HLS 直连 200，有的服务器还要求请求带来源页（2026-11-19 实测 d1--ov-gotcha05：
+  不带来源页 403）。所以改成：**优先 HLS（TS）**，Evo 的后台去取、带上 B站自己网页那样的来源页，接成一条流转给页面
+  （hls_relay.py）；这个房间没有 HLS 才用 FLV（flv_relay.py，同样经过中转）。几个服务器按顺序试，名字带 mcdn 的排最后
+- 登录凭证只在这里向 B站要地址时用，不交给页面；视频地址里是 B站签好的参数，不带登录凭证
 - 房间号写短号也行（B站自己会换成真实房间号）
 接口地址在 config/watch.json 的 bilibili 里。
 
@@ -13,14 +17,24 @@
 """
 
 import sys
+import threading
+import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 import bili_login
+import flv_relay
+import hls_relay
 import live_status
 
 CONFIG = bili_login.CONFIG
-DIRECT = True   # 页面直接连平台的视频服务器，不经过本机中转（panel_esports.py 据此决定给页面什么地址）
-BEST = 10000    # 没选过清晰度时要这一档（原画）
+TIMEOUT = live_status.CONFIG["timeout"]
+BEST = 10000        # 没选过清晰度时要这一档（原画）
+REUSE_SECONDS = 20  # 刚取过的地址这么久以内直接用（页面先问有哪些清晰度，紧接着就要开播）
+MAX_SEGMENT = 64 * 1024 * 1024  # HLS 的一段最多读这么多（原画 3 秒一段约 3 MB）
+_recent = {}
+_lock = threading.Lock()
 
 
 class BiliPlayError(Exception):
@@ -34,8 +48,17 @@ def _number(value):
         return None
 
 
+def _urls(codec):
+    """一种写法的几个服务器地址：只要 https 的；名字带 mcdn 的（B站的 P2P 节点，常连不上）排最后。"""
+    urls = [str(info.get("host") or "") + str(codec.get("base_url") or "") + str(info.get("extra") or "")
+            for info in codec.get("url_info") or [] if isinstance(info, dict)]
+    urls = [url for url in urls if url.startswith("https://")]
+    return sorted(urls, key=lambda url: "mcdn" in urllib.parse.urlsplit(url).netloc)
+
+
 def parse(body):
-    """getRoomPlayInfo 的回包 → {"url", "urls", "rate", "qualities", "ttl"}。没开播、没有 H.264 的 FLV 抛 BiliPlayError。"""
+    """getRoomPlayInfo 的回包 → {"hls": [播放列表地址], "flv": [FLV 地址], "kind": 页面的播放器要按哪种放（"mpegts" / "flv"），
+    "rate", "qualities", "ttl"}。只看 H.264 的。没开播、两种地址都没有抛 BiliPlayError。"""
     if not isinstance(body, dict) or body.get("code") != 0:
         raise BiliPlayError(f"B站的取流接口回了 code={body.get('code') if isinstance(body, dict) else body}"
                             f"（{body.get('message') if isinstance(body, dict) else ''}）")
@@ -44,34 +67,95 @@ def parse(body):
         raise BiliPlayError("这个直播间现在没开播")
     play = (data.get("playurl_info") or {}).get("playurl") or {}
     names = {_number(q.get("qn")): str(q.get("desc") or "") for q in play.get("g_qn_desc") or [] if isinstance(q, dict)}
+    found = {}  # "hls" / "flv" → 那一种写法的 codec
     for stream in play.get("stream") or []:
         for kind in stream.get("format") or []:
-            if kind.get("format_name") != "flv":
-                continue
+            key = {("http_hls", "ts"): "hls", ("http_stream", "flv"): "flv"}.get((stream.get("protocol_name"), kind.get("format_name")))
             for codec in kind.get("codec") or []:
-                if codec.get("codec_name") != "avc" or not codec.get("url_info"):
-                    continue
-                urls = [str(info.get("host") or "") + str(codec.get("base_url") or "") + str(info.get("extra") or "")
-                        for info in codec["url_info"] if isinstance(info, dict)]
-                urls = [url for url in urls if url.startswith("https://")]
-                if not urls:
-                    continue
-                accept = [qn for qn in map(_number, codec.get("accept_qn") or []) if qn is not None]
-                current = _number(codec.get("current_qn"))
-                return {"url": urls[0], "urls": urls, "rate": str(current), "ttl": None,
-                        "qualities": [{"id": str(qn), "name": names.get(qn) or str(qn)} for qn in dict.fromkeys(accept)]}
-    raise BiliPlayError("B站没给 H.264 的视频地址")
+                if key and key not in found and codec.get("codec_name") == "avc" and _urls(codec):
+                    found[key] = codec
+    if not found:
+        raise BiliPlayError("B站没给 H.264 的视频地址")
+    chosen = found.get("hls") or found["flv"]  # 清晰度看实际要用的那一种
+    accept = [qn for qn in map(_number, chosen.get("accept_qn") or []) if qn is not None]
+    return {"hls": _urls(found["hls"]) if "hls" in found else [], "flv": _urls(found["flv"]) if "flv" in found else [],
+            "kind": "mpegts" if "hls" in found else "flv", "rate": str(_number(chosen.get("current_qn"))), "ttl": None,
+            "qualities": [{"id": str(qn), "name": names.get(qn) or str(qn)} for qn in dict.fromkeys(accept)]}
 
 
-def resolve(room, rate=None, ask=None, cookie=None):
-    """取地址。rate：清晰度编号（None = 要原画）。返回 {"url", "rate": 实际给的那一档, "qualities", …}。"""
+def resolve(room, rate=None, ask=None, cookie=None, reuse=False, now=None):
+    """取地址。rate：清晰度编号（None = 要原画）。返回 parse() 的结果（"rate" 是实际给的那一档）。
+    reuse：REUSE_SECONDS 秒以内 remember() 过同一个（房间, 清晰度）就直接用（只用一次）。"""
     wanted = _number(rate)
-    url = CONFIG["play_api"] + f"&room_id={urllib.parse.quote(str(room))}&qn={wanted if wanted and wanted > 0 else BEST}"
+    wanted = wanted if wanted and wanted > 0 else BEST
+    moment = time.time() if now is None else now
+    if reuse:
+        with _lock:
+            saved = _recent.pop((str(room), wanted), None)
+        if saved and 0 <= moment - saved[0] < REUSE_SECONDS:
+            return saved[1]
+    url = CONFIG["play_api"] + f"&room_id={urllib.parse.quote(str(room))}&qn={wanted}"
     try:
         body, _ = (ask or bili_login.request)(url, bili_login.cookie() if cookie is None else cookie)
     except bili_login.BiliError as e:
         raise BiliPlayError(str(e)) from e
     return parse(body)
+
+
+def remember(room, rate, found, now=None):
+    """页面刚问过清晰度：把取到的地址留着，紧接着开播时直接用。"""
+    with _lock:
+        _recent.clear()  # 一次只播一路，只留最近的一个
+        _recent[(str(room), _number(rate) or BEST)] = (time.time() if now is None else now, found)
+
+
+def _request(url):
+    """向 B站的视频服务器发的请求：带上 B站自己网页那样的来源页（有的服务器不带就回 403）。不带登录凭证。"""
+    return urllib.request.Request(url, headers={
+        "User-Agent": CONFIG["user_agent"], "Accept": "*/*", "Referer": CONFIG["referer"],
+        "Origin": CONFIG["referer"].rstrip("/")})
+
+
+def fetch(url):
+    """取 HLS 的播放列表或一段视频，返回字节；连不上、不是 200 抛 OSError（hls_relay 用）。"""
+    with urllib.request.urlopen(_request(url), timeout=TIMEOUT) as response:
+        return response.read(MAX_SEGMENT)
+
+
+def open_stream(url):
+    """连上 FLV 的视频服务器，返回可以 read() 的东西。连不上抛 BiliPlayError。"""
+    try:
+        return urllib.request.urlopen(_request(url), timeout=TIMEOUT)
+    except urllib.error.HTTPError as e:
+        raise BiliPlayError(f"B站的视频服务器回了 HTTP {e.code}") from e
+    except OSError as e:
+        raise BiliPlayError(f"连不上 B站的视频服务器（{e}）") from e
+
+
+def open_relay(room, rate=None, on_event=None):
+    """这个房间的一路中转（面板的 /esports/stream 用）：有 HLS 就接 HLS，没有才接 FLV。返回的东西有 start()、stream()、
+    close() 和 mimetype。取不到地址抛 BiliPlayError。"""
+    first = resolve(room, rate, reuse=True)
+    pending = [first]  # 第一次用刚取到的，之后（地址过期、断了）重新要同一档
+
+    def again():
+        return pending.pop() if pending else resolve(room, first["rate"])
+
+    if first["hls"]:
+        return hls_relay.HlsRelay(lambda: again()["hls"], fetch, on_event=on_event)
+
+    def open_segment():
+        problem = None
+        for url in again()["flv"]:  # 几个服务器按顺序试
+            try:
+                return open_stream(url), None
+            except BiliPlayError as e:
+                problem = problem or e
+        raise problem or BiliPlayError("B站没给 FLV 的地址")
+
+    relay = flv_relay.Relay(open_segment, on_event=on_event)
+    relay.mimetype = "video/x-flv"
+    return relay
 
 
 def mask(url):
@@ -90,4 +174,6 @@ if __name__ == "__main__":
         raise SystemExit(1) from None
     print("登录着：", bili_login.account()["logged_in"])
     print("清晰度：", "、".join(f"{q['name']}（{q['id']}）" for q in result["qualities"]))
-    print("实际给的：", result["rate"], " 地址：", mask(result["url"]), f"（共 {len(result['urls'])} 个主机）")
+    print("实际给的：", result["rate"], " 用", "HLS" if result["hls"] else "FLV")
+    for name in ("hls", "flv"):
+        print(f"  {name.upper()}：", "、".join(mask(url) for url in result[name]) or "没有")

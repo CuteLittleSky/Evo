@@ -7,9 +7,11 @@
   成功时只留登录凭证那几个 Cookie、核对昵称、加密存下来；核对不过不算登录
 - 登录着没有：不联网直接看存着的；隔 6 小时向 B站核对一次，B站说没登录就删掉，连不上照旧算登录着
 - 退出登录：带着 bili_jct 告诉 B站，再删掉本机的；B站那边没成也照样删
-- B站取地址：只要 H.264 的 FLV；实际给的是哪一档；没开播、接口报错说明原因；没选过清晰度要原画；带上登录凭证
+- B站取地址：只要 H.264，HLS（TS）和 FLV 都拿、优先 HLS，带 mcdn 的服务器排最后；实际给的是哪一档；
+  没开播、接口报错说明原因；没选过清晰度要原画；带上登录凭证；刚取过的地址紧接着用一次；有 HLS 接 HLS、没有才接 FLV
 - 面板：看直播页带着登录状态和登录的接口（不带登录凭证）；登录的接口要带口令；要二维码回画好的 SVG；
-  没登录时不给 B站的播放地址（页面用官方播放器），登录了给的是 B站的地址（不经过本机中转）
+  没登录时不给 B站的播放地址（页面用官方播放器），登录了视频经过本机中转（2026-11-19 改的，原来是页面直接连）；
+  页面里没播成时告诉后台记一笔
 
 运行：python tests/test_bili_login.py
 """
@@ -25,6 +27,8 @@ from fake_game import report  # 要在项目代码之前导入（设置临时数
 
 import bili_login
 import esports_data
+import flv_relay
+import hls_relay
 import panel_app
 import panel_esports
 import qr
@@ -173,6 +177,7 @@ def play_reply(current=250, status=1, code=0):
     def codec(name, fmt):
         return {"codec_name": name, "current_qn": current, "accept_qn": [10000, 400, 250, 150, 250],
                 "base_url": f"/live-bvc/1/live_x.{fmt}?", "url_info": [
+                    {"host": "https://xy1x2x3x4xy.mcdn.bilivideo.cn:486", "extra": "sign=mcdn"},
                     {"host": "http://insecure.bilivideo.com", "extra": "sign=0"},
                     {"host": "https://a.bilivideo.com", "extra": f"expires=1&sign=aaa&codec={name}"},
                     {"host": "https://b.bilivideo.com", "extra": f"expires=1&sign=bbb&codec={name}"}]}
@@ -184,20 +189,35 @@ def play_reply(current=250, status=1, code=0):
 
 def play_checks(out):
     found = watch_bilibili.parse(play_reply())
-    out["B站取地址：只要 H.264 的 FLV、只要 https 的主机；清晰度按 B站给的顺序、带名字；实际给的是回包里的那一档"] = (
-        found["url"] == "https://a.bilivideo.com/live-bvc/1/live_x.flv?expires=1&sign=aaa&codec=avc"
-        and found["urls"] == [found["url"], "https://b.bilivideo.com/live-bvc/1/live_x.flv?expires=1&sign=bbb&codec=avc"]
-        and found["rate"] == "250" and found["qualities"] == [{"id": "10000", "name": "原画"}, {"id": "400", "name": "蓝光"},
-                                                               {"id": "250", "name": "超清"}, {"id": "150", "name": "高清"}])
+    hosts = ["https://a.bilivideo.com/live-bvc/1/live_x.{}?expires=1&sign=aaa&codec=avc",
+             "https://b.bilivideo.com/live-bvc/1/live_x.{}?expires=1&sign=bbb&codec=avc",
+             "https://xy1x2x3x4xy.mcdn.bilivideo.cn:486/live-bvc/1/live_x.{}?sign=mcdn"]
+    out["B站取地址：只要 H.264，HLS（TS）和 FLV 的地址都拿、页面按 TS 流放；只要 https 的主机，名字带 mcdn 的排最后"] = (
+        found["hls"] == [h.format("m3u8") for h in hosts] and found["flv"] == [h.format("flv") for h in hosts]
+        and found["kind"] == "mpegts" and found["ttl"] is None)
+    out["清晰度按 B站给的顺序、带名字；实际给的是回包里的那一档"] = (
+        found["rate"] == "250" and found["qualities"] == [{"id": "10000", "name": "原画"}, {"id": "400", "name": "蓝光"},
+                                                           {"id": "250", "name": "超清"}, {"id": "150", "name": "高清"}])
+    no_hls = play_reply()
+    no_hls["data"]["playurl_info"]["playurl"]["stream"].pop(0)
+    only_flv = watch_bilibili.parse(no_hls)
+    out["这个房间没有 HLS：用 FLV（页面按 FLV 放）"] = (
+        only_flv["hls"] == [] and only_flv["flv"] == found["flv"] and only_flv["kind"] == "flv")
     reasons = []
-    no_flv = play_reply()
-    no_flv["data"]["playurl_info"]["playurl"]["stream"].pop()
-    for reply in (play_reply(status=0), play_reply(status=2), play_reply(code=-412), no_flv, None):
+    nothing = play_reply()
+    nothing["data"]["playurl_info"]["playurl"]["stream"] = [
+        {"protocol_name": "http_stream", "format": [{"format_name": "flv", "codec": [
+            {"codec_name": "hevc", "current_qn": 250, "accept_qn": [250], "base_url": "/x.flv?",
+             "url_info": [{"host": "https://a.bilivideo.com", "extra": "s=1"}]}]}]},
+        {"protocol_name": "http_hls", "format": [{"format_name": "fmp4", "codec": [
+            {"codec_name": "avc", "current_qn": 250, "accept_qn": [250], "base_url": "/x.m3u8?",
+             "url_info": [{"host": "https://a.bilivideo.com", "extra": "s=1"}]}]}]}]
+    for reply in (play_reply(status=0), play_reply(status=2), play_reply(code=-412), nothing, None):
         try:
             watch_bilibili.parse(reply)
         except watch_bilibili.BiliPlayError as e:
             reasons.append(str(e))
-    out["没开播、在轮播、接口报错、没有 H.264 的 FLV：说明原因，不给地址"] = (
+    out["没开播、在轮播、接口报错、只有 H.265 或 fMP4：说明原因，不给地址"] = (
         len(reasons) == 5 and "没开播" in reasons[0] and "没开播" in reasons[1] and "-412" in reasons[2] and "H.264" in reasons[3])
     asked = []
 
@@ -208,10 +228,30 @@ def play_checks(out):
     best = watch_bilibili.resolve("6", None, ask, cookie=SECRET)
     watch_bilibili.resolve("6", "250", ask, cookie="")
     watch_bilibili.resolve("6", "-1", ask, cookie="")
-    out["没选过清晰度要原画；选了就按选的要；向 B站要地址时带上登录凭证，给页面的地址里没有它"] = (
+    out["没选过清晰度要原画；选了就按选的要；HLS 和 FLV 都要；向 B站要地址时带上登录凭证，取到的地址里没有它"] = (
         best["rate"] == "10000" and asked[0][0].endswith("&room_id=6&qn=10000") and asked[0][1] == SECRET
+        and "protocol=0,1" in asked[0][0] and "format=0,1" in asked[0][0] and "codec=0&" in asked[0][0]
         and asked[1][0].endswith("&qn=250") and asked[2][0].endswith("&qn=10000")
-        and "SESSDATA" not in json.dumps(best) and "csrf0123456789" not in json.dumps(best) and watch_bilibili.DIRECT is True)
+        and "SESSDATA" not in json.dumps(best) and "csrf0123456789" not in json.dumps(best)
+        and not getattr(watch_bilibili, "DIRECT", False))
+    watch_bilibili.remember("6", "10000", best, now=100)
+    again = watch_bilibili.resolve("6", None, ask, cookie="", reuse=True, now=110)
+    count = len(asked)
+    later = watch_bilibili.resolve("6", None, ask, cookie="", reuse=True, now=111)
+    watch_bilibili.remember("6", "10000", best, now=100)
+    stale = watch_bilibili.resolve("6", None, ask, cookie="", reuse=True, now=100 + watch_bilibili.REUSE_SECONDS + 1)
+    out["页面刚问过的地址，紧接着开播时直接用一次（不再问 B站），过了 20 秒就重新问"] = (
+        again is best and count == 3 and later is not best and len(asked) == 5 and stale is not best)
+    watch_bilibili.remember("6", None, best)
+    relay = watch_bilibili.open_relay("6")
+    watch_bilibili.remember("7", None, only_flv)
+    flv = watch_bilibili.open_relay("7")
+    out["中转：有 HLS 接 HLS（接成 TS 流），没有才接 FLV；开头用刚取到的地址，不再问一遍"] = (
+        isinstance(relay, hls_relay.HlsRelay) and relay.mimetype == "video/mp2t"
+        and isinstance(flv, flv_relay.Relay) and flv.mimetype == "video/x-flv" and len(asked) == 5)
+    request = watch_bilibili._request("https://a.bilivideo.com/x.ts")
+    out["向 B站的视频服务器取视频时带 B站自己网页那样的来源页（有的服务器不带就拒绝），不带登录凭证"] = (
+        request.get_header("Referer") == "https://live.bilibili.com/" and request.get_header("Cookie") is None)
 
 
 class FakeLogin:
@@ -235,16 +275,42 @@ class FakeLogin:
         return True
 
 
-class FakeBiliPlay:
-    DIRECT = True
+class FakeRelay:
+    mimetype = "video/mp2t"
 
     def __init__(self):
-        self.asked = []
+        self.started = self.closed = False
+
+    def start(self):
+        self.started = True
+
+    def stream(self):
+        yield b"TS-DATA"
+
+    def close(self):
+        self.closed = True
+
+
+class FakeBiliPlay:
+    """假的"B站取地址"：经过本机中转的那一种（有 open_relay）。"""
+
+    def __init__(self):
+        self.asked, self.relays, self.fail = [], [], None
 
     def resolve(self, room, rate=None):
         self.asked.append((room, rate))
-        return {"url": "https://a.bilivideo.com/live.flv?sign=aaa", "rate": "10000" if rate in (None, "10000") else str(rate),
+        return {"hls": ["https://a.bilivideo.com/live.m3u8?sign=aaa"], "flv": [], "kind": "mpegts", "ttl": None,
+                "rate": "10000" if rate in (None, "10000") else str(rate),
                 "qualities": [{"id": "10000", "name": "原画"}, {"id": "250", "name": "超清"}]}
+
+    def remember(self, room, rate, found):
+        self.asked.append(("remember", room, rate))
+
+    def open_relay(self, room, rate=None, on_event=None):
+        if self.fail:
+            raise watch_bilibili.BiliPlayError(self.fail)
+        self.relays.append((room, rate, FakeRelay()))
+        return self.relays[-1][2]
 
 
 def panel_checks(out):
@@ -295,11 +361,27 @@ def panel_checks(out):
         login.state = {"logged_in": True, "name": "示例用户"}
         info = client.get("/esports/play/bilibili-6").get_json()
         chosen = client.get("/esports/play/bilibili-6?q=250").get_json()
-        relay = client.get(f"/esports/stream/bilibili-6?q=10000&t={token}")
-        out["登录了：给清晰度和 B站自己的视频地址（页面直接连，不经过本机中转）；没选过要原画，选了按选的要"] = (
-            info == {"ok": True, "applied": "10000", "stream": "https://a.bilibili.com/live.flv?sign=aaa".replace("bilibili.com", "bilivideo.com"),
+        out["登录了：给清晰度和本机中转的地址（带口令、带实际那一档），告诉页面按 TS 流放；没选过要原画，选了按选的要"] = (
+            info == {"ok": True, "applied": "10000", "kind": "mpegts", "stream": f"/esports/stream/bilibili-6?q=10000&t={token}",
                      "qualities": [{"id": "10000", "name": "原画"}, {"id": "250", "name": "超清"}]}
-            and chosen["applied"] == "250" and player.asked == [("6", None), ("6", "250")] and relay.status_code == 404)
+            and chosen["applied"] == "250"
+            and player.asked == [("6", None), ("remember", "6", "10000"), ("6", "250"), ("remember", "6", "250")])
+        refused = client.get("/esports/stream/bilibili-6?q=10000&t=wrong").status_code
+        relay = client.get(f"/esports/stream/bilibili-6?q=10000&t={token}")
+        out["中转：要带口令；回的是 B站那个模块接好的流（TS），不把登录凭证或 B站的地址给页面"] = (
+            refused == 403 and relay.status_code == 200 and relay.mimetype == "video/mp2t" and relay.data == b"TS-DATA"
+            and [(room, rate) for room, rate, _ in player.relays] == [("6", "10000")] and player.relays[0][2].started
+            and "bilivideo" not in json.dumps(info) and "SESSDATA" not in json.dumps(info))
+        player.fail = "B站的取流接口回了 code=-352（风控校验失败）"
+        broken = client.get(f"/esports/stream/bilibili-6?q=10000&t={token}")
+        player.fail = None
+        out["中转时没取到地址：回 502 和原因（页面退回官方播放器并说明）"] = (
+            broken.status_code == 502 and broken.get_json() == {"ok": False, "reason": "upstream", "detail": "B站的取流接口回了 code=-352（风控校验失败）"})
+        told = client.post("/esports/play-failed/bilibili-6", data={"token": token, "reason": "HttpStatusCodeInvalid\n" + "x" * 500})
+        out["页面里没播成：告诉后台记一笔（要带口令；名单里没有的人也不出错）"] = (
+            told.get_json() == {"ok": True} and client.post("/esports/play-failed/bilibili-6", data={"reason": "x"}).status_code == 403
+            and client.post("/esports/play-failed/nobody", data={"token": token, "reason": "x"}).get_json() == {"ok": True}
+            and data["failed_url"] == "/esports/play-failed/")
         page = client.get("/esports/live/watch").get_data(as_text=True)
         data = json.loads(page.split('id="watch-data">')[1].split("</script>")[0])
         out["登录以后看直播页知道登录着、叫什么"] = data["accounts"] == {"bilibili": {"logged_in": True, "name": "示例用户"}}

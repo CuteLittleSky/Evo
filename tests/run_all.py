@@ -16,6 +16,7 @@ import test_capture
 import test_code_map
 import test_aspect
 import test_bili_login
+import test_hls_relay
 import test_data_move
 import test_tester
 import test_eliminated
@@ -91,6 +92,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "看直播页（页面、名单、给脚本的数据、开播状态接口、Apex 接口）": test_esports_watch,
          "在 Evo 窗口里播斗鱼（FLV 拆标签和接续、斗鱼取地址、面板的两个接口）": test_watch_play,
          "B站扫码登录和 B站原画（加密保存、二维码、登录、取地址、面板的登录接口）": test_bili_login,
+         "HLS 中转（看直播页播 B站：播放列表和 TS 接成一条流）": test_hls_relay,
          "最常用武器（认武器、计时、记进数据库、数据页）": test_weapons,
          "匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、Evo 的占用、连不上、面板）": test_telemetry,
          "Evo 占用（读进程、现在的、对局中最近 10 局、右上角）": test_usage,
