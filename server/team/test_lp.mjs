@@ -230,3 +230,18 @@ check("不再收录", r.location === "/liquipedia?ok=untracked" && doc("lp/track
 r = await viewer.get("/log");
 check("改动记录：收录、确认、不是", r.text.includes(`收录 Liquipedia 比赛 ${EVENT}`) && r.text.includes("确认选手 Alpha 就是 Liquipedia 上的 Alpha")
   && r.text.includes("选手 gamma 不是 Liquipedia 上的 Gamma"));
+
+// ---------- 抓的时候点更新：这一轮抓完马上再来一轮（11-18 用户找不到按钮） ----------
+const running = doc(STATE);
+Object.assign(running, { queue: [{ kind: "teams", pages: ["Team_Falcons"] }], round: { started: now, done: 5, total: 6 }, refresh: false,
+                         lastRequestAt: 0, recent: [], pausedUntil: 0 });
+await env.DATA.put(STATE, JSON.stringify(running));
+r = await editor.get("/liquipedia");
+check("抓的时候也有更新按钮", r.text.includes(">这一轮抓完马上再抓一轮</button>"));
+await editor.post("/liquipedia/refresh");
+r = await editor.get("/liquipedia");
+check("点了以后写着已经排上、按钮收起来", r.text.includes("已经排上：这一轮抓完马上再抓一轮") && !r.text.includes(">这一轮抓完马上再抓一轮</button>"));
+now += 3 * MINUTE;
+check("这一轮的最后一步照常抓完、排上的还在", (await run()) === "done" && doc(STATE).queue.length === 0 && doc(STATE).refresh === true);
+now += 3 * MINUTE;
+check("抓完马上开始新的一轮", (await run()) === "done" && doc(STATE).refresh === false && doc(STATE).round.started === now);

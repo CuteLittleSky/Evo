@@ -26,12 +26,14 @@ function statusCard(me, p, keySet, now) {
         : `<p>还没抓过。${p.refresh ? "已经排上，几分钟内开始。" : ""}</p>`;
   const errors = p.errors.length ? `<details class="small"><summary>最近的出错（${p.errors.length}）</summary><ul class="plain">
     ${p.errors.slice(0, 8).map((e) => `<li>${escape(beijingText(e.at))} ${escape(e.text)}</li>`).join("")}</ul></details>` : "";
-  const refresh = editable && keySet && !p.running && !p.refresh ? `<form method="post" action="/liquipedia/refresh">
-    <button class="btn" type="submit">现在更新</button></form>` : "";
+  // 抓的时候也能点（11-18 用户找不到按钮）：这一轮照常抓完，接着马上再来一轮（选手库里刚改的页面名就会按新的抓）
+  const queued = p.running && p.refresh ? '<p class="small">已经排上：这一轮抓完马上再抓一轮。</p>' : "";
+  const refresh = editable && keySet && !p.refresh ? `<form method="post" action="/liquipedia/refresh">
+    <button class="btn" type="submit">${p.running ? "这一轮抓完马上再抓一轮" : "现在更新"}</button></form>` : "";
   return `<section class="card stack"><h2>抓取进度</h2>${round}
     <p class="small muted">这一小时用了 ${p.recent} 次请求（这里最多 ${HOURLY_CAP} 次；Liquipedia 给这个 Key 一小时 60 次，派圈那边另外最多用 12 次）。
       一轮抓完歇 24 小时；"现在更新"只是让下一轮马上开始，不会多用额度。</p>
-    ${errors}${refresh}</section>`;
+    ${errors}${queued}${refresh}</section>`;
 }
 
 function trackedCard(me, tracked, idx, now) {
