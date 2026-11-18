@@ -123,6 +123,18 @@ a.tile:hover { border-color: var(--muted); }
 /* 很长又没有空格的名字（Liquipedia 的页面名、链接）在手机上折行，不撑出屏幕 */
 .row-name, .row-meta, .help, .note { overflow-wrap: anywhere; }
 .search-row { display: flex; gap: 8px; }
+.logo-box { width: 48px; height: 48px; flex: none; padding: 6px; border-radius: 8px; background: #14171F; display: inline-flex;
+  align-items: center; justify-content: center; }
+.logo-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.logo-box[hidden] { display: none; }
+.logo-small { width: 36px; height: 36px; padding: 4px; border-radius: 6px; }
+.logo-big { width: 72px; height: 72px; padding: 8px; }
+.logo-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.logo-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; border: 1px solid var(--border);
+  border-radius: 8px; text-align: center; overflow-wrap: anywhere; }
+.logo-item form { margin: 0; }
+.logo-link { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; color: var(--muted); text-decoration: none; }
+.logo-empty { color: #9AA3B2; font-size: 18px; }
 .search-row .input { flex: 1; min-width: 0; }
 .place { font-weight: 700; margin-right: 2px; }
 details.more > summary { list-style: none; margin-top: 12px; }
@@ -203,6 +215,43 @@ document.addEventListener("click", async (event) => {
   catch { try { copied = document.execCommand("copy"); } catch { copied = false; } }
   button.textContent = copied ? "已复制" : "请长按复制";
   setTimeout(() => { button.textContent = "复制"; }, 2500);
+});
+// 上传队徽：先在浏览器里缩到最长边 256（不放大）、60 KB 以内，存成 WebP（导不出 WebP 的浏览器存 PNG），再换掉要上传的文件
+document.addEventListener("change", async (event) => {
+  const input = event.target;
+  if (!input.matches || !input.matches("input[type=file][data-logo]")) return;
+  const file = input.files && input.files[0];
+  const note = document.getElementById(input.dataset.logo);
+  const box = document.getElementById(input.dataset.logo + "-box");
+  const preview = document.getElementById(input.dataset.logo + "-img");
+  if (!file || !note) return;
+  try {
+    const url = URL.createObjectURL(file);
+    const image = await new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fail; i.src = url; });
+    let blob = null;
+    let size = "";
+    for (const side of [256, 192, 128]) {
+      const scale = Math.min(1, side / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+      blob = await new Promise((ok) => canvas.toBlob(ok, "image/webp", 0.9));
+      if (!blob || blob.type !== "image/webp") blob = await new Promise((ok) => canvas.toBlob(ok, "image/png"));
+      size = canvas.width + "×" + canvas.height;
+      if (blob && blob.size <= 60 * 1024) break;
+    }
+    URL.revokeObjectURL(url);
+    if (!blob || blob.size > 60 * 1024) { note.textContent = "这张图压不到 60 KB 以内：换一张简单一点的"; return; }
+    const ext = blob.type === "image/webp" ? "webp" : "png";
+    const list = new DataTransfer();
+    list.items.add(new File([blob], "logo." + ext, { type: blob.type }));
+    input.files = list.files;
+    if (preview && box) { preview.src = URL.createObjectURL(blob); box.hidden = false; }
+    note.textContent = "缩好了：" + size + "，" + Math.ceil(blob.size / 1024) + " KB。看一眼在深色底上清不清楚，再点上传";
+  } catch {
+    note.textContent = "这张图读不出来：换一张 PNG、JPG 或 WebP";
+  }
 });
 document.addEventListener("focusin", (event) => {
   if (event.target.matches && event.target.matches("input[readonly]")) event.target.select();

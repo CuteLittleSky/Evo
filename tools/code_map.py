@@ -71,9 +71,9 @@ SECTIONS = [
                          "auth.js 成员、邀请链接、登录，store.js 读写存储桶里的 JSON，data.js 选手库、赛程、改动记录，"
                          "esports.js 检查和生成 esports.json（照 tools/esports.py），publish.js 发布、平台开关，"
                          "liquipedia.js 问 Liquipedia、整理数据，lpsync.js 定时抓（额度、失败重试）和待确认，"
-                         "overrides.js 手动修正 Liquipedia 的资料，"
-                         "pages.js / pages_esports.js / pages_lp.js / pages_pros.js 页面，test.mjs 测试（node server/team/test.mjs；"
-                         "testkit、test_members、test_esports、test_lp、test_pros），wrangler.toml 部署配置")]),
+                         "overrides.js 手动修正 Liquipedia 的资料，logos.js 战队队徽（队标库、挑选、上传），"
+                         "pages.js / pages_esports.js / pages_lp.js / pages_pros.js / pages_logos.js 页面，test.mjs 测试（node server/team/test.mjs；"
+                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos），wrangler.toml 部署配置")]),
     ("测试工具（给玩家的 Evo测试工具.exe）", None, [
         "code/evo_tester.py", "code/tester_window.py", "code/tester_capture.py", "code/tester_info.py",
         "code/tester_projects.py", "code/tester_answers.py"]),
@@ -83,7 +83,7 @@ SECTIONS = [
                      "`tests/test_cloud_sync.py`、`tools/cloud_ping.py`"),
     ("开发用的脚本（tools/）", "打包、安装、发布", [
         "tools/build.py", "tools/evo.spec", "tools/install.py", "tools/release.py", "tools/publish.py",
-        "tools/cos.py", "tools/notice.py", "tools/esports.py", "tools/team.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
+        "tools/cos.py", "tools/notice.py", "tools/esports.py", "tools/team.py", "tools/team_logos.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",
         (".github/workflows/", "GitHub Actions（Mirror酱 提的 PR #4）：发 GitHub Release 时把压缩包和更新日志传给 Mirror酱"
                                "（国内渠道）；读的是 tag 指向的那个提交里的这两个文件")]),
     ("开发用的脚本（tools/）", "做素材", [

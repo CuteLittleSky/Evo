@@ -3,6 +3,7 @@
   平台开关照给的原样、更新时间的写法
 - 40 个字的名字（里面有表情这种占两个位置的字）两边都按 40 个字算，Evo 读的时候（esports_data.clean）一条都不去掉
 - 抖音的房间号可以写抖音号（字母、数字、下划线），两边都转成小写；XXFPS 和 xxfps 算同一个房间；带点的、斗鱼写字母的两边都不收
+- 队徽：同一份 {队名: {"logo"}} 给两边，只放这次用到、文件名写法对的队（多出来的键丢掉），键按队名排
 - 平台名单（英文名、中文名、直播间地址、房间号的写法、顺序）和 config/watch.json 一样
 两边走的都是真实的流程：网页是"保存时的检查 → 生成"，Python 是 tools/esports.py 的 check_players → build
 要 Node.js（协作网页是 JavaScript）：电脑上没有 node 就跳过。
@@ -71,9 +72,11 @@ def main():
     checks = []
     players, events = sample()
     switches = {"douyu": False, "huya": True}
+    teams = {"北辰": {"logo": "3fa9c1d2e4b5a6f7.webp", "by": "黄指导"}, "星火电竞": {"logo": "BAD.png"},
+             "没比赛的队": {"logo": "0123456789abcdef.png"}, "没有的队": {"logo": "fedcba9876543210.png"}}
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "input.json"
-        path.write_text(json.dumps({"players": players, "events": events, "switches": switches,
+        path.write_text(json.dumps({"players": players, "events": events, "switches": switches, "teams": teams,
                                     "now": int(NOW.timestamp() * 1000)}, ensure_ascii=False), encoding="utf-8")
         web = node("--build", str(path))
 
@@ -85,7 +88,7 @@ def main():
     plans = [{"line": i + 2, "name": e["name"], "type": e["type"], "stage": e["stage"],
               "start": datetime.fromisoformat(e["start"]), "end": datetime.fromisoformat(e["end"]), "teams": e["teams"]}
              for i, e in enumerate(events)]
-    python = tool.build(rows, plans, switches, [], now=NOW)
+    python = tool.build(rows, plans, switches, [], now=NOW, teams=teams)
 
     checks.append(("两边检查都没问题", web["errors"] == [] and errors == [], (web["errors"], errors)))
     checks.append(("两边生成的 esports.json 一模一样", web["data"] == python,
@@ -102,6 +105,9 @@ def main():
     checks.append(("平台开关照给的原样（没写的当作开）",
                    python["platforms"] == {"douyu": False, "huya": True, "bilibili": True, "douyin": True}, python["platforms"]))
     checks.append(("更新时间的写法一样", web["data"]["updated"] == "2026-11-17T20:00:05+08:00", web["data"]["updated"]))
+    checks.append(("队徽：只放用到、写法对的队，只留 logo", python.get("teams") == {"北辰": {"logo": "3fa9c1d2e4b5a6f7.webp"}}
+                   and list(web["data"]).index("teams") > list(web["data"]).index("events"), python.get("teams")))
+    checks.append(("Evo 读的时候队徽一条都不去掉", cleaned["teams"] == {"北辰": {"logo": "3fa9c1d2e4b5a6f7.webp"}}, cleaned.get("teams")))
     douyin = {p["name"]: (p["room"], p["id"]) for p in web["data"]["players"] if p["platform"] == "douyin"}
     checks.append(("抖音号转成小写，选手 id 跟着用小写", douyin == {"北一": ("xxfps", "douyin-xxfps"),
                                                        "北二": ("nova_tt1seven", "douyin-nova_tt1seven")}, douyin))

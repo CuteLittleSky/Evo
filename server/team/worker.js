@@ -30,6 +30,8 @@ import {
 } from "./data.js";
 import { preview, publish, setPlatform } from "./publish.js";
 import { liquipediaPage } from "./pages_lp.js";
+import { logoHref, logoPage } from "./pages_logos.js";
+import { LOGO_FILE, library, libraryKey, pickLogo, removeLogo, search, suggest, teamLogos, uploadLogo } from "./logos.js";
 import { proHref, proPage, prosPage, teamProfilePage } from "./pages_pros.js";
 import { merged, overrides, removeOverride, resolveConflict, setOverride } from "./overrides.js";
 import {
@@ -40,7 +42,8 @@ import {
 const MAX_FORM = 64 * 1024;  // 从 Excel 粘贴一大张表也够
 
 const SECURITY = {
-  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:; "
+  // 图片：本站、上传前的预览（blob:）、下载服务器上的队徽
+  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob: https://dl.evotracker.cn; "
     + "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   // same-origin：本站之间照常带（表单提交要靠 Origin 认是不是本站），点到别的网站不带，邀请链接不会漏出去
   "Referrer-Policy": "same-origin",
@@ -98,6 +101,7 @@ const OK = {
   tracked: "收录了：几分钟内开始抓（每 3 分钟抓一步）", untracked: "不再收录了", refresh: "排上了：几分钟内开始新的一轮",
   matched: "填好了：选手库里记上了 Liquipedia 页面名", rejected: "记下了：以后不再这样建议",
   fixed: "修正好了：页面上用你们改的", unfixed: "撤掉了：改回用 Liquipedia 的", resolved: "处理好了",
+  logo: "队徽换好了：下次发布 Evo 就能看到", unlogo: "队徽去掉了",
 };
 
 function okText(params) {
@@ -170,9 +174,52 @@ export async function handle(request, env, now = Date.now()) {
   const notFound = () => respond(messagePage("没有这个页面", "地址可能写错了。", me), { status: 404 });
   const readOnly = () => respond(messagePage("不能改", "只读的身份只能看，要改请找管理员。", me), { status: 403 });
 
+  // ---------- 队徽 ----------
+  if (path.startsWith("/logo-library/")) {  // 队标库里的图（不公开的存储桶，登录了才看得到）
+    const file = path.slice("/logo-library/".length);
+    const object = method === "GET" && LOGO_FILE.test(file) ? await bucket.get(libraryKey(file)) : null;
+    if (!object) return notFound();
+    return new Response(object.body, { headers: { ...SECURITY, "Content-Type": "image/png", "Cache-Control": "private, max-age=86400" } });
+  }
+  if (path === "/logo" || path.startsWith("/logo/")) {
+    const show = async (team, options = {}, status = 200) => {
+      const [items, logos, playerItems] = await Promise.all([library(bucket), teamLogos(bucket), players(bucket)]);
+      if (!teamsOf(playerItems).has(team)) return respond(messagePage("没有这支队", "选手库里没有这个队名（可能刚改了名）。", me), { status: 404 });
+      const q = url.searchParams.get("q") ?? "";
+      return respond(logoPage(me, { team, current: logos[team], suggestions: suggest(team, items), results: search(q, items), q,
+        libraryCount: items.length, now, ...options }), { status });
+    };
+    if (path === "/logo" && method === "GET") return show(url.searchParams.get("team") ?? "", { ok: okText(url.searchParams) });
+    if (method !== "POST") return notFound();
+    if (!can(me, "edit")) return readOnly();
+    let team = "";
+    try {
+      if (path === "/logo/upload") {
+        if (Number(request.headers.get("Content-Length") ?? 0) > 200 * 1024) throw new Refuse("图片太大了：最多 60 KB（网页上会自动缩，缩不下来就换一张）");
+        const form = await request.formData();
+        team = String(form.get("team") ?? "");
+        const file = form.get("file");
+        await uploadLogo(env, me, team, file && typeof file !== "string" ? await file.arrayBuffer() : null, now);
+      } else {
+        const form = await readFields(request);
+        team = form.team ?? "";
+        if (path === "/logo/pick") await pickLogo(env, me, team, form.file ?? "", now);
+        else if (path === "/logo/remove") await removeLogo(bucket, me, team, now);
+        else return notFound();
+      }
+      return redirect(logoHref(team, `&ok=${path === "/logo/remove" ? "unlogo" : "logo"}`));
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      return show(team, { error: error.message }, 400);
+    }
+  }
+
   // ---------- 选手库 ----------
   if (path === "/players" || path.startsWith("/players/") || path === "/teams/rename") {
-    const show = async (options = {}, status = 200) => respond(playersPage(me, await players(bucket), { now, ...options }), { status });
+    const show = async (options = {}, status = 200) => {
+      const [items, logos] = await Promise.all([players(bucket), teamLogos(bucket)]);
+      return respond(playersPage(me, items, { now, logos, ...options }), { status });
+    };
     if (method === "GET") return path === "/players" ? show({ ok: okText(url.searchParams) }) : notFound();
     if (!can(me, "edit")) return readOnly();
     let form = {};

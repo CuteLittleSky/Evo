@@ -21,6 +21,7 @@ export const RECENT_DAYS = 7;
 export const EXAMPLE = "示例";
 export const VERSION = 1;
 const DIGITS = "\\d{1,24}";
+const LOGO = /^[a-z0-9]{8,40}\.(png|webp)$/;  // 同 esports_data.LOGO_RE
 const ROOM_RES = Object.fromEntries(Object.entries(PLATFORMS).map(([key, p]) => [key, new RegExp(`^(?:${p.pattern ?? DIGITS})$`)]));
 
 // 这个平台的房间号写得对不对（同 live_status.room_ok；抖音大小写都收）
@@ -209,8 +210,9 @@ export function checkEvents(events, knownTeams) {
 
 // ---------- 生成 esports.json（同 tools/esports.py 的 build） ----------
 
-// players、events 是网页存的样子（按添加的顺序）；switches 是线上现在的平台开关；now 毫秒
-export function build(players, events, switches, now) {
+// players、events 是网页存的样子（按添加的顺序）；switches 是线上现在的平台开关；now 毫秒；
+// teams 是 {队名: {"logo": 文件名, ...}}（logos.js 的 manual/teams.json），只放这次用到、文件名对的队，一个都没有就不写这一项
+export function build(players, events, switches, now, teams = {}) {
   players = players.map((p) => ({ ...p, room: normalRoom(p.platform, p.room) }));
   const errors = [];
   const notes = [];
@@ -242,6 +244,12 @@ export function build(players, events, switches, now) {
       platform: p.platform, room: p.room, liquipedia: p.liquipedia ?? "" })),
     events: kept,
   };
+  const logos = {};
+  for (const team of [...used].sort()) {
+    const logo = teams?.[team]?.logo;
+    if (typeof logo === "string" && LOGO.test(logo)) logos[team] = { logo };
+  }
+  if (Object.keys(logos).length) data.teams = logos;
   const examples = [...data.players.map((p) => p.name), ...data.events.map((e) => e.name)].filter((t) => t.includes(EXAMPLE));
   if (examples.length) errors.push(`还有示例数据（${examples.slice(0, 5).join("、")}），删掉再发布`);
   if (!kept.length) errors.push("没有可以发布的赛事（赛程是空的，或者都结束超过 7 天了）");

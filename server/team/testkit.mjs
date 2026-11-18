@@ -20,19 +20,27 @@ export function summary() {
   return tally.failures ? 1 : 0;
 }
 
-// 支持 etag 条件写入（同 R2）
+// 支持 etag 条件写入（同 R2）；存文字也存图片（bytes），body 是当文字读出来的样子
 export class FakeBucket {
-  constructor() { this.objects = new Map(); this.version = 0; }
+  constructor() { this.objects = new Map(); this.version = 0; this.puts = 0; }
   async get(key) {
-    const object = this.objects.get(key);
-    return object ? { etag: object.etag, text: async () => object.body } : null;
+    const o = this.objects.get(key);
+    return o ? { etag: o.etag, size: o.bytes.byteLength, text: async () => o.body, arrayBuffer: async () => o.bytes.slice().buffer,
+                 body: o.bytes.slice() } : null;
+  }
+  async head(key) {
+    const o = this.objects.get(key);
+    return o ? { etag: o.etag, size: o.bytes.byteLength } : null;
   }
   async put(key, body, options = {}) {
     const current = this.objects.get(key);
     const want = options.onlyIf?.etagMatches;
     if (want && (!current || current.etag !== want)) return null;
     const etag = `e${++this.version}`;
-    this.objects.set(key, { body: String(body), etag, options });
+    const bytes = typeof body === "string" ? new TextEncoder().encode(body)
+      : new Uint8Array(body instanceof ArrayBuffer ? body : body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength));
+    this.objects.set(key, { body: typeof body === "string" ? body : new TextDecoder().decode(bytes), bytes, etag, options });
+    this.puts++;
     return { etag };
   }
   json(key, fallback = "{}") { return JSON.parse(this.objects.get(key)?.body ?? fallback); }
@@ -47,7 +55,9 @@ export function makeBrowser(env, clock, userAgent = "Mozilla/5.0 (Windows NT 10.
     if (jar.cookie) headers.Cookie = jar.cookie;
     if (origin !== null && method === "POST") headers.Origin = origin;
     let body;
-    if (form) {
+    if (form instanceof FormData) {
+      body = form;  // 带文件的表单（multipart），Content-Type 由 Request 自己写
+    } else if (form) {
       body = new URLSearchParams(form).toString();
       headers["Content-Type"] = "application/x-www-form-urlencoded";
     }

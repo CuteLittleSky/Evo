@@ -3,9 +3,11 @@
 //   test_members.mjs   成员、邀请链接、登录（第 1 步）
 //   test_esports.mjs   选手库、赛程、从表格导入、发布、平台开关、改动记录（第 2 步）
 //   test_lp.mjs        Liquipedia 定时抓取、待确认（第 3 步）
+//   test_pros.mjs      资料页、选手页、战队页、手动修正（第 4 步）
+//   test_logos.mjs     队徽（队标库、挑选、上传、发布时带上）
 //
 // 另外几个用法（tests/test_team_publish.py 用，和 tools/esports.py 对照）：
-//   --build 输入.json          输入 {"players", "events", "switches", "now"}，打印生成的 esports.json 和检查结果
+//   --build 输入.json          输入 {"players", "events", "switches", "now", "teams"}，打印生成的 esports.json 和检查结果
 //   --check-players 输入.json  一组选手过一遍保存时的检查和整张表的检查（房间号的写法、重复）
 //   --platforms                打印平台名单（和 config/watch.json 比）
 
@@ -18,7 +20,7 @@ if (args[0] === "--build") {
   // 选手先过一遍保存时的检查（平台写中文名也认、抖音房间号转小写），和网页上存下来的一样
   const input = JSON.parse(readFileSync(args[1], "utf-8"));
   const players = input.players.map((p) => ({ ...p, ...cleanPlayerFields(p) }));
-  console.log(JSON.stringify(build(players, input.events, input.switches, input.now)));
+  console.log(JSON.stringify(build(players, input.events, input.switches, input.now, input.teams ?? {})));
 } else if (args[0] === "--check-players") {
   // 一组选手：每个人保存时的检查 + 整张表的检查 → {errors: [...], rooms: [存下来的房间号]}
   const errors = [];
@@ -43,5 +45,7 @@ if (args[0] === "--build") {
   await import("./test_lp.mjs");
   console.log("\n资料页、手动修正");
   await import("./test_pros.mjs");
+  console.log("\n队徽");
+  await import("./test_logos.mjs");
   process.exit(summary());
 }

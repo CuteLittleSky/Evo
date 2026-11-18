@@ -4,11 +4,13 @@
 // - 平台开关（某个平台出问题时改成"去 X 看"）照线上现在的原样带着，只有专门的开关才改它
 //   （出事时不发版就能关掉一个平台，靠的只有它）
 // - 写完马上读回来，和要写的一字不差才算发好
-// 这个 Worker 能写整个公开存储桶（R2 的绑定不能只给一个文件），所以这里只写下面 TARGETS 里的两个文件名，别的一律不碰。
+// 这个 Worker 能写整个公开存储桶（R2 的绑定不能只给一个文件），所以只写下面 TARGETS 里的两个文件名，
+// 和队徽（logos.js，只写 esports/logos/<内容哈希>.png|webp），别的一律不碰。
 
 import { Refuse } from "./store.js";
 import { PLATFORMS, STATUS_WORDS, beijingText, build, clean, parseIso, status } from "./esports.js";
 import { events, players, recordPublish, writeLog } from "./data.js";
+import { teamLogos } from "./logos.js";
 
 export const TARGETS = {
   test: { file: "esports_test.json", name: "测试文件" },
@@ -31,9 +33,9 @@ export async function liveFile(publicBucket, target) {
 // 发布页要的东西：按现在的选手库、赛程生成的（含检查结果）和线上的两个文件
 export async function preview(env, now) {
   const [test, official] = await Promise.all([liveFile(env.PUBLIC, "test"), liveFile(env.PUBLIC, "official")]);
-  const [playerItems, eventItems] = await Promise.all([players(env.DATA), events(env.DATA)]);
-  return { live: { test, official }, built: { test: build(playerItems, eventItems, test.data?.platforms, now),
-                                               official: build(playerItems, eventItems, official.data?.platforms, now) } };
+  const [playerItems, eventItems, logos] = await Promise.all([players(env.DATA), events(env.DATA), teamLogos(env.DATA)]);
+  return { live: { test, official }, built: { test: build(playerItems, eventItems, test.data?.platforms, now, logos),
+                                               official: build(playerItems, eventItems, official.data?.platforms, now, logos) } };
 }
 
 async function write(publicBucket, target, data) {
@@ -53,7 +55,7 @@ export function counts(data) {
 export async function publish(env, by, target, now) {
   if (!Object.hasOwn(TARGETS, target)) throw new Refuse("不认识要发到哪里");
   const current = await liveFile(env.PUBLIC, target);
-  const result = build(await players(env.DATA), await events(env.DATA), current.data?.platforms, now);
+  const result = build(await players(env.DATA), await events(env.DATA), current.data?.platforms, now, await teamLogos(env.DATA));
   if (result.errors.length) throw new Refuse(`没有发布，有 ${result.errors.length} 处要改：\n${result.errors.join("\n")}`);
   const bytes = await write(env.PUBLIC, target, result.data);
   const c = counts(result.data);
@@ -82,6 +84,7 @@ export function describe(data, now) {
   const byPlatform = {};
   for (const p of data.players) byPlatform[p.platform] = (byPlatform[p.platform] ?? 0) + 1;
   return {
+    logos: Object.keys(data.teams ?? {}).length,
     summary: `${c.events} 场赛事、${c.teams} 支队、${c.players} 位选手`
       + (data.players.length ? `（${Object.entries(byPlatform).map(([k, n]) => `${PLATFORMS[k].name} ${n}`).join("、")}）` : ""),
     updated: data.updated ? beijingText(parseIso(data.updated)) : "",

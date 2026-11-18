@@ -7,6 +7,8 @@ import { EVENT_COLUMNS, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TEAM_SIZE, TYPE
 import { teamsOf } from "./data.js";
 import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
 import { ago, escape, layout, logList } from "./pages.js";
+import { PUBLIC_LOGO_URL } from "./logos.js";
+import { logoBox, logoHref } from "./pages_logos.js";
 
 function notes({ error = "", ok = "" }) {
   return (error ? `<div class="note note-error" role="alert">${escape(error).replace(/\n/g, "<br>")}</div>` : "")
@@ -57,7 +59,7 @@ function importBox(action, columns, example, draft = "") {
   </form></details>`;
 }
 
-export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "" }) {
+export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "", logos = {} }) {
   const editable = can(me, "edit");
   const teams = teamsOf(items);
   const problems = checkPlayers(items).errors;
@@ -84,7 +86,10 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
         <details class="act"><summary class="btn">改</summary><div class="panel">${playerForm(`/players/${p.id}/save`, p, teams, "保存")}</div></details>
         ${confirmDelete(`/players/${p.id}/delete`, p.name)}</div>` : ""}
     </li>`).join("");
-    return `<section class="card"><div class="title-row team-head"><h2>${escape(team)}</h2>${size}<span class="grow"></span>${rename}</div>
+    const logo = logos[team]?.logo;
+    const badge = `<a class="logo-link" href="${logoHref(team)}" title="队徽">${logo ? logoBox(PUBLIC_LOGO_URL + logo, team, "small")
+      : '<span class="logo-box logo-small logo-empty" aria-hidden="true">＋</span>'}<span class="small">${logo ? "队徽" : "加队徽"}</span></a>`;
+    return `<section class="card"><div class="title-row team-head">${badge}<h2>${escape(team)}</h2>${size}<span class="grow"></span>${rename}</div>
       <ul class="list">${rows}</ul></section>`;
   }).join("");
   return layout({ title: "选手库", me, current: "players", body: `
@@ -174,7 +179,7 @@ ${editable ? importBox("/events/import", EVENT_COLUMNS, "亚太北区职业联�
 
 function fileSummary(info) {
   if (!info) return `<p class="muted">线上还没有这个文件。</p>`;
-  return `<p>${escape(info.summary)}</p><p class="small muted">文件里写的更新时间：${escape(info.updated || "没有")}`
+  return `<p>${escape(info.summary)}${info.logos ? `，${info.logos} 支队有队徽` : ""}</p><p class="small muted">文件里写的更新时间：${escape(info.updated || "没有")}`
     + `${info.platformsOff.length ? `；关掉的平台：${escape(info.platformsOff.join("、"))}` : "；四个平台都开着"}</p>`;
 }
 

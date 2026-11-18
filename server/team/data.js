@@ -170,6 +170,12 @@ export async function renameTeam(bucket, by, from, to, now) {
       }
     }
   });
+  await updateDoc(bucket, "manual/teams.json", () => ({ items: {} }), (data) => {  // 队徽跟着搬（logos.js）
+    if (data.items[oldName]) {
+      data.items[newName] = data.items[oldName];
+      delete data.items[oldName];
+    }
+  });
   await writeLog(bucket, by, now, `战队改名 ${oldName} → ${newName}（${count} 位选手，赛程里也跟着改了）`);
 }
 
