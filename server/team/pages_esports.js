@@ -2,7 +2,7 @@
 // 只读的人能看，看不到改的按钮；编辑能改；能发布的人（管理员、开了发布的编辑）才有发布按钮；平台开关只有管理员。
 
 import { can } from "./auth.js";
-import { EVENT_COLUMNS, MAIN_MAX, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TEAM_SIZE, TYPES, beijingText, checkPlayers, isoBeijing,
+import { EVENT_COLUMNS, MAIN_MAX, NO_STREAM, NO_STREAM_NAME, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TEAM_SIZE, TYPES, beijingText, checkPlayers, isoBeijing,
   parseBeijing, parseIso, roomUrl, status } from "./esports.js";
 import { teamsOf } from "./data.js";
 import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
@@ -31,6 +31,11 @@ function platformOptions(selected) {
   return Object.entries(PLATFORMS).map(([key, p]) => `<option value="${key}"${key === selected ? " selected" : ""}>${p.name}</option>`).join("");
 }
 
+// 选手的平台多一个"不直播"（主舞台不能选它）
+function playerPlatformOptions(selected) {
+  return platformOptions(selected) + `<option value="${NO_STREAM}"${selected === NO_STREAM ? " selected" : ""}>${NO_STREAM_NAME}</option>`;
+}
+
 function playerForm(action, p, teamNames, submit) {
   return `<form class="stack" method="post" action="${action}">
     ${p.rev ? `<input type="hidden" name="rev" value="${p.rev}">` : ""}
@@ -39,9 +44,9 @@ function playerForm(action, p, teamNames, submit) {
     <label class="field">战队<span class="help">从下拉里选已有的队，或者写一个新队名</span>
       <input class="input" name="team" value="${escape(p.team)}" maxlength="40" required list="team-names" autocomplete="off"></label>
     <div class="two">
-      <label class="field">平台<select class="input" name="platform" required>${platformOptions(p.platform)}</select></label>
-      <label class="field">房间号<span class="help">直播间地址最后那一段：一般是数字；抖音也可以是主播的抖音号（字母、数字、下划线）</span>
-        <input class="input" name="room" value="${escape(p.room)}" maxlength="24" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="field">平台<span class="help">不开直播的选"不直播"</span><select class="input" name="platform" required>${playerPlatformOptions(p.platform)}</select></label>
+      <label class="field">房间号<span class="help">直播间地址最后那一段：一般是数字；抖音也可以是主播的抖音号（字母、数字、下划线）。不直播的空着</span>
+        <input class="input" name="room" value="${escape(p.room)}" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     </div>
     <label class="field">Liquipedia 页面名<span class="help">可以空着；贴 Liquipedia 选手页的网址就行，会自动存成页面名（比如 Panic_(American_player)）</span>
       <input class="input" name="liquipedia" value="${escape(p.liquipedia)}" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
@@ -79,7 +84,8 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
     const rows = members.map((p) => `<li class="row">
       <div class="row-main">
         <div class="row-name">${escape(p.name)}</div>
-        <div class="row-meta"><a href="${escape(roomUrl(p.platform, p.room))}" target="_blank" rel="noopener noreferrer">${PLATFORMS[p.platform].name} ${escape(p.room)}</a>
+        <div class="row-meta">${p.platform === NO_STREAM ? '<span class="badge">不直播</span>'
+          : `<a href="${escape(roomUrl(p.platform, p.room))}" target="_blank" rel="noopener noreferrer">${PLATFORMS[p.platform].name} ${escape(p.room)}</a>`}
           ${p.liquipedia ? `<span>Liquipedia：${escape(p.liquipedia)}</span>` : ""}<span>${by(p, now)}</span></div>
       </div>
       ${editable ? `<div class="row-actions">
@@ -94,7 +100,7 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
   }).join("");
   return layout({ title: "选手库", me, current: "players", body: `
 <div class="stack"><h1>选手库</h1>
-  <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队要正好 ${TEAM_SIZE} 个人，一个选手只能在一支队。点平台和房间号能打开直播间核对。</p></div>
+  <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队要正好 ${TEAM_SIZE} 个人（不开直播的也算上，平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p></div>
 ${notes({ error, ok })}
 ${problems.length ? `<div class="note note-error"><b>发布前要改好：</b><ul class="plain">${problems.map((t) => `<li>${escape(t)}</li>`).join("")}</ul></div>` : ""}
 ${datalist}${add}

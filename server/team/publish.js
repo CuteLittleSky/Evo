@@ -8,7 +8,7 @@
 // 和队徽（logos.js，只写 esports/logos/<内容哈希>.png|webp），别的一律不碰。
 
 import { Refuse } from "./store.js";
-import { PLATFORMS, STATUS_WORDS, beijingText, build, clean, parseIso, status } from "./esports.js";
+import { PLATFORMS, STATUS_WORDS, beijingText, build, clean, parseIso, platformName, status } from "./esports.js";
 import { events, players, recordPublish, writeLog } from "./data.js";
 import { teamLogos } from "./logos.js";
 
@@ -86,7 +86,7 @@ export function describe(data, now) {
   return {
     logos: Object.keys(data.teams ?? {}).length,
     summary: `${c.events} 场赛事、${c.teams} 支队、${c.players} 位选手`
-      + (data.players.length ? `（${Object.entries(byPlatform).map(([k, n]) => `${PLATFORMS[k].name} ${n}`).join("、")}）` : ""),
+      + (data.players.length ? `（${Object.entries(byPlatform).map(([k, n]) => `${platformName(k)} ${n}`).join("、")}）` : ""),
     updated: data.updated ? beijingText(parseIso(data.updated)) : "",
     platformsOff: Object.entries(data.platforms).filter(([, on]) => !on).map(([k]) => PLATFORMS[k].name),
     events: data.events.map((e) => ({

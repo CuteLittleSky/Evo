@@ -13,7 +13,7 @@
 // rev：每改一次加 1。表单里带着打开时的 rev，保存时对不上（别人刚改过）就不保存，提示看一眼再改。
 
 import { Refuse, randomHex, readDoc, updateDoc } from "./store.js";
-import { PLATFORMS, cleanEventFields, cleanPlayerFields, squash } from "./esports.js";
+import { NO_STREAM, PLATFORMS, cleanEventFields, cleanPlayerFields, platformName, squash } from "./esports.js";
 import { pageFromInput } from "./liquipedia.js";
 
 export const PLAYERS = "manual/players.json";
@@ -67,7 +67,7 @@ export function teamsOf(items) {
 }
 
 function playerText(p) {
-  return `${p.name}（${p.team}，${PLATFORMS[p.platform]?.name ?? p.platform} ${p.room}）`;
+  return `${p.name}（${p.team}，${p.platform === NO_STREAM ? "不直播" : `${platformName(p.platform)} ${p.room}`}）`;
 }
 
 function stamp(item, by, now) {
@@ -93,8 +93,8 @@ function assertUniquePlayer(items, fields, selfId) {
   for (const other of items) {
     if (other.id === selfId) continue;
     if (other.name === fields.name) throw new Refuse(`已经有一个叫「${fields.name}」的选手了（在「${other.team}」）`);
-    if (other.platform === fields.platform && other.room === fields.room) {
-      throw new Refuse(`${PLATFORMS[fields.platform].name} 房间 ${fields.room} 已经是「${other.name}」的了`);
+    if (fields.platform !== NO_STREAM && other.platform === fields.platform && other.room === fields.room) {
+      throw new Refuse(`${platformName(fields.platform)} 房间 ${fields.room} 已经是「${other.name}」的了`);
     }
   }
 }
@@ -127,9 +127,9 @@ export async function savePlayer(bucket, by, id, form, now) {
     const item = findItem(list, id, "选手");
     checkRev(item, form.rev, `「${item.name}」`);
     assertUniquePlayer(list.items, fields, id);
-    const before = { ...item, platform: PLATFORMS[item.platform]?.name };
+    const before = { ...item, platform: platformName(item.platform) };
     Object.assign(item, fields);
-    const lines = changes(before, { ...item, platform: PLATFORMS[item.platform]?.name }, PLAYER_LABELS);
+    const lines = changes(before, { ...item, platform: platformName(item.platform) }, PLAYER_LABELS);
     if (lines.length) stamp(item, by, now);
     return { name: item.name, lines };
   });
@@ -208,8 +208,9 @@ export async function importPlayerRows(bucket, by, rows, now) {
     }
     const rooms = new Map();
     for (const p of after) {
+      if (p.platform === NO_STREAM) continue;  // 不直播的没有房间
       const key = `${p.platform}-${p.room}`;
-      if (rooms.has(key)) errors.push(`${PLATFORMS[p.platform].name} 房间 ${p.room} 同时是「${rooms.get(key)}」和「${p.name}」的`);
+      if (rooms.has(key)) errors.push(`${platformName(p.platform)} 房间 ${p.room} 同时是「${rooms.get(key)}」和「${p.name}」的`);
       rooms.set(key, p.name);
     }
     if (after.length > MAX_ITEMS) errors.push(`选手最多 ${MAX_ITEMS} 个`);

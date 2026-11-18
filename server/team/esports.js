@@ -45,6 +45,61 @@ export function roomUrl(platform, room) {
   return PLATFORMS[platform]?.room.replace("{room}", room) ?? "";
 }
 
+// ---------- 不直播的选手（2026-11-18 用户定的做法一；Evo 那边 7fd0220）----------
+// 有的队员不开直播：平台选"不直播"（存成 none）、房间号空着；照样算进"一支队 3 人"，Evo 看直播页照样列出来、标"不直播"。
+// esports.json 里 {"id": "none-" + sha256(选手名)[:12], "platform": "none", "room": ""}（同 tools/esports.py 的 player_id）。
+// 主舞台不能写"不直播"（那里必须是真的直播间）。
+export const NO_STREAM = "none";
+export const NO_STREAM_NAME = "不直播";
+
+export function platformName(key) {
+  return key === NO_STREAM ? NO_STREAM_NAME : PLATFORMS[key]?.name ?? key;
+}
+
+// sha256 → 16 进制（同步算：生成 esports.json 是同步的；Workers 的 crypto.subtle 只有异步的）
+const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01,
+  0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+  0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70,
+  0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+  0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+
+export function sha256Hex(text) {
+  const bytes = new TextEncoder().encode(text);
+  const total = Math.ceil((bytes.length + 9) / 64) * 64;
+  const block = new Uint8Array(total);
+  block.set(bytes);
+  block[bytes.length] = 0x80;
+  const view = new DataView(block.buffer);
+  view.setUint32(total - 8, Math.floor((bytes.length * 8) / 2 ** 32));
+  view.setUint32(total - 4, (bytes.length * 8) >>> 0);
+  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const w = new Uint32Array(64);
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, k] = h;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (k + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      [k, g, f, e, d, c, b, a] = [g, f, e, (d + t1) >>> 0, c, b, a, (t1 + t2) >>> 0];
+    }
+    [a, b, c, d, e, f, g, k].forEach((x, i) => { h[i] = (h[i] + x) >>> 0; });
+  }
+  return h.map((x) => x.toString(16).padStart(8, "0")).join("");
+}
+
+// 选手在 esports.json 里的 id：开直播的是"平台-房间号"，不直播的是 none-<选手名 sha256 的前 12 位>
+export function playerId(p) {
+  return p.platform === NO_STREAM ? `${NO_STREAM}-${sha256Hex(p.name).slice(0, 12)}` : `${p.platform}-${p.room}`;
+}
+
+
 // ---------- 文字、时间 ----------
 
 // 去掉两头空格、中间连续的空白并成一个（同 esports_data._text 和 tools/esports.py 读表时的做法）
@@ -105,10 +160,12 @@ export function platformKey(value) {
 export function cleanPlayerFields(form) {
   const name = required(form.name, "选手", 40);
   const team = required(form.team, "战队", 40);
-  const platform = platformKey(form.platform);
-  if (!platform) throw new Refuse(`平台「${squash(form.platform)}」不认识，只能是 ${Object.values(PLATFORMS).map((p) => p.name).join(" / ")}`);
+  const typedPlatform = squash(form.platform);
+  const platform = [NO_STREAM, NO_STREAM_NAME].includes(typedPlatform) ? NO_STREAM : platformKey(typedPlatform);
+  if (!platform) throw new Refuse(`平台「${typedPlatform}」不认识，只能是 ${[...Object.values(PLATFORMS).map((p) => p.name), NO_STREAM_NAME].join(" / ")}`);
   const raw = squash(form.room);
-  if (!roomOk(platform, raw)) {
+  if (platform === NO_STREAM && raw) throw new Refuse(`不直播的选手「房间号」要空着（现在是「${raw}」）`);
+  if (platform !== NO_STREAM && !roomOk(platform, raw)) {
     throw new Refuse(platform === "douyin" ? `房间号「${raw}」只能是字母、数字、下划线（直播间地址 live.douyin.com/ 后面那一段）`
       : `房间号「${raw}」只能是数字（直播间地址最后那串数字；虎牙要数字房间号）`);
   }
@@ -231,8 +288,10 @@ export function checkPlayers(players) {
     if (names.has(p.name)) errors.push(`选手「${p.name}」写了两次（一个选手只能在一支队）`);
     names.set(p.name, p);
     const key = `${p.platform}-${p.room}`;
-    if (rooms.has(key)) errors.push(`${PLATFORMS[p.platform]?.name ?? p.platform} 房间 ${p.room} 写了两次（「${rooms.get(key).name}」和「${p.name}」）`);
-    rooms.set(key, p);
+    if (p.platform !== NO_STREAM) {  // 不直播的没有房间，不查重复
+      if (rooms.has(key)) errors.push(`${platformName(p.platform)} 房间 ${p.room} 写了两次（「${rooms.get(key).name}」和「${p.name}」）`);
+      rooms.set(key, p);
+    }
     if (!teams.has(p.team)) teams.set(p.team, []);
     teams.get(p.team).push(p);
   }
@@ -297,7 +356,7 @@ export function build(players, events, switches, now, teams = {}) {
     version: VERSION,
     updated: isoBeijing(Math.floor(now / 1000) * 1000),
     platforms: Object.fromEntries(Object.keys(PLATFORMS).map((key) => [key, switches?.[key] !== false])),
-    players: players.filter((p) => used.has(p.team)).map((p) => ({ id: `${p.platform}-${p.room}`, name: p.name, team: p.team,
+    players: players.filter((p) => used.has(p.team)).map((p) => ({ id: playerId(p), name: p.name, team: p.team,
       platform: p.platform, room: p.room, liquipedia: p.liquipedia ?? "" })),
     events: kept,
   };
@@ -335,7 +394,8 @@ function cleanPlayer(raw) {
   const name = text(raw.name, 40);
   const team = text(raw.team, 40);
   if (typeof raw.id !== "string" || !ID.test(raw.id) || name === null || team === null) return null;
-  if (!roomOk(raw.platform, raw.room)) return null;
+  // 不直播的：房间号必须正好是空的（同 esports_data.clean_player）
+  if (raw.platform === NO_STREAM ? raw.room !== "" : !roomOk(raw.platform, raw.room)) return null;
   return { id: raw.id, name, team, platform: raw.platform, room: raw.room, liquipedia: text(raw.liquipedia, 100, false) || "" };
 }
 

@@ -6,6 +6,7 @@
 //   test_pros.mjs      资料页、选手页、战队页、手动修正（第 4 步）
 //   test_logos.mjs     队徽（队标库、挑选、上传、发布时带上）
 //   test_main.mjs      主舞台（赛事表单、导入第 7 列、发布时带上）
+//   test_nostream.mjs  不直播的选手
 //
 // 另外几个用法（tests/test_team_publish.py 用，和 tools/esports.py 对照）：
 //   --build 输入.json          输入 {"players", "events", "switches", "now", "teams"}，打印生成的 esports.json 和检查结果
@@ -62,5 +63,7 @@ if (args[0] === "--build") {
   await import("./test_logos.mjs");
   console.log("\n主舞台");
   await import("./test_main.mjs");
+  console.log("\n不直播的选手");
+  await import("./test_nostream.mjs");
   process.exit(summary());
 }

@@ -6,12 +6,15 @@
 - 队徽：同一份 {队名: {"logo"}} 给两边，只放这次用到、文件名写法对的队（多出来的键丢掉），键按队名排
 - 主舞台：同一格「主舞台」的写法两边拆出来一样（抖音号转小写、名字里可以有空格），生成的 main 一样（编号、放在 teams 后面）；
   几种写错（超过 8 路、只有两段、不认识的平台、斗鱼写字母、抖音号带点、名字太长、重复）两边都不收
+- 不直播的选手：平台写「不直播」、房间号空着，两边生成的编号一样（none- + 选手名 sha256 的前 12 位），两个不直播的不算重复，
+  不直播还写了房间号、主舞台写不直播两边都不收
 - 平台名单（英文名、中文名、直播间地址、房间号的写法、顺序）和 config/watch.json 一样
 两边走的都是真实的流程：网页是"保存时的检查 → 生成"，Python 是 tools/esports.py 的 check_players → build
 要 Node.js（协作网页是 JavaScript）：电脑上没有 node 就跳过。
 运行：python tests/test_team_publish.py
 """
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -52,13 +55,14 @@ def sample():
     for team, people in [("星火电竞", [("Kite", "douyu", "520013", "Kite_(player)"), ("Ace", "bilibili", "100", ""),
                                         (LONG, "huya", "200", "")]),
                          ("北辰", [("北一", "douyin", "XXFPS", ""), ("北二", "douyin", "NOVA_Tt1seven", ""), ("北三", "douyu", "303", "")]),
-                         ("没比赛的队", [("闲一", "douyu", "901", ""), ("闲二", "douyu", "902", ""), ("闲三", "douyu", "903", "")])]:
+                         ("没比赛的队", [("闲一", "douyu", "901", ""), ("闲二", "douyu", "902", ""), ("闲三", "douyu", "903", "")]),
+                         ("安静队", [("甲一", "douyu", "11", ""), ("甲二", "不直播", "", ""), ("甲三", "不直播", "", "Jia3")])]:
         for name, platform, room, liquipedia in people:
             players.append({"name": name, "team": team, "platform": platform, "room": room, "liquipedia": liquipedia})
     events = [
         ("联赛 第 3 周", "联赛", "B 组对 C 组", at(17, 19), at(17, 23), ["北辰", "星火电竞"], MAIN),
         ("同时的杯赛 一", "杯赛", "", at(18, 19), at(18, 21), ["北辰"]),
-        ("训练赛", "训练赛", "", at(17, 10), at(17, 13), ["星火电竞"]),
+        ("训练赛", "训练赛", "", at(17, 10), at(17, 13), ["星火电竞", "安静队"]),
         ("同时的杯赛 二", "杯赛", "决赛", at(18, 19), at(18, 22), ["星火电竞"]),
         ("正好 7 天前结束", "杯赛", "", at(10, 17), NOW.replace(day=10, second=5), ["北辰"]),
         ("8 天前结束", "杯赛", "", at(9, 10), at(9, 12), ["北辰"]),
@@ -84,7 +88,7 @@ def main():
         web = node("--build", str(path))
 
     # Python 那边：照选手库.csv 的样子（平台写中文名）过一遍 check_players，再 build
-    table = [(i + 2, {"选手": p["name"], "战队": p["team"], "平台": live_status.NAMES[p["platform"]], "房间号": p["room"],
+    table = [(i + 2, {"选手": p["name"], "战队": p["team"], "平台": live_status.NAMES.get(p["platform"], p["platform"]), "房间号": p["room"],
                       "Liquipedia页面名": p["liquipedia"]}) for i, p in enumerate(players)]
     errors = []
     rows, _ = tool.check_players(table, errors)
@@ -101,10 +105,10 @@ def main():
     checks.append(("赛事按开始时间排、同一时刻的同类赛事加 -2、8 天前的不放、正好 7 天的还放",
                    ids == ["20261110-1700-cup", "20261117-1000-scrim", "20261117-1900-league", "20261118-1900-cup",
                            "20261118-1900-cup-2"], ids))
-    checks.append(("没比赛的队不放、40 个字的名字留着", {p["team"] for p in python["players"]} == {"星火电竞", "北辰"}
+    checks.append(("没比赛的队不放、40 个字的名字留着", {p["team"] for p in python["players"]} == {"星火电竞", "北辰", "安静队"}
                    and any(p["name"] == LONG for p in python["players"]), [p["name"] for p in python["players"]]))
     cleaned = esports_data.clean(web["data"])
-    checks.append(("Evo 读网页生成的文件一条都不去掉", len(cleaned["players"]) == 6 and len(cleaned["events"]) == 5,
+    checks.append(("Evo 读网页生成的文件一条都不去掉", len(cleaned["players"]) == 9 and len(cleaned["events"]) == 5,
                    (len(cleaned["players"]), len(cleaned["events"]))))
     checks.append(("平台开关照给的原样（没写的当作开）",
                    python["platforms"] == {"douyu": False, "huya": True, "bilibili": True, "douyin": True}, python["platforms"]))
@@ -122,7 +126,7 @@ def main():
 
     cases = {"超过 8 路": "、".join(f"B站 {9000 + i} 第{i}路" for i in range(9)), "只有两段": "只有两段 1", "不认识的平台": "快手 1 某某",
              "斗鱼写字母": "斗鱼 abc 某某", "抖音号带点": "抖音 a.b 某某", "名字太长": "B站 1 " + "名" * 41,
-             "同一个抖音号大小写不同": "抖音 XXFPS 一、抖音 xxfps 二", "正常的一路": "虎牙 520 某某 解说"}
+             "同一个抖音号大小写不同": "抖音 XXFPS 一、抖音 xxfps 二", "正常的一路": "虎牙 520 某某 解说", "写不直播": "不直播 1 某某"}
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "main.json"
         path.write_text(json.dumps(list(cases.values()), ensure_ascii=False), encoding="utf-8")
@@ -132,6 +136,11 @@ def main():
         python_main = tool.check_main(value, "赛程.csv 第 2 行", python_errors)
         same = bool(python_errors) == ("error" in web_result) and (python_errors or web_result["main"] == python_main)
         checks.append((f"主舞台：{text}（{'不收' if python_errors else '收'}，两边一样）", same, {"网页": web_result, "Python": python_errors or python_main}))
+    quiet = {p["name"]: (p["platform"], p["room"], p["id"]) for p in web["data"]["players"] if p["team"] == "安静队"}
+    checks.append(("不直播的选手：platform none、房间号空着、编号 none- + 选手名 sha256 前 12 位",
+                   quiet == {"甲一": ("douyu", "11", "douyu-11"),
+                             "甲二": ("none", "", "none-" + hashlib.sha256("甲二".encode("utf-8")).hexdigest()[:12]),
+                             "甲三": ("none", "", "none-" + hashlib.sha256("甲三".encode("utf-8")).hexdigest()[:12])}, quiet))
     douyin = {p["name"]: (p["room"], p["id"]) for p in web["data"]["players"] if p["platform"] == "douyin"}
     checks.append(("抖音号转成小写，选手 id 跟着用小写", douyin == {"北一": ("xxfps", "douyin-xxfps"),
                                                        "北二": ("nova_tt1seven", "douyin-nova_tt1seven")}, douyin))
@@ -144,6 +153,8 @@ def main():
         "抖音号超过 24 个字": [("douyin", "a" * 25)],
         "斗鱼写字母": [("douyu", "xxfps")],
         "B站写数字": [("bilibili", "21452505")],
+        "不直播还写了房间号": [("不直播", "123")],
+        "两个不直播的不算重复": [("不直播", ""), ("不直播", "")],
     }
     for text, rooms in cases.items():
         people = [{"name": f"人{i}", "team": "队", "platform": platform, "room": room} for i, (platform, room) in enumerate(rooms)]
@@ -152,7 +163,7 @@ def main():
             path.write_text(json.dumps(people, ensure_ascii=False), encoding="utf-8")
             web_result = node("--check-players", str(path))
         python_errors = []
-        kept, _ = tool.check_players([(i + 2, {"选手": x["name"], "战队": "队", "平台": live_status.NAMES[x["platform"]],
+        kept, _ = tool.check_players([(i + 2, {"选手": x["name"], "战队": "队", "平台": live_status.NAMES.get(x["platform"], x["platform"]),
                                                "房间号": x["room"], "Liquipedia页面名": ""}) for i, x in enumerate(people)],
                                      python_errors)
         python_errors = [e for e in python_errors if "房间" in e]
