@@ -238,10 +238,10 @@ r = await admin.post("/publish/test");
 check("读回来不一样 → 提示再发一次", r.status === 400 && r.text.includes("读回来不一样"));
 env.PUBLIC.get = realGet;
 
-// 都太早了 → 没有可以发布的
+// 都太早了 → 只发选手（11-19 起：Evo 电竞页的"主播"一块列开直播的选手，没有赛事也有用）
 now += 30 * DAY;
-r = await admin.post("/publish/test");
-check("赛事都结束超过 7 天 → 没有可以发布的", r.status === 400 && r.text.includes("没有可以发布的赛事"));
+r = await admin.get("/publish");
+check("赛事都结束超过 7 天 → 照样能发，提醒这次只发选手", !r.text.includes("还不能发布") && r.text.includes("这次只发选手"));
 now -= 30 * DAY;
 
 // ---------- 删除、首页、改动记录 ----------

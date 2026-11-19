@@ -20,6 +20,7 @@ export const RECENT_DAYS = 7;
 export const EXAMPLE = "示例";
 export const VERSION = 1;
 export const MAIN_MAX = 8;  // 一场赛事的主舞台最多几路（同 esports_data.MAIN_MAX）
+export const OBSERVERS_MAX = 60;  // 一场赛事里观战的人最多几位（同 esports_data.OBSERVERS_MAX）
 const DIGITS = "\\d{1,24}";
 const LOGO = /^[a-z0-9]{8,40}\.(png|webp)$/;  // 同 esports_data.LOGO_RE
 const ROOM_RES = Object.fromEntries(Object.entries(PLATFORMS).map(([key, p]) => [key, new RegExp(`^(?:${p.pattern ?? DIGITS})$`)]));
@@ -250,6 +251,48 @@ export function cleanEventFields(form, knownTeams) {
   return { name, type, stage, start: isoBeijing(start), end: isoBeijing(end), teams, main };
 }
 
+// ---------- 观战的人（2026-11-19 用户要的："给正在 OB 的职业选手一个观战的标签"，每场比赛里手动放）----------
+// 一场赛事里，把一位开直播的选手放到他正在看的那支队下面（他可以不是这支队的人），Evo 看直播页标"观战"。
+// 存在赛事的 observers：[{"player": 选手库里的编号, "team": 队名}]（按编号存：他换了直播间也不用改这里）；
+// 发布时写成 [{"id": 选手在 esports.json 里的 id, "team"}]（同 tools/esports.py 的 check_observers、esports_data.clean_observer）。
+// rows 是表单里的几行 {player: 选手名, team}，roster 是选手库，teams 是这场的参赛队；有错抛 Refuse
+export function cleanObservers(rows, roster, teams) {
+  const filled = rows.filter((r) => squash(r.player) || squash(r.team));
+  if (filled.length > OBSERVERS_MAX) throw new Refuse(`观战的人一场最多 ${OBSERVERS_MAX} 位（现在 ${filled.length} 位）`);
+  const out = [];
+  for (const row of filled) {
+    const name = squash(row.player);
+    const team = squash(row.team);
+    if (!name || !team) throw new Refuse(`观战的每一行要写选手和他看的队（「${name || team}」那一行少了一样）`);
+    const p = roster.find((x) => x.name === name);
+    if (!p) throw new Refuse(`选手库里没有「${name}」`);
+    if (!p.platform || p.platform === NO_STREAM) {
+      throw new Refuse(`「${name}」${p.platform ? "不开直播" : "的直播间还没填"}：观战的人要开直播（先在选手库里填上直播间）`);
+    }
+    if (!teams.includes(team)) throw new Refuse(`「${team}」不是这场的参赛队伍`);
+    if (out.some((o) => o.player === p.id)) throw new Refuse(`「${name}」写了两次（一位选手一场只能看一支队）`);
+    out.push({ player: p.id, team });
+  }
+  return out;
+}
+
+// 发布时：存的观战 → esports.json 的写法。人删了、不开直播了、看的队不在这场里了的，这次不放、提醒一句
+function observersOut(e, players, teams, notes) {
+  const out = [];
+  for (const o of e.observers ?? []) {
+    const p = players.find((x) => x.id === o.player);
+    const why = !p ? "有一位选手已经不在选手库里了" : p.platform === NO_STREAM ? `「${p.name}」不开直播（或直播间还没填）`
+      : !teams.includes(o.team) ? `「${p.name}」看的「${o.team}」不在这场里了` : "";
+    if (why) {
+      notes.push(`${eventLabel(e)}的观战：${why}，这次不放`);
+      continue;
+    }
+    const id = playerId(p);
+    if (!out.some((x) => x.id === id)) out.push({ id, team: o.team });
+  }
+  return out.slice(0, OBSERVERS_MAX);
+}
+
 // "（是不是「星火电竞」？）"：只找很像的（同 tools/esports.py 用 difflib 的意思，这里用编辑距离）
 export function closest(text, options) {
   let best = null;
@@ -338,7 +381,9 @@ export function checkEvents(events, knownTeams, now = null) {
 // ---------- 生成 esports.json（同 tools/esports.py 的 build） ----------
 
 // players、events 是网页存的样子（按添加的顺序）；switches 是线上现在的平台开关；now 毫秒；
-// teams 是 {队名: {"logo": 文件名, ...}}（logos.js 的 manual/teams.json），只放这次用到、文件名对的队，一个都没有就不写这一项
+// teams 是 {队名: {"logo": 文件名, ...}}（logos.js 的 manual/teams.json），只放这次用到、文件名对的队，一个都没有就不写这一项。
+// players 放选手库里的**全部**选手（2026-11-19 用户定的："默认职业选手就是主播"，Evo 电竞页的"主播"一块列所有开直播的选手；
+// 同 tools/esports.py 的 build(everyone=True)）；原来只放这几场赛事用到的队的选手
 export function build(players, events, switches, now, teams = {}) {
   // 直播间待填的（平台空着，比如从 Liquipedia 一键加进来的外国选手）不挡发布，这次按"不直播"发，提醒一句
   // （2026-11-18 用户在线上先这样改的，11-19 拿回 git）
@@ -380,13 +425,15 @@ export function build(players, events, switches, now, teams = {}) {
         if (same) notes.push(`${eventLabel(x.e)}的主舞台「${m.name}」和选手「${same.name}」是同一个直播间：Evo 里不会多放这一路`);
       }
     }
+    const watchers = observersOut(x.e, players, kept[kept.length - 1].teams, notes);  // 观战的人：有才写这一项
+    if (watchers.length) kept[kept.length - 1].observers = watchers;
   }
   const used = new Set(kept.flatMap((e) => e.teams));
   const data = {
     version: VERSION,
     updated: isoBeijing(Math.floor(now / 1000) * 1000),
     platforms: Object.fromEntries(Object.keys(PLATFORMS).map((key) => [key, switches?.[key] !== false])),
-    players: players.filter((p) => used.has(p.team) && p.platform).map((p) => ({ id: playerId(p), name: p.name, team: p.team,
+    players: players.map((p) => ({ id: playerId(p), name: p.name, team: p.team,
       platform: p.platform, room: p.room, liquipedia: p.liquipedia ?? "" })),
     events: kept,
   };
@@ -399,10 +446,12 @@ export function build(players, events, switches, now, teams = {}) {
   const examples = [...data.players.map((p) => p.name), ...data.events.map((e) => e.name),
                     ...data.events.flatMap((e) => (e.main ?? []).map((m) => m.name))].filter((t) => t.includes(EXAMPLE));
   if (examples.length) errors.push(`还有示例数据（${examples.slice(0, 5).join("、")}），删掉再发布`);
-  if (!kept.length) errors.push("没有可以发布的赛事（赛程是空的，或者都结束超过 7 天了）");
+  // 没有赛事也能发：选手（电竞页的"主播"一块）照样有用；连选手都没有才不发
+  if (!kept.length && !data.players.length) errors.push("没有可以发布的内容（选手库和赛程都是空的）");
+  else if (!kept.length) notes.push("没有进行中、即将开始或者 7 天内结束的赛事：这次只发选手（Evo 电竞页的主播一块）");
   if (!errors.length) {
     const checked = clean(data);  // Evo 读的时候会不会去掉哪一条（主舞台的路数也要一样）
-    const streams = (found) => found.events.reduce((n, e) => n + (e.main?.length ?? 0), 0);
+    const streams = (found) => found.events.reduce((n, e) => n + (e.main?.length ?? 0) + (e.observers?.length ?? 0), 0);
     if (checked.players.length !== data.players.length || checked.events.length !== data.events.length || streams(checked) !== streams(data)) {
       errors.push("生成的文件里有 Evo 会去掉的条目（名字里有特别的字符？），告诉 Claude 查一下");
     }
@@ -454,6 +503,10 @@ function cleanEvent(raw) {
   const event = { id: raw.id, name, type: raw.type, stage, start: raw.start, end: raw.end, teams: teams.slice(0, MAX_EVENT_TEAMS) };
   const main = Array.isArray(raw.main) ? unique(raw.main.slice(0, MAIN_MAX), cleanStream) : [];
   if (main.length) event.main = main;
+  // 观战的人（同 esports_data.clean_observer）：id 写法对、队在这场里；同一位只留第一次，最多 60 位
+  const observers = Array.isArray(raw.observers) ? unique(raw.observers.slice(0, 200), (o) => (o && typeof o === "object" && typeof o.id === "string"
+    && ID.test(o.id) && event.teams.includes(text(o.team, 40)) ? { id: o.id, team: text(o.team, 40) } : null)) : [];
+  if (observers.length) event.observers = observers.slice(0, OBSERVERS_MAX);
   return event;
 }
 

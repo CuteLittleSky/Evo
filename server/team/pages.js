@@ -231,6 +231,7 @@ details.note > summary .help { color: inherit; opacity: .85; }
 .match-row > a { min-height: 44px; display: inline-flex; align-items: center; }
 .banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .links { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.obs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }  /* 观战：选手、看哪支队 */
 /* 「数据」页（pages_stats.js）：图、图例、横条、数字表、悬停的小框 */
 .tiles.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }  /* 手机上两个一行 */
 .tile p.hero { font-size: 28px; line-height: 1.2; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }

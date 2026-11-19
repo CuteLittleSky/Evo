@@ -239,6 +239,24 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
   groups.live.sort((a, b) => parseIso(a.start) - parseIso(b.start));
   groups.upcoming.sort((a, b) => parseIso(a.start) - parseIso(b.start));
   groups.ended.sort((a, b) => parseIso(b.end) - parseIso(a.end));
+  // 观战的人（11-19 用户要的）：开直播的选手才能选（选手名用页面上那一份下拉 streamer-names），看的队从这场的参赛队里选
+  const nameOf = (pid) => playerItems.find((p) => p.id === pid)?.name ?? "（已删的选手）";
+  const streaming = playerItems.filter((p) => p.platform && p.platform !== NO_STREAM);
+  const observerRow = (e, o, i) => `<div class="obs-row">
+      <input class="input" name="obs_player" value="${escape(o ? nameOf(o.player) : "")}" list="streamer-names" placeholder="选手（开直播的）"
+        aria-label="观战的第 ${i + 1} 位选手" maxlength="40" autocomplete="off">
+      <select class="input" name="obs_team" aria-label="第 ${i + 1} 位在看哪支队"><option value="">看哪支队</option>
+        ${e.teams.map((t) => `<option value="${escape(t)}"${o?.team === t ? " selected" : ""}>${escape(t)}</option>`).join("")}</select></div>`;
+  const observersPanel = (e) => {
+    const list = e.observers ?? [];
+    const rows = [...list.map((o, i) => observerRow(e, o, i)), ...Array.from({ length: 2 }, (_, i) => observerRow(e, null, list.length + i))].join("");
+    return `<details class="act"><summary class="btn">观战${list.length ? `（${list.length}）` : ""}</summary><div class="panel panel-wide">
+      <form class="stack" method="post" action="/events/${e.id}/observers"><input type="hidden" name="rev" value="${e.rev}">
+        <p class="small muted">正在看别的队比赛、开着直播的选手（比如替补、别的队的选手）：放到他看的那支队下面，Evo 看直播页标"观战"。
+          换了看谁就在这里改；保存以后要再发布一次，Evo 最慢 5 分钟更新。清空一行就是去掉他。</p>
+        ${rows}
+        <div><button class="btn btn-primary" type="submit">保存观战</button></div></form></div></details>`;
+  };
   const row = (e) => {
     const old = now - parseIso(e.end) > 7 * 24 * 3600 * 1000;
     return `<li class="row">
@@ -247,10 +265,12 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
       <div class="row-meta"><span>${escape(e.type)}${e.stage ? ` · ${escape(e.stage)}` : ""}</span>
         <span>${escape(beijingText(parseIso(e.start)))}–${escape(beijingText(parseIso(e.end)).slice(11))}</span>
         <span>${e.teams.length} 支队</span>${e.main?.length ? `<span>主舞台 ${e.main.length} 路</span>` : ""}
+        ${e.observers?.length ? `<span>观战：${e.observers.map((o) => `${escape(nameOf(o.player))} 看 ${escape(o.team)}`).join("、")}</span>` : ""}
         ${old ? '<span class="badge">结束超过 7 天，不会发布</span>' : ""}<span>${by(e, now)}</span></div>
     </div>
     ${editable ? `<div class="row-actions">
       <details class="act"><summary class="btn">改</summary><div class="panel panel-wide">${eventForm(`/events/${e.id}/save`, e, teams, "保存")}</div></details>
+      ${status(e, now) === "ended" ? "" : observersPanel(e)}
       <a class="btn" href="/events?copy=${e.id}#add" title="照这一场填好添加表单（队伍、主舞台都带上）">复制</a>
       ${confirmDelete(`/events/${e.id}/delete`, e.name)}</div>` : ""}
   </li>`;
@@ -270,6 +290,7 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
 <div class="stack"><h1>赛程</h1>
   <p class="muted">时间都是北京时间。进行中、即将开始的会出现在 Evo 的赛事页；结束超过 7 天的不会发布。</p></div>
 ${notes({ error, ok })}
+${editable ? `<datalist id="streamer-names">${streaming.map((p) => `<option value="${escape(p.name)}">${escape(p.team)}</option>`).join("")}</datalist>` : ""}
 ${add}
 ${section("live", "进行中")}${section("upcoming", "即将开始")}${section("ended", "已结束")}
 ${items.length ? "" : `<p class="muted">还没有赛事。</p>`}

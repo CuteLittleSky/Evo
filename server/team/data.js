@@ -13,7 +13,7 @@
 // rev：每改一次加 1。表单里带着打开时的 rev，保存时对不上（别人刚改过）就不保存，提示看一眼再改。
 
 import { Refuse, randomHex, readDoc, updateDoc } from "./store.js";
-import { NO_STREAM, PLATFORMS, cleanEventFields, cleanPlayerFields, eventLabel, platformName, squash } from "./esports.js";
+import { NO_STREAM, PLATFORMS, cleanEventFields, cleanObservers, cleanPlayerFields, eventLabel, platformName, squash } from "./esports.js";
 import { pageFromInput } from "./liquipedia.js";
 
 export const PLAYERS = "manual/players.json";
@@ -142,6 +142,12 @@ export async function deletePlayer(bucket, by, id, now) {
     list.items = list.items.filter((x) => x !== item);
     return item;
   });
+  // 赛事里他在观战的，一起去掉
+  if ((await events(bucket)).some((e) => (e.observers ?? []).some((o) => o.player === gone.id))) {
+    await updateDoc(bucket, EVENTS, emptyList, (list) => {
+      for (const e of list.items) if (e.observers?.some((o) => o.player === gone.id)) e.observers = e.observers.filter((o) => o.player !== gone.id);
+    });
+  }
   await writeLog(bucket, by, now, `删除选手 ${playerText(gone)}`);
 }
 
@@ -243,6 +249,7 @@ export async function mergeTeam(bucket, by, from, to, now) {
     for (const e of list.items) {
       if (!e.teams.includes(oldName)) continue;
       e.teams = [...new Set(e.teams.map((t) => (t === oldName ? newName : t)))];
+      if (e.observers) e.observers = e.observers.map((o) => (o.team === oldName ? { ...o, team: newName } : o));  // 观战看的队跟着改
       stamp(e, by, now);
       n++;
     }
@@ -277,6 +284,7 @@ export async function renameTeam(bucket, by, from, to, now) {
     for (const e of list.items) {
       if (e.teams.includes(oldName)) {
         e.teams = e.teams.map((t) => (t === oldName ? newName : t));
+        if (e.observers) e.observers = e.observers.map((o) => (o.team === oldName ? { ...o, team: newName } : o));
         stamp(e, by, now);
       }
     }
@@ -393,10 +401,43 @@ export async function saveEvent(bucket, by, id, form, now) {
     if (item.teams.join("\n") !== oldTeams.join("\n") && lines.some((l) => l.startsWith("队伍：加了") || l.startsWith("队伍：去掉了"))) {
       lines[lines.findIndex((l) => l.startsWith("队伍："))] += `（现在 ${item.teams.length} 支）`;
     }
+    // 观战的人看的队从这场里去掉了：他也去掉
+    const dropped = (item.observers ?? []).filter((o) => !item.teams.includes(o.team));
+    if (dropped.length) {
+      item.observers = item.observers.filter((o) => item.teams.includes(o.team));
+      lines.push(`观战的 ${dropped.length} 位（看的队不在这场里了）也去掉了`);
+    }
     if (lines.length) stamp(item, by, now);
     return { label: eventLabel(item), lines };
   });
   if (diff.lines.length) await writeLog(bucket, by, now, `修改赛事${diff.label}：${diff.lines.join("；")}`);
+}
+
+// 一场赛事里观战的人（2026-11-19 用户要的）：form.observers 是表单里的几行 {player: 选手名, team}，整组换掉
+export async function saveObservers(bucket, by, id, form, now) {
+  const roster = await players(bucket);
+  const nameOf = (pid) => roster.find((p) => p.id === pid)?.name ?? "（已删的选手）";
+  const diff = await updateDoc(bucket, EVENTS, emptyList, (list) => {
+    const item = findItem(list, id, "赛事");
+    checkRev(item, form.rev, `「${item.name}」`);
+    const next = cleanObservers(form.observers ?? [], roster, item.teams);
+    const before = new Map((item.observers ?? []).map((o) => [o.player, o.team]));
+    const after = new Map(next.map((o) => [o.player, o.team]));
+    const parts = [];
+    const added = next.filter((o) => !before.has(o.player)).map((o) => `${nameOf(o.player)}（看 ${o.team}）`);
+    const removed = [...before.keys()].filter((p) => !after.has(p)).map(nameOf);
+    const moved = next.filter((o) => before.has(o.player) && before.get(o.player) !== o.team).map((o) => `${nameOf(o.player)} 改看 ${o.team}`);
+    if (added.length) parts.push(`加了 ${added.join("、")}`);
+    if (removed.length) parts.push(`去掉了 ${removed.join("、")}`);
+    if (moved.length) parts.push(moved.join("、"));
+    if (!parts.length && JSON.stringify(item.observers ?? []) !== JSON.stringify(next)) parts.push("顺序换了");
+    if (!parts.length) return null;
+    item.observers = next;
+    stamp(item, by, now);
+    return { label: eventLabel(item), text: parts.join("，") };
+  });
+  if (diff) await writeLog(bucket, by, now, `修改赛事${diff.label}的观战：${diff.text}`);
+  return Boolean(diff);
 }
 
 export async function deleteEvent(bucket, by, id, now) {
