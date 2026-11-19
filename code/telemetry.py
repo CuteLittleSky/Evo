@@ -55,10 +55,12 @@ import app_settings
 import evo_usage
 import game_aspect
 import game_lang
+import net_route
 import storage
 from paths import DB_PATH
 
-STATS_URL = os.environ.get("EVO_STATS_URL", "https://stats.evotracker.cn").rstrip("/")
+DEFAULT_STATS_URL = "https://stats.evotracker.cn"  # 正式地址：只有它连不上时，地图轮换、全体玩家才走国内备用线路（net_route）
+STATS_URL = os.environ.get("EVO_STATS_URL", DEFAULT_STATS_URL).rstrip("/")
 CONSENT_KEY, SINCE_KEY, ID_KEY = "telemetry_consent", "telemetry_since", "telemetry_id"
 PING_KEY, LAST_KEY = "telemetry_ping_day", "telemetry_last"
 MISSED_KEY = "telemetry_ping_missed"
@@ -241,7 +243,7 @@ def _post(path, body, timeout=TIMEOUT):
     except urllib.error.HTTPError as e:
         raise SendError(f"统计服务器拒绝了（{e.code}）") from e
     except OSError as e:
-        raise SendError("连不上统计服务器（网络不通，或者服务器暂时不可用）") from e
+        raise SendError(f"连不上统计服务器（{net_route.describe(e)}）") from e
     except ValueError as e:
         raise SendError("统计服务器的回答格式不对") from e
     if not isinstance(reply, dict) or reply.get("ok") is not True:

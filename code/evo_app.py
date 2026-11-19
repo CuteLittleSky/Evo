@@ -145,7 +145,7 @@ def start_update_checker(log, notify, stop, first_delay=UPDATE_FIRST_DELAY):
                     log(f"检查新版本：没查到（{result['error']}）")
                 elif result["newer"]:
                     version = result["latest"]["version"]
-                    log(f"检查新版本：发现 {version}")
+                    log(f"检查新版本：发现 {version}" + (f"（{result['note']}）" if result.get("note") else ""))
                     # 点过"以后再说"的版本、已经提醒过的版本都不再弹通知
                     if update_check.available() and app_settings.get("update_notified") != version:
                         notify(f"发现 Evo 新版本 {version}，打开 Evo 查看更新内容。", "Evo 有新版本")
@@ -182,6 +182,8 @@ def start_notice_checker(log, notify, stop, game_running, first_delay=NOTICE_FIR
                     if result["ok"]:
                         ids = "、".join(n["id"] for n in result["notices"])
                         text = f"公告：现在有 {len(result['notices'])} 条（{ids}）" if ids else "公告：现在没有公告"
+                        if result.get("via") == "relay":
+                            text += "（evotracker.cn 连不上，经国内备用线路读的）"
                     else:
                         text = f"公告：没读到（{result['error']}）"
                     if text != said:

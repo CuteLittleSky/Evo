@@ -33,6 +33,7 @@ import test_legends
 import test_light
 import test_map_rotation
 import test_mirrorchyan
+import test_net_route
 import test_notice
 import test_player_name
 import test_radar
@@ -105,12 +106,19 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "录入历史赛季数据（新表、录入模式、记录程序读数据页）": test_season_import,
          "\"赛季\"页面（录入按钮、待核对、保存、历史赛季表、设置页那一行）": test_seasons_page,
          "代码地图（docs/代码地图.md 是最新的、每个文件都分了组）": test_code_map,
+         "联网出错的原因、国内备用线路的入口（GitHub 上没有备用线路时照旧；测试地址不走）": test_net_route,
          "测试员 11-04 的截图（第 31 赛季 16:9、4:3：新地图、大厅分数、队友名字、经验值页段位）": test_testers_1104}
 
 try:  # 云同步（微信小程序）的测试只在开发者电脑上，不上传 GitHub（2026-10-24 用户决定）：有就一起跑
     import test_cloud_sync
 
     TESTS["云同步（二维码、绑定、上传、重传、删除、连不上、手机上解绑、设置页）"] = test_cloud_sync
+except ImportError:
+    pass
+try:  # 国内备用线路（2026-11-19）：和云同步一样只在开发者电脑上
+    import test_cloud_relay
+
+    TESTS["国内备用线路（经派圈助手的云环境取公开文件、记住连不上、两边都不行时说两边的原因）"] = test_cloud_relay
 except ImportError:
     pass
 

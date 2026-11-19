@@ -26,6 +26,11 @@
 - [ ] **Mirror酱（国内渠道，0.5.4 起）**：代码、设置页、隐私说明都做完了，官网（`site/`）11-05 随 0.5.4 上传（提交 93bad11，合并进 main；做法见 docs/底座.md"一键更新"的国内渠道）；PR #4 已合并、上传 Token 已设（11-04）。0.5.4 11-05 已发：GitHub Actions 两个 workflow 都跑成功，`python code/mirrorchyan.py` 查到 0.5.4。剩下：
   - [ ] 用户（Mirror酱 11-05 回复）：要一份增量包的 `changes.json`（或说一下路径带不带最外层的 `Evo/`），拿来在本机核对 `update_patch.compose`（代码两种都认，只是想用真东西验证一遍）
   - [ ] 用户：告诉 Mirror酱 他们那边 v0.5.3 的更新日志是乱码（UTF-8 被当成 GBK，"新增"成了"鏂板"），是同步更新日志那一步的问题
+- [ ] **国内备用线路**（2026-11-19：有的国内网络按域名拦了 evotracker.cn，公告、赛程、地图轮换、全体玩家取不到；用户定经派圈助手的云环境取，代码、测试做完了，见 docs/底座.md"有的国内网络连不上 evotracker.cn"）。还要：
+  - [ ] 用户：告诉合作者要用他的云环境（`evo_pc` 加了 `public`，只有直连失败的玩家走，公告 3 小时一次、赛程 15 分钟内不重下）；派圈仓库 d6da2e9、8dc53b7 还没推送
+  - [ ] 用户：部署派圈的 `evo_pc`（先部署，再发 Evo）；部署完在本机 `python code/cloud_relay.py notice` 试通
+  - [ ] 隐私政策（`PRIVACY.md` 第一、三节，英文那段，官网 `site/privacy.html`）：原文给用户看过、点头再改
+  - [ ] 发版后：请那位校园网的玩家更新，看日志里"公告：现在有 … 条（evotracker.cn 连不上，经国内备用线路读的）"
 - [ ] **腾讯云 COS 被封（2026-10-31 发现）**：存储桶 `evo-dl-1312774356` 的所有 GET（含签名、含不存在的文件）都回 451 `UnavailableForLegalReasons`（"content illegal"），HEAD 还是 200。0.4.3、0.5.0 的一键更新会自动换 dl.evotracker.cn（看过 `updater._fetch`、`update_check.fetch_latest`）；官网国内下载已改成弹提示框（见 docs/底座.md）。
   - [ ] 用户（10-31 说晚点看）：腾讯云国内站主账号看站内信 / 安全管控中心的处置记录（封了哪个文件、什么原因），再定申诉还是换别家
   - [ ] 2026-11-01 用户决定：找到替代方案之前发版都跳过 COS（`tools/release.py` 的 `COS_PAUSED = True`，`publish.py`、`notice.py` 都不传 COS，见 docs/底座.md"发布"）。恢复后：`COS_PAUSED` 改回 False，**先把线上最新的 `latest.json`、`notice.json` 补传到 COS**（不然 0.4.3 起的 Evo 先读到 COS 上旧的，收不到新版本提醒）；官网两个 `data-mirror` 链接改回 COS 地址、删掉 index.html 最下面的提示框（不删的话 `publish.py` 会因为海外下载链接有 2 处停下）、重新打开那条转发规则

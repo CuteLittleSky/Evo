@@ -47,6 +47,7 @@ from urllib.parse import urlparse
 
 import app_settings
 import mirrorchyan
+import net_route
 from storage import APP_VERSION
 
 UPDATE_URL = os.environ.get("EVO_UPDATE_URL", "https://dl.evotracker.cn/latest.json")
@@ -72,7 +73,9 @@ MAX_BYTES = 64 * 1024  # latest.json 只有几百字节，多的不读
 
 
 class UpdateError(Exception):
-    pass
+    def __init__(self, message, unreachable=False):
+        super().__init__(message)
+        self.unreachable = unreachable  # True：连不上（不是格式不对）
 
 
 def version_tuple(text):
@@ -153,14 +156,18 @@ def safe_download(info):
 
 def fetch_latest(timeout=TIMEOUT):
     """下载并检查 latest.json，返回 {"version", "date", "page", "notes", "download"}（download 没有时为 None）。
-    先读 COS 上的，读不到（或格式不对）再读 dl.evotracker.cn 的；都不行抛出 UpdateError（说的是第一个的原因）。"""
-    first = None
+    先读 COS 上的，读不到（或格式不对）再读 dl.evotracker.cn 的；都不行抛出 UpdateError，写明每个地址各自的原因
+    （2026-11-19 起；原来只说第一个的，COS 从 10-31 起一直回 451，dl.evotracker.cn 的原因被盖住了）。"""
+    errors = []
     for url in LATEST_URLS:
         try:
             return _fetch_latest(url, timeout)
         except UpdateError as e:
-            first = first or e
-    raise first
+            errors.append((url, e))
+    reasons = "；".join(f"{net_route.host_label(url)}：{e}" for url, e in errors)
+    if any(e.unreachable for _url, e in errors):
+        raise UpdateError(f"连不上更新服务器（{reasons}）", unreachable=True)
+    raise UpdateError(f"更新服务器返回的版本信息格式不对（{reasons}）")
 
 
 def _fetch_latest(url, timeout):
@@ -170,13 +177,13 @@ def _fetch_latest(url, timeout):
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read(MAX_BYTES)
     except OSError as e:
-        raise UpdateError("连不上更新服务器（网络不通，或者服务器暂时不可用）") from e
+        raise UpdateError(net_route.describe(e), unreachable=True) from e
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError:
         data = None
     if not isinstance(data, dict) or version_tuple(data.get("version")) is None:
-        raise UpdateError("更新服务器返回的版本信息格式不对")
+        raise UpdateError("版本信息格式不对")
     notes = data.get("notes") if isinstance(data.get("notes"), list) else []
     return {
         "version": str(data["version"]).strip(),
@@ -206,13 +213,15 @@ def check(timeout=TIMEOUT, attempts=1):
         except UpdateError as e:
             error = e
     asking.join(timeout + 5)
+    note = None
     if latest is None and mirror.get("answer"):
         latest = from_mirror(mirror["answer"])  # latest.json 读不到：用 Mirror酱 查到的
+        note = f"latest.json 没读到（{error}），用的是 Mirror酱 查到的版本"
     if latest is None:
         result = {"ok": False, "error": str(error), "checked_at": checked_at}
     else:
         newer = version_tuple(latest["version"]) > version_tuple(APP_VERSION)
-        result = {"ok": True, "latest": latest, "newer": newer, "checked_at": checked_at}
+        result = {"ok": True, "latest": latest, "newer": newer, "checked_at": checked_at, "note": note}
         app_settings.set_value("update_latest", latest if newer else None)
     app_settings.set_value("update_last_check", result)
     return result

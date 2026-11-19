@@ -8,6 +8,8 @@
 - 只有面板进程下载（Evo 窗口开着、打开总览页时），托盘和记录程序不下载。存在数据文件夹的 map_rotation.json：
   现在这张到点了就当作下一张在打；有一个模式的"现在这张"到点了就重新下载（页面上的倒计时到点时也会叫一次）
 - 时间：服务器回答里带着它现在的时间，下载时和电脑的时间比，记下差多少，电脑时钟不准时倒计时也对
+- 统计服务器连不上时（有的国内网络按域名拦了 evotracker.cn）经国内备用线路取同一份回答（net_route，2026-11-19 用户决定；
+  cloud_relay.py 只在开发者电脑上）。备用线路给的可能是几分钟前存的，回答里的"现在"要加上它旧了的那几秒
 - 英文名 → 简体：config/rotation.json，查不到的显示英文（不编译名）
 
 测试时把 telemetry.STATS_URL 换成本机的测试地址（或者设环境变量 EVO_STATS_URL）。
@@ -23,6 +25,7 @@ import urllib.request
 from datetime import datetime
 
 import app_settings
+import net_route
 import storage
 import telemetry
 from paths import CONFIG_DIR, DB_PATH
@@ -106,25 +109,39 @@ def fetch(now=None):
     if not enabled():
         return {"ok": False, "error": "没有打开"}
     with _lock:
-        request = urllib.request.Request(f"{telemetry.STATS_URL}/v1/maps", headers={
-            "User-Agent": f"Evo/{storage.APP_VERSION}", "Accept-Encoding": "gzip"})
-        try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                raw = response.read(MAX_SIZE + 1)
-                gzipped = response.headers.get("Content-Encoding") == "gzip"
+        url = f"{telemetry.STATS_URL}/v1/maps"
+
+        def primary():
+            request = urllib.request.Request(url, headers={
+                "User-Agent": f"Evo/{storage.APP_VERSION}", "Accept-Encoding": "gzip"})
+            try:
+                with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                    raw = response.read(MAX_SIZE + 1)
+                    gzipped = response.headers.get("Content-Encoding") == "gzip"
+            except OSError as e:
+                problem = net_route.unreachable(url, e)
+                if problem is None:  # 服务器回了 4xx：换条线路也一样
+                    raise
+                raise problem from e
             if len(raw) > MAX_SIZE:
                 raise ValueError("太大")
-            answer = json.loads((gzip.decompress(raw) if gzipped else raw).decode("utf-8"))
+            return gzip.decompress(raw) if gzipped else raw
+
+        try:
+            # 正式地址连不上时经国内备用线路取同一份（net_route，2026-11-19 用户决定），age 是那份旧了多少秒
+            body, _via, age = net_route.get("maps", primary, official=telemetry.STATS_URL == telemetry.DEFAULT_STATS_URL)
+            answer = json.loads(body.decode("utf-8"))
         except urllib.error.HTTPError as e:
             return {"ok": False, "error": f"服务器暂时取不到（{e.code}）"}
         except (ValueError, EOFError, gzip.BadGzipFile):
             return {"ok": False, "error": "服务器的回答格式不对"}
-        except OSError:
-            return {"ok": False, "error": "连不上服务器"}
+        except OSError as e:
+            return {"ok": False, "error": f"连不上服务器（{net_route.describe(e)}）"}
         modes = _modes(answer.get("modes")) if isinstance(answer, dict) and answer.get("v") == FORMAT else None
         server_now = answer.get("now") if isinstance(answer, dict) else None
         if not modes or not isinstance(server_now, (int, float)):
             return {"ok": False, "error": "服务器的回答格式不对"}
+        server_now += age  # 备用线路存着的回答里的"现在"是取到那时的
         local_now = time.time() if now is None else now
         data = {"fetched_at": datetime.fromtimestamp(local_now).strftime("%Y-%m-%d %H:%M:%S"),
                 "offset": round(server_now - local_now), "modes": modes}

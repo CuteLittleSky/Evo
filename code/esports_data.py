@@ -43,13 +43,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import live_status
+import net_route
 from paths import DB_PATH
 from storage import APP_VERSION
 
 VERSION = 1
-URL = os.environ.get("EVO_ESPORTS_URL", "https://dl.evotracker.cn/esports.json")
-CACHE_PATH = DB_PATH.parent / "esports.json"  # {"fetched_at": 下载的时间, "data": 清理过的内容}
+DEFAULT_URL = "https://dl.evotracker.cn/esports.json"
+URL = os.environ.get("EVO_ESPORTS_URL", DEFAULT_URL)
+CACHE_PATH = DB_PATH.parent / "esports.json"  # {"fetched_at": 下载的时间, "data": 清理过的内容, "via": 从哪取的}
 TIMEOUT = 10
+RELAY_FRESH = 15 * 60  # 秒：走国内备用线路取到的，这么久以内不重下（派圈助手的云环境每月有调用上限，2026-11-19 用户定的）
 MAX_BYTES = 1_000_000
 FRESH_SECONDS = 60     # 这么久以内下载过就不重下
 RECENT_DAYS = 7        # "最近结束"只留这么多天
@@ -184,37 +187,58 @@ def _address(url):
 
 def fetch(url=None, timeout=TIMEOUT):
     """下载并检查 esports.json，返回清理过的内容；连不上、格式不对抛 EsportsError。"""
-    request = urllib.request.Request(_address(url or URL),
-                                     headers={"User-Agent": f"Evo/{APP_VERSION}", "Cache-Control": "no-cache"})
+    return _fetch_routed(url, timeout)[0]
+
+
+def _fetch_routed(url=None, timeout=TIMEOUT):
+    """同 fetch，返回 (清理过的内容, 从哪取的：net_route.DIRECT / RELAY)。正式地址连不上时经国内备用线路取同一个文件
+    （net_route.get，2026-11-19 用户决定；cloud_relay.py 只在开发者电脑上），取回来的照样过 clean()。
+    地址换成了测试文件、本机文件（EVO_ESPORTS_URL、url）时不走备用线路。"""
+    address = _address(url or URL)
+
+    def primary():
+        request = urllib.request.Request(address, headers={"User-Agent": f"Evo/{APP_VERSION}", "Cache-Control": "no-cache"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read(MAX_BYTES)
+        except ValueError as e:
+            raise EsportsError(f"连不上（{e}）") from e
+        except OSError as e:
+            problem = net_route.unreachable(address, e)
+            if problem is None:  # 服务器回了 4xx：换条线路也一样
+                raise EsportsError(f"连不上（{net_route.labeled(address, e)}）") from e
+            raise problem from e
+
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(MAX_BYTES)
-    except (OSError, ValueError) as e:
+        body, via, _age = net_route.get("esports", primary, official=address == DEFAULT_URL)
+    except net_route.Unreachable as e:
         raise EsportsError(f"连不上（{e}）") from e
     try:
         data = json.loads(body.decode("utf-8-sig"))
     except ValueError:
         raise EsportsError("赛事文件的格式不对") from None
-    return clean(data)
+    return clean(data), via
 
 
 def cached():
-    """上次存下的：{"fetched_at", "data"}；没有、坏了返回 None。"""
+    """上次存下的：{"fetched_at", "data", "via"}；没有、坏了返回 None。"""
     try:
         saved = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
-        return {"fetched_at": float(saved["fetched_at"]), "data": clean(saved["data"])}
+        return {"fetched_at": float(saved["fetched_at"]), "data": clean(saved["data"]), "via": saved.get("via")}
     except (OSError, ValueError, KeyError, TypeError, EsportsError):
         return None
 
 
 def get(force=False, fresh=FRESH_SECONDS):
-    """打开赛事页、看直播页时调用（fresh 秒以内下载过就不重下）。返回 {"data": 赛事数据（一次都没读到过是 None）, "ok": 是不是最新的,
-    "error": 没读到的原因, "fetched_at": data 是什么时候下载的}。"""
+    """打开赛事页、看直播页时调用（fresh 秒以内下载过就不重下；上次是走国内备用线路取的，至少 RELAY_FRESH 秒以内不重下）。
+    返回 {"data": 赛事数据（一次都没读到过是 None）, "ok": 是不是最新的, "error": 没读到的原因, "fetched_at": data 是什么时候下载的}。"""
     saved = cached()
+    if saved and saved["via"] == net_route.RELAY:
+        fresh = max(fresh, RELAY_FRESH)
     if saved and not force and 0 <= time.time() - saved["fetched_at"] < fresh:
         return {"data": saved["data"], "ok": True, "error": None, "fetched_at": saved["fetched_at"]}
     try:
-        data = fetch()
+        data, via = _fetch_routed()
     except EsportsError as e:
         return {"data": saved["data"] if saved else None, "ok": False, "error": str(e),
                 "fetched_at": saved["fetched_at"] if saved else None}
@@ -222,7 +246,7 @@ def get(force=False, fresh=FRESH_SECONDS):
     try:  # 先写临时文件再换过去，写到一半断电也不会留下半个文件
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         temp = CACHE_PATH.with_suffix(".tmp")
-        temp.write_text(json.dumps({"fetched_at": now, "data": data}, ensure_ascii=False), encoding="utf-8")
+        temp.write_text(json.dumps({"fetched_at": now, "data": data, "via": via}, ensure_ascii=False), encoding="utf-8")
         temp.replace(CACHE_PATH)
     except OSError:
         pass

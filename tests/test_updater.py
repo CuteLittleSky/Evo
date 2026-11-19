@@ -217,7 +217,8 @@ def latest_checks(base):
 
     out["第一个地址 404：改读下一个地址的 latest.json"] = fetch("/latest-missing.json", "/latest-good.json")["version"] == "9.6.1"
     out["第一个地址回的不是版本信息：改读下一个的"] = fetch("/latest-junk.json", "/latest-good.json")["version"] == "9.6.1"
-    out["都读不到：说第一个的原因"] = "连不上" in fetch("/latest-missing.json", "/latest-junk.json")
+    both = fetch("/latest-missing.json", "/latest-junk.json")
+    out["都读不到：写明每个地址各自的原因"] = "连不上" in both and "HTTP 404" in both and "格式不对" in both
     Handler.requests.clear()
     fetch("/latest-good.json", "/latest-junk.json")
     out["第一个地址读到了：不再读下一个"] = [r[0] for r in Handler.requests] == ["/latest-good.json"]

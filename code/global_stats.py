@@ -3,7 +3,8 @@
 - 只有开了匿名统计的人才能看（telemetry.consent() 为 True）。没开时一个请求都不发，页面上是锁住的样子，
   可以在那里直接开启。这个限制只在 Evo 里：汇总本身在服务器上是公开的（Evo 开源，拦不住会改代码的人；以后官网也能用同一份）
 - 汇总由统计服务器每天算一次（server/stats/worker.js 的 makeSummary，格式和每一项怎么算见那里），Evo 只下载结果：
-  GET https://stats.evotracker.cn/v1/summary，几十 KB，不带匿名编号。打开"全体玩家"时下载，存在数据文件夹
+  GET https://stats.evotracker.cn/v1/summary，几十 KB，不带匿名编号（连不上时经国内备用线路取同一份：net_route，
+  2026-11-19 用户决定；cloud_relay.py 只在开发者电脑上）。打开"全体玩家"时下载，存在数据文件夹
   （global_stats.json），FRESH_HOURS 小时内不重复下载；右上角的刷新按钮马上重新下载。
   只有 Evo 窗口（面板进程）下载，托盘和记录程序不下载
 - 服务器能看到的和打开一个网页一样（IP 地址、时间；见隐私政策第三节）
@@ -23,6 +24,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 
 import game_lang
+import net_route
 import storage
 import telemetry
 from paths import DB_PATH
@@ -90,21 +92,37 @@ def fetch(now=None):
     if not allowed():
         return {"ok": False, "error": "没有开启匿名统计"}
     with _lock:
-        request = urllib.request.Request(f"{telemetry.STATS_URL}/v1/summary", headers={
-            "User-Agent": f"Evo/{storage.APP_VERSION}", "Accept-Encoding": "gzip"})
-        try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                raw = response.read(MAX_SIZE + 1)
-                gzipped = response.headers.get("Content-Encoding") == "gzip"
+        url = f"{telemetry.STATS_URL}/v1/summary"
+
+        def primary():
+            request = urllib.request.Request(url, headers={
+                "User-Agent": f"Evo/{storage.APP_VERSION}", "Accept-Encoding": "gzip"})
+            try:
+                with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                    raw = response.read(MAX_SIZE + 1)
+                    gzipped = response.headers.get("Content-Encoding") == "gzip"
+            except OSError as e:
+                problem = net_route.unreachable(url, e)
+                if problem is None:  # 服务器回了 4xx：换条线路也一样
+                    raise
+                raise problem from e
             if len(raw) > MAX_SIZE:
                 raise ValueError("太大")
-            summary = json.loads((gzip.decompress(raw) if gzipped else raw).decode("utf-8"))
+            return gzip.decompress(raw) if gzipped else raw
+
+        try:
+            # 正式地址连不上时经国内备用线路取同一份（net_route，2026-11-19 用户决定；cloud_relay.py 只在开发者电脑上）
+            body, _via, _age = net_route.get("summary", primary,
+                                             official=telemetry.STATS_URL == telemetry.DEFAULT_STATS_URL)
+            if len(body) > MAX_SIZE:
+                raise ValueError("太大")
+            summary = json.loads(body.decode("utf-8"))
         except urllib.error.HTTPError as e:
             return {"ok": False, "error": f"统计服务器出错了（{e.code}）"}
         except (ValueError, EOFError, gzip.BadGzipFile):
             return {"ok": False, "error": "统计服务器的回答格式不对"}
-        except OSError:
-            return {"ok": False, "error": "连不上统计服务器（网络不通，或者服务器暂时不可用）"}
+        except OSError as e:
+            return {"ok": False, "error": f"连不上统计服务器（{net_route.describe(e)}）"}
         if not _valid(summary):
             return {"ok": False, "error": "统计服务器的回答格式不对"}
         data = {"fetched_at": (now or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"), "summary": summary}

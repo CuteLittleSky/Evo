@@ -64,7 +64,7 @@ SECTIONS = [
         "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/evo_usage.py", "code/icons.py",
         "code/sounds.py",
         "code/webview2.py", "code/update_check.py", "code/update_patch.py", "code/updater.py", "code/mirrorchyan.py",
-        "code/telemetry.py", "code/notice_check.py",
+        "code/telemetry.py", "code/notice_check.py", "code/net_route.py",
         ("server/stats/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
                           "wrangler.toml 部署配置"),
         ("server/team/", "赛事数据的协作网页 team.evotracker.cn（Cloudflare Worker + 不公开的 R2）：worker.js 路由，"
@@ -80,7 +80,8 @@ SECTIONS = [
     # 只在本机、不进 git 的文件（.gitignore 里）扫不到，固定写一段
     ("小程序", None, "只在本机、不进 git（见 docs/小程序.md）：`miniprogram/`，和 Evo 里绑定、上传战绩的 "
                      "`code/cloud_sync.py`、`code/panel_cloud.py`、`panel/templates/_cloud.html`、"
-                     "`tests/test_cloud_sync.py`、`tools/cloud_ping.py`"),
+                     "`tests/test_cloud_sync.py`、`tools/cloud_ping.py`；国内备用线路 `code/cloud_relay.py`、`tests/test_cloud_relay.py`"
+                     "（evotracker.cn 连不上时经派圈助手的云环境取公开文件）"),
     ("开发用的脚本（tools/）", "打包、安装、发布", [
         "tools/build.py", "tools/evo.spec", "tools/install.py", "tools/release.py", "tools/publish.py",
         "tools/cos.py", "tools/notice.py", "tools/esports.py", "tools/team.py", "tools/team_logos.py", "tools/build_tester.py", "tools/tester.spec", "tools/code_path.py",

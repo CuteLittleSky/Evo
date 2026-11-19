@@ -5,6 +5,12 @@
 请求里只带"Evo/<版本号>"，不发送任何战绩、截图或电脑信息。托盘程序每 30 分钟读一次（用户定的），
 打开窗口时上次读过了 5 分钟也读一次（evo_app.start_notice_checker）。连不上、格式不对都当作"这次没读到"，
 留着上次读到的。文件放在 R2 上、不经过统计服务器：统计服务器（Worker、D1）免费版有每天的上限，超了就报错。
+没读到时写明每个地址各自的原因（net_route.labeled，2026-11-19 起；原来只写第一个地址的，COS 从 10-31 起一直回 451，
+dl.evotracker.cn 的原因被盖住了）。
+
+国内备用线路（2026-11-19 用户决定，net_route.get）：有的国内网络按域名拦了 evotracker.cn，两个地址都连不上时经派圈助手的
+云环境取同一个 notice.json（cloud_relay.py，只在开发者电脑上；GitHub 上的 Evo 没有）。只有正式地址才走（测试、
+EVO_NOTICE_URL 换了地址时不走）。走备用线路读到的，RELAY_EVERY（3 小时）以内不再读：派圈助手的云环境每月有调用上限。
 
 notice.json 由 tools/notice.py 上传到 R2 和 COS：
     {"notices": [{"id": "20261102-1530", "level": "important", "text": "……", "link": "https://evotracker.cn/……",
@@ -37,14 +43,17 @@ from datetime import date
 from urllib.parse import urlparse
 
 import app_settings
+import net_route
 import update_check
 from storage import APP_VERSION
 
-NOTICE_URL = os.environ.get("EVO_NOTICE_URL", "https://dl.evotracker.cn/notice.json")
+DEFAULT_URL = "https://dl.evotracker.cn/notice.json"
+NOTICE_URL = os.environ.get("EVO_NOTICE_URL", DEFAULT_URL)
 # 先读 COS 上的（国内快），读不到再读 dl.evotracker.cn 的；设了 EVO_NOTICE_URL 时只读它
 URLS = ([f"{update_check.COS_BASE}/notice.json"] if update_check.COS_BASE and not os.environ.get("EVO_NOTICE_URL")
         else []) + [NOTICE_URL]
 TIMEOUT = update_check.TIMEOUT
+RELAY_EVERY = 3 * 3600  # 秒：走国内备用线路读到的，这么久以内不再读（2026-11-19 用户定的，平常是 30 分钟一次）
 MAX_BYTES = 64 * 1024
 MAX_NOTICES = 5  # 一次最多显示几条
 TEXT_MAX = 200
@@ -126,24 +135,43 @@ def clean_list(raw):
 
 
 def fetch(timeout=TIMEOUT):
-    """下载并检查 notice.json，返回公告列表（可能是空的）。先读 COS 上的，读不到（或格式不对）再读下一个；
-    都不行抛出 NoticeError（说的是第一个的原因）。"""
-    first = None
-    for url in URLS:
-        try:
-            return _fetch(url, timeout)
-        except NoticeError as e:
-            first = first or e
-    raise first
+    """下载并检查 notice.json，返回公告列表（可能是空的）。都不行抛 NoticeError（说的是每个地址各自的原因）。"""
+    return _fetch_routed(timeout)[0]
 
 
-def _fetch(url, timeout):
-    request = urllib.request.Request(url, headers={"User-Agent": f"Evo/{APP_VERSION}", "Cache-Control": "no-cache"})
+def _fetch_routed(timeout):
+    """同 fetch，返回 (公告列表, 从哪读到的：net_route.DIRECT / RELAY)。先读 COS 上的，读不到（或格式不对）再读下一个；
+    有地址是连不上（不是格式不对、不是 4xx）时，再走国内备用线路。"""
+    def primary():
+        errors, unreachable = [], False
+        for url in URLS:
+            try:
+                body = _download(url, timeout)
+                _parse(body)
+                return body
+            except NoticeError as e:
+                errors.append(f"{net_route.host_label(url)}：{e}")
+            except OSError as e:
+                errors.append(net_route.labeled(url, e))
+                unreachable = unreachable or net_route.unreachable(url, e) is not None
+        if unreachable:
+            raise net_route.Unreachable("；".join(errors))
+        raise NoticeError("；".join(errors))
+
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(MAX_BYTES)
-    except OSError as e:
+        body, via, _age = net_route.get("notice", primary, official=URLS[-1] == DEFAULT_URL)
+    except net_route.Unreachable as e:
         raise NoticeError(f"连不上（{e}）") from e
+    return _parse(body), via
+
+
+def _download(url, timeout):
+    request = urllib.request.Request(url, headers={"User-Agent": f"Evo/{APP_VERSION}", "Cache-Control": "no-cache"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read(MAX_BYTES)
+
+
+def _parse(body):
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError:
@@ -154,19 +182,24 @@ def _fetch(url, timeout):
 
 
 def check(timeout=TIMEOUT):
-    """读一次公告并存下。开关关着时不联网，返回 None；否则返回 {"ok": True, "notices": [...]}
-    或 {"ok": False, "error": 原因}。读到了就换成新的（没有公告时是空的：撤下的公告不再显示）。"""
+    """读一次公告并存下。开关关着、走备用线路读到的还不到 RELAY_EVERY 时不联网，返回 None；否则返回
+    {"ok": True, "notices": [...], "via": 从哪读到的} 或 {"ok": False, "error": 原因}。
+    读到了就换成新的（没有公告时是空的：撤下的公告不再显示）。"""
     if not enabled():
         return None
+    old = app_settings.get(STATE_KEY)
+    old = old if isinstance(old, dict) else {}
+    checked = old.get("checked")
+    if (old.get("ok") is True and old.get("via") == net_route.RELAY and isinstance(checked, (int, float))
+            and 0 <= time.time() - checked < RELAY_EVERY):
+        return None
     try:
-        notices = fetch(timeout)
+        notices, via = _fetch_routed(timeout)
     except NoticeError as e:
-        old = app_settings.get(STATE_KEY)
-        old = old if isinstance(old, dict) else {}
         app_settings.set_value(STATE_KEY, {"list": clean_list(old.get("list")), "checked": time.time(), "ok": False})
         return {"ok": False, "error": str(e)}
-    app_settings.set_value(STATE_KEY, {"list": notices, "checked": time.time(), "ok": True})
-    return {"ok": True, "notices": notices}
+    app_settings.set_value(STATE_KEY, {"list": notices, "checked": time.time(), "ok": True, "via": via})
+    return {"ok": True, "notices": notices, "via": via}
 
 
 def due(seconds):

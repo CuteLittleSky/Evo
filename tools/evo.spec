@@ -13,7 +13,7 @@ ASSETS = subprocess.run(["git", "ls-files", "-z", "assets"], cwd=ROOT, capture_o
 # （画二维码的 qr.py 2026-11-17 起是公开的：看直播页的 B站扫码登录也用它，总是打进安装包）
 # （2026-10-24 用户决定）。小程序上线以前不打进安装包（0.4.0–0.4.3），Evo 找不到它们就不显示那一栏、不同步；2026-10-29 派圈助手过审发布，0.5.0 起打进去（用户确认）
 WITH_CLOUD = True
-CLOUD_MODULES = ["cloud_sync", "panel_cloud"]
+CLOUD_MODULES = ["cloud_sync", "panel_cloud", "cloud_relay"]  # cloud_relay：国内备用线路（2026-11-19）
 
 datas = [
     (os.path.join(ROOT, "config"), "config"),                    # 识别规则
