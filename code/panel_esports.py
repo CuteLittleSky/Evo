@@ -309,8 +309,6 @@ def play(player_id):
         return jsonify(ok=False, reason="upstream", detail=str(e))
     if getattr(module, "DIRECT", False):  # 页面直接连平台的视频服务器
         return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], stream=found["url"], kind="flv")
-    if found.get("note"):  # 取地址的模块临时换了做法（B站：HLS 不通改用 FLV）：记一笔，玩家反馈时好查
-        log.info("看直播：%s 房间 %s %s", player["platform"], player["room"], found["note"])
     module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
     return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], kind=found.get("kind", "flv"),
                    stream=url_for("esports.stream", player_id=player_id, q=found["rate"], s=_slot(), t=current_app.config["TOKEN"]))
@@ -383,6 +381,7 @@ def stream(player_id):
         log.info("看直播：%s 房间 %s 播不了：%s", player["platform"], player["room"], e)
         return jsonify(ok=False, reason=e.code, detail=str(e)), 502
     mimetype = getattr(relay, "mimetype", "video/x-flv")
+    mimetype = getattr(relay, "mimetype", mimetype)  # B站：接上以后才知道是 FLV 还是 TS
     log.info("看直播：开始中转 %s 房间 %s（清晰度 %s，%s%s）", player["platform"], player["room"], rate, mimetype,
              "" if slot == SLOTS[0] else f"，第 {int(slot) + 1} 格")
     return Response(relay.stream(), mimetype=mimetype, headers={"Cache-Control": "no-store"})

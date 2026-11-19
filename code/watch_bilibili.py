@@ -9,11 +9,13 @@
   参考项目 DTV 记着国内 FLV 直连 404、HLS 直连 200，有的服务器还要求请求带来源页（2026-11-19 实测 d1--ov-gotcha05：
   不带来源页 403）。所以改成：**优先 HLS（TS）**，Evo 的后台去取、带上 B站自己网页那样的来源页，接成一条流转给页面
   （hls_relay.py）；这个房间没有 HLS 才用 FLV（flv_relay.py，同样经过中转）。几个服务器按顺序试，名字带 mcdn 的排最后
-- **开播前先试一下 HLS 通不通（2026-11-19 晚上加的）**：用户录介绍视频时发现大部分 B站房间"很久才打开、自带的播放器播不了"。
-  实测（瑞士，登录着）：官方赛事台的 HLS 播放列表 1 秒就回；普通主播的房间 B站照样给了 HLS 的地址，播放列表却一直不回
-  （等 45 秒也不回），同一个房间的 FLV 2–5 秒出第一块数据。原来只要 B站给了 HLS 就死等它，等到超时才退回官方播放器。
-  现在取到地址以后同时问一下几个播放列表（hls_alive()，最多等 PROBE_SECONDS 秒）：通的排前面；都不通就这一次改用 FLV，
-  并记住这个房间 HLS_DEAD_SECONDS 秒以内不再试。没有 FLV 可退时照旧用 HLS
+- **先接 FLV，接不上再接 HLS（2026-11-19 晚上改的，上面"优先 HLS"作废）**：用户录介绍视频时发现大部分 B站房间"很久才打开、
+  自带的播放器播不了"。实测（瑞士，登录着）：官方赛事台的 HLS 播放列表 1 秒就回；普通主播的房间 B站照样给了 HLS 的地址，
+  播放列表却一直不回（等 45 秒也不回），同一个房间的 FLV 2–5 秒出第一块数据、约 10 Mbps。开源的 PureLive
+  （https://github.com/wzgrx/PureLive ，AGPL-3.0，用户觉得它效果更好）也是这个顺序：http_stream 的 FLV 排在 HLS 前面，
+  名字带 mcdn 的排最后，一条线不行换下一条。FLV 不通时是马上回错（403 / 404），HLS 不通时是一直不回，所以先试 FLV 等得少。
+  做法（open_relay()）：两种地址都有时先开 FLV 的中转（每个服务器最多等 FLV_WAIT 秒），没接上再开 HLS 的；
+  页面里的 mpegts.js 自己认得出来的是 FLV 还是 TS，所以哪一种接上了不用提前告诉它
 - 登录凭证只在这里向 B站要地址时用，不交给页面；视频地址里是 B站签好的参数，不带登录凭证
 - 房间号写短号也行（B站自己会换成真实房间号）
 接口地址在 config/watch.json 的 bilibili 里。
@@ -38,10 +40,8 @@ TIMEOUT = live_status.CONFIG["timeout"]
 BEST = 10000        # 没选过清晰度时要这一档（原画）
 REUSE_SECONDS = 20  # 刚取过的地址这么久以内直接用（页面先问有哪些清晰度，紧接着就要开播）
 MAX_SEGMENT = 64 * 1024 * 1024  # HLS 的一段最多读这么多（原画 3 秒一段约 3 MB）
-PROBE_SECONDS = 3   # 开播前试 HLS 的播放列表，最多等这么久（通的时候 1 秒左右就回）
-HLS_DEAD_SECONDS = 600  # 试过 HLS 不通的房间，这么久以内直接用 FLV，不再试
+FLV_WAIT = 5        # 连 FLV 的一个服务器最多等这么久（后面还有别的服务器和 HLS 可以试）
 _recent = {}
-_dead = {}  # 房间号 → 什么时候试出来 HLS 不通的
 _lock = threading.Lock()
 
 
@@ -64,10 +64,9 @@ def _urls(codec):
     return sorted(urls, key=lambda url: "mcdn" in urllib.parse.urlsplit(url).netloc)
 
 
-def parse(body, hls=True):
-    """getRoomPlayInfo 的回包 → {"hls": [播放列表地址], "flv": [FLV 地址], "kind": 页面的播放器要按哪种放（"mpegts" / "flv"），
-    "rate", "qualities", "ttl"}。只看 H.264 的。没开播、两种地址都没有抛 BiliPlayError。
-    hls=False：不要 HLS（试过不通），只看 FLV。"""
+def parse(body):
+    """getRoomPlayInfo 的回包 → {"hls": [播放列表地址], "flv": [FLV 地址], "kind": 先接哪一种（"flv" / "mpegts"；只是告诉页面一声，
+    播放器自己认得出格式），"rate", "qualities", "ttl"}。只看 H.264 的。没开播、两种地址都没有抛 BiliPlayError。"""
     if not isinstance(body, dict) or body.get("code") != 0:
         raise BiliPlayError(f"B站的取流接口回了 code={body.get('code') if isinstance(body, dict) else body}"
                             f"（{body.get('message') if isinstance(body, dict) else ''}）")
@@ -83,55 +82,18 @@ def parse(body, hls=True):
             for codec in kind.get("codec") or []:
                 if key and key not in found and codec.get("codec_name") == "avc" and _urls(codec):
                     found[key] = codec
-    if not hls:
-        found.pop("hls", None)
     if not found:
         raise BiliPlayError("B站没给 H.264 的视频地址")
-    chosen = found.get("hls") or found["flv"]  # 清晰度看实际要用的那一种
+    chosen = found.get("flv") or found["hls"]  # 清晰度看先接的那一种
     accept = [qn for qn in map(_number, chosen.get("accept_qn") or []) if qn is not None]
     return {"hls": _urls(found["hls"]) if "hls" in found else [], "flv": _urls(found["flv"]) if "flv" in found else [],
-            "kind": "mpegts" if "hls" in found else "flv", "rate": str(_number(chosen.get("current_qn"))), "ttl": None,
+            "kind": "flv" if "flv" in found else "mpegts", "rate": str(_number(chosen.get("current_qn"))), "ttl": None,
             "qualities": [{"id": str(qn), "name": names.get(qn) or str(qn)} for qn in dict.fromkeys(accept)]}
 
 
-def _playlist(url, wait):
-    """取一次播放列表（试通不通用，超时比平常短）。"""
-    with urllib.request.urlopen(_request(url), timeout=wait) as response:
-        return response.read(1_000_000)
-
-
-def hls_alive(urls, wait=PROBE_SECONDS, get=None, clock=time.monotonic, sleep=time.sleep):
-    """同时问这几个播放列表地址，返回 wait 秒以内回了、里面有视频段的那些（照原来的先后）；一个都没有返回 []。
-    有一个通了就再多等一小会儿收齐别的，不等满 wait 秒。get：测试时换掉联网的函数（url, 最多等几秒）→ 字节。"""
-    get = get or _playlist
-    good, done = [], []
-
-    def run(url):
-        try:
-            if b"#EXTINF" in get(url, wait):
-                good.append(url)
-        except Exception:  # noqa: BLE001, S110  连不上、超时、不是 200：就是不通
-            pass
-        done.append(url)
-
-    for url in urls:
-        threading.Thread(target=run, args=(url,), daemon=True).start()
-    began, first = clock(), None
-    while len(done) < len(urls) and clock() - began < wait:
-        if good and first is None:
-            first = clock()
-        if first is not None and clock() - first > 0.3:
-            break
-        sleep(0.02)
-    alive = list(good)
-    return [url for url in urls if url in alive]
-
-
-def resolve(room, rate=None, ask=None, cookie=None, reuse=False, now=None, probe=None):
+def resolve(room, rate=None, ask=None, cookie=None, reuse=False, now=None):
     """取地址。rate：清晰度编号（None = 要原画）。返回 parse() 的结果（"rate" 是实际给的那一档）。
-    reuse：REUSE_SECONDS 秒以内 remember() 过同一个（房间, 清晰度）就直接用（只用一次）。
-    probe：试 HLS 通不通的函数（地址列表 → 通的那些）。None = 真的去问 B站时用 hls_alive()，测试里换了 ask 时不试；
-    False = 不试（中转途中重新要地址时）。都不通、又有 FLV：这一次只用 FLV，结果里多一项 "note" 说明原因。"""
+    reuse：REUSE_SECONDS 秒以内 remember() 过同一个（房间, 清晰度）就直接用（只用一次）。"""
     wanted = _number(rate)
     wanted = wanted if wanted and wanted > 0 else BEST
     moment = time.time() if now is None else now
@@ -145,22 +107,7 @@ def resolve(room, rate=None, ask=None, cookie=None, reuse=False, now=None, probe
         body, _ = (ask or bili_login.request)(url, bili_login.cookie() if cookie is None else cookie)
     except bili_login.BiliError as e:
         raise BiliPlayError(str(e)) from e
-    found = parse(body)
-    check = (hls_alive if ask is None else None) if probe is None else probe
-    if not found["hls"] or not found["flv"] or not check:  # 只有一种地址：没得选
-        return found
-    with _lock:
-        dead = 0 <= moment - _dead.get(str(room), -HLS_DEAD_SECONDS - 1) < HLS_DEAD_SECONDS
-    if dead:
-        return {**parse(body, hls=False), "note": "这个房间的 HLS 刚才试过不通，用 FLV"}
-    alive = check(found["hls"])
-    if alive:
-        return {**found, "hls": alive}
-    with _lock:
-        _dead[str(room)] = moment
-        for key in [key for key, at in _dead.items() if moment - at > HLS_DEAD_SECONDS]:
-            del _dead[key]
-    return {**parse(body, hls=False), "note": f"HLS 的播放列表 {PROBE_SECONDS} 秒没取到，改用 FLV"}
+    return parse(body)
 
 
 def remember(room, rate, found, now=None):
@@ -183,40 +130,83 @@ def fetch(url):
         return response.read(MAX_SEGMENT)
 
 
-def open_stream(url):
+def open_stream(url, wait=TIMEOUT):
     """连上 FLV 的视频服务器，返回可以 read() 的东西。连不上抛 BiliPlayError。"""
     try:
-        return urllib.request.urlopen(_request(url), timeout=TIMEOUT)
+        return urllib.request.urlopen(_request(url), timeout=wait)
     except urllib.error.HTTPError as e:
         raise BiliPlayError(f"B站的视频服务器回了 HTTP {e.code}") from e
     except OSError as e:
         raise BiliPlayError(f"连不上 B站的视频服务器（{e}）") from e
 
 
-def open_relay(room, rate=None, on_event=None):
-    """这个房间的一路中转（面板的 /esports/stream 用）：有 HLS 就接 HLS，没有才接 FLV。返回的东西有 start()、stream()、
-    close() 和 mimetype。取不到地址抛 BiliPlayError。"""
-    first = resolve(room, rate, reuse=True)
-    pending = [first]  # 第一次用刚取到的，之后（地址过期、断了）重新要同一档
+class Either:
+    """几种接法按顺序试（B站：先 FLV，再 HLS），第一个接上的就是这一路中转。和 flv_relay.Relay 一样用：start()、stream()、close()、mimetype。"""
 
-    def again():
-        return pending.pop() if pending else resolve(room, first["rate"], probe=False)  # 途中重新要地址：不再试，照开头定的那一种接
+    def __init__(self, makers, on_event=None):
+        self.makers = makers  # [(名字, 造一路中转的函数), ...]
+        self.on_event = on_event or (lambda _text: None)
+        self.relay, self.used, self.closed = None, None, False
+        self.mimetype = "video/x-flv"
 
-    if first["hls"]:
-        return hls_relay.HlsRelay(lambda: again()["hls"], fetch, on_event=on_event)
-
-    def open_segment():
+    def start(self):
         problem = None
-        for url in again()["flv"]:  # 几个服务器按顺序试
+        for name, make in self.makers:
+            if self.closed:
+                break
+            relay = make()
             try:
-                return open_stream(url), None
-            except BiliPlayError as e:
+                relay.start()
+            except flv_relay.RelayError as e:
+                relay.close()
                 problem = problem or e
-        raise problem or BiliPlayError("B站没给 FLV 的地址")
+                self.on_event(f"{name} 没接上（{e}）")
+                continue
+            self.relay, self.used, self.mimetype = relay, name, relay.mimetype
+            if self.closed:  # 等的时候页面已经走了
+                relay.close()
+            if problem is not None:
+                self.on_event(f"改用 {name} 接上了")
+            return self
+        raise problem or flv_relay.RelayError("upstream", "B站没给视频地址")
 
-    relay = flv_relay.Relay(open_segment, on_event=on_event)
-    relay.mimetype = "video/x-flv"
-    return relay
+    def stream(self):
+        return self.relay.stream()
+
+    def close(self):
+        self.closed = True
+        if self.relay is not None:
+            self.relay.close()
+
+
+def open_relay(room, rate=None, on_event=None):
+    """这个房间的一路中转（面板的 /esports/stream 用）：有 FLV 先接 FLV，没接上、没有 FLV 再接 HLS（接成 TS 流）。
+    返回的东西有 start()、stream()、close() 和 mimetype（start() 以后才知道是哪一种）。取不到地址抛 BiliPlayError。"""
+    first = resolve(room, rate, reuse=True)
+    pending = {"flv": [first], "hls": [first]}  # 每种接法第一次用刚取到的，之后（地址过期、断了）重新要同一档
+
+    def again(kind):
+        return pending[kind].pop() if pending[kind] else resolve(room, first["rate"])
+
+    def flv():
+        def open_segment():
+            problem = None
+            for url in again("flv")["flv"]:  # 几个服务器按顺序试
+                try:
+                    return open_stream(url, FLV_WAIT), None
+                except BiliPlayError as e:
+                    problem = problem or e
+            raise problem or BiliPlayError("B站没给 FLV 的地址")
+
+        relay = flv_relay.Relay(open_segment, on_event=on_event)
+        relay.mimetype = "video/x-flv"
+        return relay
+
+    def hls():
+        return hls_relay.HlsRelay(lambda: again("hls")["hls"], fetch, on_event=on_event)
+
+    makers = [(name, make) for name, make in (("FLV", flv), ("HLS", hls)) if first[name.lower()]]
+    return Either(makers, on_event)
 
 
 def mask(url):
