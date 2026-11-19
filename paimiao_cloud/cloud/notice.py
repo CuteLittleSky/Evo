@@ -87,7 +87,7 @@ def dialog_html(version: str = "", token: str = "") -> str:
     </p>
     <p class="dialog-desc">
       本分支新增了「派喵云同步」功能（<strong>可选</strong>）。该功能涉及战绩数据上传，详见派喵云同步页
-      <a href="/cloud/">《派喵云同步 · 数据传输指引》</a>。
+      《用户协议》与《隐私政策》（详见派喵云同步页 <a href="/cloud/">/cloud/</a>）。
     </p>
     <p class="dialog-desc">
       使用中如遇问题，请优先向本分支维护者反馈：
@@ -266,6 +266,7 @@ _RECOMMEND_SENTINEL = 'id="cloud-recommend"'
 
 # 源码里可见的幂等标记（见 inject_recommend 注释）
 _RECOMMEND_MARK = "cloud_recommend_dialog()"
+_TERMS_MARK = "terms_dialog()"
 _CARD_SENTINEL = f'id="{BRANCH_ANCHOR}"'
 
 _CARD_INJECT_AT = '<div class="settings-main">'
@@ -298,6 +299,42 @@ def inject_recommend(source: str) -> str:
     block = "{% if cloud_recommend_pending() %}" "{{ cloud_recommend_dialog() | safe }}" "{% endif %}"
     return source[:at] + block + source[at:]
 
+
+def inject_terms_or_recommend(source: str) -> str:
+
+    # 首次启动先弹协议（terms），同意后（同一次会话重新渲染）才轮到云同步推荐。
+    if not source or _RECOMMEND_MARK in source or _TERMS_MARK in source:
+        return source
+    at = source.find(_DIALOG_MARK)
+    if at < 0:
+        return source
+    block = (
+        "{% if terms_pending() %}"
+        "{{ terms_dialog() | safe }}"
+        "{% elif cloud_recommend_pending() %}"
+        "{{ cloud_recommend_dialog() | safe }}"
+        "{% endif %}"
+    )
+    return source[:at] + block + source[at:]
+
+
+def _terms_pending() -> bool:
+    try:
+        from cloud import terms  # noqa: PLC0415
+        return terms.pending()
+    except Exception as exc:  # 注入失败要静默降级
+        _log(f"协议弹窗判断失败：{exc!r}")
+        return False
+
+
+def _terms_for_render() -> str:
+    try:
+        from cloud import terms  # noqa: PLC0415
+        return terms.dialog_html()
+    except Exception as exc:
+        _log(f"协议弹窗渲染失败：{exc!r}")
+        return ""
+
 def inject_card(source: str, branch: dict) -> str:
 
     if not source or _CARD_SENTINEL in source:
@@ -329,8 +366,9 @@ def patch_source(source: str, template: str, branch: dict, version: str = "") ->
     # （已看过记录），想恢复弹窗时把下面这行 if 打开即可。
     if False:
         source = inject_dialog(source, version)
-    # 2026-10-27 用户决定：启动说明改成「推荐绑定派喵云同步」，点按钮直接去 /cloud/。
-    source = inject_recommend(source)
+    # 2026-11-20：先弹「使用前请阅读并同意《用户协议》《隐私政策》」（terms），
+    # 同意之后才轮到「推荐绑定派喵云同步」，避免两个弹窗同时出现。
+    source = inject_terms_or_recommend(source)
     if template == "settings.html":
         source = inject_card(source, branch)
     return source
@@ -434,6 +472,8 @@ def _install_preprocess(env, module):
     env.globals["branch_notice_dialog"] = _dialog_for_template
     env.globals["cloud_recommend_pending"] = recommend_pending
     env.globals["cloud_recommend_dialog"] = _recommend_for_render
+    env.globals["terms_pending"] = _terms_pending
+    env.globals["terms_dialog"] = _terms_for_render
     return ["notice_preprocess"]
 
 def branch_view(module=None) -> dict:
@@ -445,7 +485,7 @@ def branch_view(module=None) -> dict:
     except Exception:
         pass
     return {
-        "name": "Evo 派喵云同步版",
+        "name": "派喵战绩记录器",
         "upstream_version": version,
         "maintainer": MAINTAINER,
         "source_url": SOURCE_URL,

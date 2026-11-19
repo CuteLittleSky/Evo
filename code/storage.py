@@ -3,7 +3,8 @@
 数据库文件在数据文件夹的 data/evo.db（位置见 paths.py；在项目里时已被 .gitignore 排除，不会上传）。
 用 Stata 类比：数据库 ≈ 硬盘上的一个 .dta 文件，matches 表的每一行 = 一局。
 另有一张账号对照表 player_names（玩家名 → 账号），见下面"账号"一节；一张队友表 teammates（每局最多两行）；
-一张各来源读数表 readings（同一项在几个画面上读到的数，每个来源一行）；一张大厅读数表 lobby_readings（每次回大厅读到的段位，总分以它为准）；一张武器表 weapon_holds（每一段拿在手上的武器）。
+一张各来源读数表 readings（同一项在几个画面上读到的数，每个来源一行）；一张大厅读数表 lobby_readings（每次回大厅读到的段位，总分以它为准）；一张武器表 weapon_holds（每一段拿在手上的武器）；
+一张历史赛季表 season_stats（游戏里数据页上每个赛季的合计，录入历史赛季数据时读的，见下面"历史赛季"一节）。
 
 查看最近的记录：python code/storage.py
 导出成 CSV：    python code/storage.py --export data/matches.csv
@@ -11,13 +12,14 @@
 
 import argparse
 import csv
+import re
 import sqlite3
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from paths import DB_PATH
 
-APP_VERSION = "0.5.9"
+APP_VERSION = "0.6.1"
 SCHEMA_VERSION = 9  # 表结构变了就加 1，并在 MIGRATIONS 里写上怎么从旧版本升级
 
 # 列名和类型，顺序也是导出 CSV 时的列顺序
@@ -355,11 +357,41 @@ def save_weapon_holds(conn, match_id, holds):
     conn.commit()
 
 
+def weapon_holds_of(conn, match_id):
+    """一局拿过的武器（每一段一行，按时间先后）。没记下武器（0.4.0 以前的局、一把都没认出）返回空列表。"""
+    return conn.execute("SELECT * FROM weapon_holds WHERE match_id = ? ORDER BY start_s", (match_id,)).fetchall()
+
+
 def all_weapon_holds(conn, names=None):
     """所有对局拿过的武器（names：只要这几个玩家名的局），按对局、时间先后（数据页"最常用武器"用）。"""
     where, params = _where(names=names)
     return conn.execute(f"SELECT weapon_holds.* FROM weapon_holds JOIN matches USING (match_id){where} "
                         "ORDER BY ended_at, match_id, start_s", params).fetchall()
+
+
+def counted_weapon_seconds(holds, after):
+    """每局每把武器算进"最常用武器"的秒数：只算这一局第一次拿到武器 after 秒以后的（config/weapons.json 的
+    count_after_seconds）。数据页"最常用武器"、匿名统计、"全体玩家"都按这个算。
+    holds：weapon_holds 表的行。返回 {局号: {武器编号: 秒数}}，一秒都没算进去的武器不列。"""
+    out = {}
+    for h in holds:
+        counted = h["end_s"] - max(h["start_s"], after)
+        if counted > 0:
+            weapons = out.setdefault(h["match_id"], {})
+            weapons[h["weapon"]] = weapons.get(h["weapon"], 0) + counted
+    return out
+
+
+def weapon_totals(holds, after, match_ids):
+    """这几局（match_ids）合在一起：每把武器算进去的秒数 {武器编号: 秒数}，和拿过它的局 {武器编号: {局号}}。
+    规则同 counted_weapon_seconds（数据页"最常用武器"、"全体玩家"里的"你"用）。"""
+    seconds, played = {}, {}
+    for match_id, weapons in counted_weapon_seconds(holds, after).items():
+        if match_id in match_ids:
+            for weapon, counted in weapons.items():
+                seconds[weapon] = seconds.get(weapon, 0) + counted
+                played.setdefault(weapon, set()).add(match_id)
+    return seconds, played
 
 
 # ---------- 大厅读数（见 lobby.py、calibration.py） ----------
@@ -380,6 +412,12 @@ def lobby_readings(conn, names=None):
         return rows
     keys = {name_key(n) for n in names}
     return [r for r in rows if r["player_name"] and name_key(r["player_name"]) in keys]
+
+
+def delete_lobby_reading(conn, reading_id):
+    """删掉一次大厅读数（读错了的，见 calibration.drop_misreads）。编号不会再用。"""
+    conn.execute("DELETE FROM lobby_readings WHERE reading_id = ?", (reading_id,))
+    conn.commit()
 
 
 def save_readings(conn, match_id, source, values, read_at, scores=None):
@@ -482,6 +520,30 @@ def name_key(name):
     return "".join(name.split())
 
 
+# 名字开头的战队标签，如 "[DOGE]"（识别时括号偶尔读成全角或圆括号）
+CLUB_TAG = re.compile(r"^[\[【［(（][^\]】］)）]{1,6}[\]】］)）]")
+
+
+def untagged_key(name):
+    """name_key 再去掉开头的战队标签：对局里、总结页上的名字带标签（"[DOGE] Dogga"），游戏里的数据页上
+    不带（"Dogga"）。2026-11-13 测试员反馈录不了，就是这样对不上。只剩标签时照原样。"""
+    key = name_key(name)
+    return CLUB_TAG.sub("", key) or key
+
+
+def name_match_key(name):
+    """判断是不是同一个玩家名时用：空格不算；开头的战队标签不算（"[238] Evil Scholar"、"[248] Evil Scholar"、
+    "Evil Scholar" 是同一个名字：2026-11-19 玩家反馈标签一换就多一个"新名字"，要合并一次）；OCR 容易混淆的
+    1、l、I 也按同一个字符比较（2026-11-18 PR #12）。原始识别结果仍按 name_key 分开保存；这里只用于归账号、
+    同一次记录和大厅校准。"""
+    return untagged_key(name).translate(str.maketrans({"1": "l", "I": "l"}))
+
+
+def same_name(a, b):
+    """两个玩家名是否相同（不管空格、开头的战队标签和 1 / l / I 的 OCR 差异，见 name_match_key）。"""
+    return name_match_key(a) == name_match_key(b)
+
+
 def name_similarity(a, b):
     """两个玩家名有多像（0 到 1，不管空格）。"""
     return SequenceMatcher(None, name_key(a), name_key(b)).ratio()
@@ -499,10 +561,30 @@ def truncated_of(a, b):
 
 
 def sync_names(conn):
-    """把对局里出现过、对照表里还没有的名字登记进去，每个新名字先单独算一个账号。
+    """把对局里出现过、对照表里还没有的名字登记进去。
+    只差空格、开头的战队标签、1 / l / I 的几种写法（name_match_key 一样）算同一个名字：新写法自动归到已有的账号，不问；
     还没有任何已确认的账号时，最早出现的那个名字直接确认（第一个账号不用问）；
-    之后的新名字等你在弹窗里回答"是不是同一个人"。"""
-    known = {r[0] for r in conn.execute("SELECT name_key FROM player_names")}
+    其余新名字先单独算一个账号，等你在弹窗里回答"是不是同一个人"。
+    同一个名字的几种写法分在不同账号里时（老版本留下的、还没回答的待确认）：只在一个已确认的账号里，待确认的写法
+    都归到它下面；都还没确认，并成一个待确认账号（弹窗只问一次）；在两个以上已确认的账号里，是你拆开的，不动，
+    再出现新写法照样问。"""
+    registered = list(conn.execute("SELECT name_key, account_id, confirmed FROM player_names ORDER BY account_id"))
+    known = {r["name_key"] for r in registered}
+    groups = {}
+    for row in registered:
+        groups.setdefault(name_match_key(row["name_key"]), []).append(row)
+    matched, changed = {}, False  # 同一个名字（name_match_key）→ (账号, 是否已确认)；拆开过的不在里面
+    for key, rows in groups.items():
+        confirmed = {r["account_id"] for r in rows if r["confirmed"]}
+        if len(confirmed) > 1:
+            continue  # 用户已经把这类名字确认成不同账号，不替用户重新合并
+        home = (confirmed.pop(), 1) if confirmed else (rows[0]["account_id"], 0)
+        matched[key] = home
+        for r in rows:
+            if (r["account_id"], r["confirmed"]) != home:
+                conn.execute("UPDATE player_names SET account_id = ?, confirmed = ? WHERE name_key = ?",
+                             (*home, r["name_key"]))
+                changed = True
     new = []
     for r in conn.execute("SELECT player_name, MIN(ended_at) AS first FROM matches WHERE player_name IS NOT NULL "
                           "GROUP BY player_name ORDER BY first"):
@@ -511,19 +593,27 @@ def sync_names(conn):
             known.add(key)
             new.append(key)
     if not new:
+        if changed:
+            conn.commit()
         return
     next_id = conn.execute("SELECT COALESCE(MAX(account_id), 0) + 1 FROM player_names").fetchone()[0]
     have_confirmed = conn.execute("SELECT COUNT(*) FROM player_names WHERE confirmed = 1").fetchone()[0] > 0
     for key in new:
+        equivalent = matched.get(name_match_key(key))
+        if equivalent is not None:
+            conn.execute("INSERT INTO player_names (name_key, account_id, confirmed) VALUES (?, ?, ?)",
+                         (key, equivalent[0], equivalent[1]))
+            continue
         conn.execute("INSERT INTO player_names (name_key, account_id, confirmed) VALUES (?, ?, ?)",
                      (key, next_id, int(not have_confirmed)))
+        matched[name_match_key(key)] = (next_id, int(not have_confirmed))
         next_id, have_confirmed = next_id + 1, True
     conn.commit()
 
 
 def known_names(conn):
     """Evo 认识的、自己的玩家名（去掉空格的写法，见 name_key）：对局里出现过的所有名字。录入历史赛季数据时
-    用它分出数据页是不是自己的（好友资料页也是这一页）。"""
+    用它分出数据页是不是自己的（好友资料页也是这一页；比的时候去掉战队标签，见 untagged_key）。"""
     sync_names(conn)
     return {r[0] for r in conn.execute("SELECT name_key FROM player_names")}
 
@@ -575,6 +665,14 @@ def answer_name(conn, name, account_id=None):
         if shared > 1:
             account_id = conn.execute("SELECT MAX(account_id) + 1 FROM player_names").fetchone()[0]
     conn.execute("UPDATE player_names SET account_id = ?, confirmed = 1 WHERE name_key = ?", (account_id, key))
+    conn.commit()
+
+
+def answer_account(conn, account_id, into=None):
+    """回答一个待确认账号"是不是同一个人"（弹窗、设置页）：它的几种写法（只差空格、战队标签、1 / l / I，见 sync_names）
+    一起处理，不会只并过去一种、剩下的再问一遍。into = 并到这个账号（同一个人改了名）；None = 确认成单独一个账号。"""
+    conn.execute("UPDATE player_names SET account_id = ?, confirmed = 1 WHERE account_id = ?",
+                 (account_id if into is None else into, account_id))
     conn.commit()
 
 

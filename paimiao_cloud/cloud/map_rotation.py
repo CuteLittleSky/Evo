@@ -190,12 +190,48 @@ def _rumble(schedule) -> dict | None:
     return {"season": _int(rumble.get("season")), "total": 0, "rounds": [], "fallback": picked}
 
 
-def fetch_once(url: str = API_URL, timeout: float = TIMEOUT_SECS) -> dict:
-    """一次同步请求。抛异常给调用方（后台线程）记账，页面不碰这个函数。"""
+def _api_url() -> str:
+    """当前线路的地图轮换接口地址（跟随 net_hosts 主/备用）。"""
+    try:
+        from cloud import net_hosts  # noqa: PLC0415
+
+        return net_hosts.api_root().rstrip("/") + "/maprotation"
+    except Exception:
+        return API_URL
+
+
+def _asset_origin() -> str:
+    """当前静态资源 origin（主/备用）。"""
+    try:
+        from cloud import net_hosts  # noqa: PLC0415
+
+        return net_hosts.asset_origin()
+    except Exception:
+        return ASSET_BASE
+
+
+def fetch_once(url: str | None = None, timeout: float = TIMEOUT_SECS) -> dict:
+    """一次同步请求。抛异常给调用方（后台线程）记账，页面不碰这个函数。
+
+    线路：默认走当前生效线路；网络失败时通知 net_hosts 探活并自动回退到备用线路，
+    然后照常抛异常 —— 后台线程 RETRY_SECS 后会带着新线路重试。
+    """
+    if not url:
+        url = _api_url()
     request = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        raw = response.read()
-        skew = _skew_from_date(response.headers.get("Date", ""))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            skew = _skew_from_date(response.headers.get("Date", ""))
+    except Exception:
+        try:
+            from cloud import net_hosts  # noqa: PLC0415
+
+            origin = url.split("/apex/", 1)[0] if "/apex/" in url else None
+            net_hosts.on_network_error(origin)
+        except Exception:
+            pass
+        raise
     data = parse(json.loads(raw.decode("utf-8")))
     if not data["skew"]:      # JSON 里有 nowSecs 就用它，没有才退回 Date 头
         data["skew"] = skew
@@ -300,7 +336,7 @@ def _row(entry: dict | None, now: int) -> dict | None:
         "start": _iso(entry["start"]),
         "end": _iso(entry["end"]),
         "mins": entry["mins"],
-        "image": ASSET_BASE + entry["asset"] if entry["asset"].startswith("/") else "",
+        "image": _asset_origin() + entry["asset"] if entry["asset"].startswith("/") else "",
         "finished": bool(entry["end"]) and entry["end"] <= now,
     }
 

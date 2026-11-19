@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import time
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+import app_settings
+
+from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 
 from cloud import notice, pairing, pull, qr, sync
 from cloud import state as cloud_state
@@ -14,6 +16,38 @@ NAV_LABEL = "派喵云同步"
 
 def build():
     return bp
+
+def _stats_on():
+    try:
+        return not bool(app_settings.get("paimiao_stats_opt_out"))
+    except Exception:
+        return True
+
+@bp.post("/stats/toggle")
+def stats_toggle():
+    """匿名统计开关（默认开）。关掉后不再上报；不影响云同步与其它功能。"""
+    on = request.form.get("on") == "1"
+    nxt = request.form.get("next") or url_for("settings")
+    if not str(nxt).startswith("/"):
+        nxt = url_for("settings")
+    try:
+        app_settings.set_value("paimiao_stats_opt_out", not on)
+    except Exception as exc:
+        flash(f"保存失败：{exc}", "error")
+        return redirect(nxt)
+    flash("已开启匿名统计。" if on else "已关闭匿名统计，不会再发送任何数据。", "ok")
+    return redirect(nxt)
+
+@bp.after_request
+def _no_store(response):
+    """面板是本地动态页，禁止 WebView2 / 浏览器缓存。
+    否则「生成配对码」POST→跳转回 /cloud/ 时可能命中缓存里的旧（未配对）页，
+    表现为日志有码、页面却一直显示『生成配对码』。"""
+    try:
+        response.headers["Cache-Control"] = "no-store"
+    except Exception:
+        pass
+    return response
 
 @bp.app_context_processor
 def inject():
@@ -46,17 +80,56 @@ def card_view(snapshot):
 def page():
     return render_template("cloud_page.html", view=page_view(cloud_state.load()))
 
+@bp.get("/legal/<doc>")
+def legal_page(doc):
+    """在 Evo 面板里看官网的《用户协议》《隐私政策》《版权与免责声明》：
+    运行时从 apex.skycraft.cn/legal/<doc>.md 拉取（缓存 10 分钟），和小程序同一份真源。"""
+    from cloud import legal  # noqa: PLC0415 避免与 cloud 包初始化互相牵连
+
+    try:
+        view = legal.get_doc(doc, force=request.args.get("refresh") == "1")
+    except KeyError:
+        abort(404)
+    return render_template("legal_page.html", view=view)
+
+@bp.post("/terms/accept")
+def terms_accept():
+    """首次启动协议弹窗：同意《用户协议》《隐私政策》，并按勾选写入匿名统计开关。"""
+    from cloud import terms  # noqa: PLC0415
+
+    stats_on = request.form.get("stats_on") == "1"
+    terms.accept(stats_on)
+    return redirect(_safe_next(request.form.get("next") or "", url_for("settings")))
+
+@bp.post("/terms/decline")
+def terms_decline():
+    """不同意协议：退出 Evo（首启还没有对局，直接退出不会丢数据）。"""
+    from cloud import terms  # noqa: PLC0415
+
+    terms.decline()
+    return (
+        "<!doctype html><meta charset='utf-8'><title>退出</title>"
+        "<body style='font-family:system-ui, sans-serif; padding:40px; color:#333'>"
+        "已选择不同意，Evo 正在退出……</body>",
+        200,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
+
 def page_view(snapshot):
     agreed = cloud_state.agreed(snapshot)
     paired = cloud_state.paired(snapshot)
     left = seconds_left(snapshot)
 
     if snapshot.get("pair_code") and left <= 0:
+        cloud_state.log(
+            "配对诊断 page_view 判定过期并隐藏：码=%s 剩余=%s秒 过期依据=%s"
+            % (snapshot.get("pair_code"), left,
+               "expires_ms" if snapshot.get("pair_expires_ms") else "pair_code_at"))
         clear_pair_fields(snapshot)
         cloud_state.save(snapshot)
     stats = snapshot.get("stats") or {}
     device = snapshot.get("device") or {}
-    return {
+    data = {
         "agreed": agreed,
         "paired": paired,
         "server": cloud_state.default_server(),
@@ -73,7 +146,16 @@ def page_view(snapshot):
         **_upload_view(),
         "consent_version": cloud_state.CONSENT_VERSION,
         "consent_at": (snapshot.get("consent") or {}).get("at", ""),
+        "stats_on": _stats_on(),
     }
+    if not agreed:
+        try:
+            from cloud import legal  # noqa: PLC0415 避免与 cloud 包初始化互相牵连
+            data["legal_docs"] = [legal.get_doc("agreement"), legal.get_doc("privacy")]
+        except Exception as exc:  # 获取失败也给空列表，页面照常显示、不 500
+            data["legal_docs"] = []
+            cloud_state.log(f"法务文档获取失败：{exc!r}")
+    return data
 
 def pair_qr_url(snapshot):
 
@@ -118,14 +200,17 @@ def clear_hashes(snapshot):
     snapshot["weapon_hashes"] = {}
 
 def seconds_left(snapshot):
-
+    # 以「本机收到配对码的时刻」pair_code_at 为准算剩余：两端都取本机时钟，天然抵消系统时间偏差。
+    # 不能先拿服务端的绝对 expiresAt 去减本机 time.time() —— 用户电脑时间只要快 2 分钟，
+    # 刚生成的码就会被判成立即过期、被 page_view 静默清掉，表现正是「日志有码、页面不显示」。
+    # 真正的过期仍由服务端 settlePair 按它自己的 expires_at 拦（这里只影响倒计时与显隐）。
+    at = float(snapshot.get("pair_code_at") or 0)
+    if at:
+        return max(0, int(pairing.PAIR_TTL - (time.time() - at)))
     expires_ms = int(snapshot.get("pair_expires_ms") or 0)
     if expires_ms:
         return max(0, int((expires_ms / 1000) - time.time()))
-    at = float(snapshot.get("pair_code_at") or 0)
-    if not at:
-        return 0
-    return max(0, int(pairing.PAIR_TTL - (time.time() - at)))
+    return 0
 
 def back():
     return redirect(url_for("cloud.page"))
@@ -176,7 +261,7 @@ def consent():
         "at": time.strftime("%Y-%m-%d %H:%M"),
     }
     cloud_state.save(snapshot)
-    cloud_state.log("用户同意了数据传输指引")
+    cloud_state.log("用户同意了《用户协议》与《隐私政策》")
     return back()
 
 @bp.post("/revoke")
@@ -198,7 +283,9 @@ def revoke():
 def pair():
     snapshot = cloud_state.load()
     if not cloud_state.agreed(snapshot):
-        flash("您还没有同意数据传输指引。", "error")
+        if wants_json():
+            return jsonify({"status": "error", "message": "您还没有同意《用户协议》与《隐私政策》。"}), 200
+        flash("您还没有同意《用户协议》与《隐私政策》。", "error")
         return back()
     pairing.revoke_qr(snapshot)
     try:
@@ -207,11 +294,29 @@ def pair():
         clear_pair_fields(snapshot)
         cloud_state.save(snapshot)
         cloud_state.log(f"生成配对码失败：{exc}")
+        if wants_json():
+            return jsonify({"status": "error", "message": f"配对码生成失败：{exc}"}), 200
         flash(f"配对码生成失败：{exc}", "error")
         return back()
     snapshot["pair_code_at"] = time.time()
     cloud_state.save(snapshot)
+    # 诊断：保存后立刻回读一次，确认「GET /cloud/ 渲染那一侧」到底看不看得到这张码
+    # （若回读码为空或剩余≤0，就能一眼解释“日志有码、页面不显示”）
+    reloaded = cloud_state.load()
+    cloud_state.log(
+        "配对诊断 保存后回读：state=%s 存盘码=%s 回读码=%s 剩余=%s秒"
+        % (cloud_state.state_path(), code, reloaded.get("pair_code") or "", seconds_left(reloaded)))
     cloud_state.log(f"用户点了生成配对码（{code}，{pairing.PAIR_TTL} 秒内有效）")
+    if wants_json():
+        # 直接把码渲染成片段返回，前端无需再靠「跳转→重新读 state.json」来显示
+        view = page_view(cloud_state.load())
+        try:
+            html = render_template("_pair_panel.html", view=view)
+        except Exception as exc:
+            cloud_state.log(f"配对诊断 渲染片段失败：{exc!r}")
+            return jsonify({"status": "error",
+                            "message": "配对码已生成，但页面渲染失败，请刷新重试"}), 200
+        return jsonify({"status": "ok", "left": view.get("pair_left", 0), "html": html})
     return back()
 
 @bp.post("/revoke-qr")
@@ -273,6 +378,13 @@ def poll():
     cloud_state.save(snapshot)
     if done:
         cloud_state.log("配对成功")
+        # 绑定后：把本机固定匿名编号报给服务端，删掉之前的匿名数据（后台、幂等、失败不影响配对）
+        try:
+            import threading as _threading
+            from cloud.stats import report as _stats_report
+            _threading.Thread(target=_stats_report.purge_if_bound, daemon=True).start()
+        except Exception:
+            pass
         if wants_json():
             return jsonify({"status": "confirmed"})
         flash("配对成功，这台电脑已经连上派喵云同步了。", "ok")

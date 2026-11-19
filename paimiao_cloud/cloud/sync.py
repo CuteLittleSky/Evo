@@ -11,6 +11,14 @@ from cloud import pairing
 from cloud import season_sync
 from cloud import state as cloud_state
 
+
+def _app_version():
+    try:
+        from storage import APP_VERSION
+        return str(APP_VERSION)
+    except Exception:
+        return ""
+
 SCAN_LIMIT = 200
 INTERVAL = 30.0
 BATCH = 50
@@ -396,7 +404,7 @@ def push(snapshot):
     sent = 0
     for start in range(0, len(pending), BATCH):
         chunk = pending[start:start + BATCH]
-        result = pairing.upload(snapshot, {"matches": [item[2] for item in chunk]})
+        result = pairing.upload(snapshot, {"matches": [item[2] for item in chunk], "evoVersion": _app_version()})
         for key, mark, _ in chunk:
             known[key] = mark
         sent += int(result.get("accepted") or len(chunk))

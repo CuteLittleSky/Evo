@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ view.title }} · Evo{% endblock %}
+
+{% block content %}
+<style>
+  .legal-page { max-width: 860px; }
+  .legal-page .settings-card { padding: 24px; }
+  .legal-page h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+  .legal-page .legal-meta { margin: 0 0 18px; font-size: 12px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+  .legal-page .legal-meta a, .legal-body a { color: var(--p3-bg); text-decoration: underline; text-underline-offset: 3px; }
+  .legal-body { font-size: 14px; line-height: 1.85; overflow-wrap: anywhere; }
+  .legal-body h2 { margin: 22px 0 8px; font-size: 15px; font-weight: 600; }
+  .legal-body h3 { margin: 18px 0 6px; font-size: 14px; font-weight: 600; }
+  .legal-body h4, .legal-body h5, .legal-body h6 { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
+  .legal-body p { margin: 0 0 12px; }
+  .legal-body ul, .legal-body ol { margin: 0 0 12px; padding-left: 22px; }
+  .legal-body li { margin: 0 0 6px; }
+  .legal-body hr { margin: 18px 0; border: 0; border-top: 1px solid var(--input-border); }
+  .legal-body code { padding: 1px 4px; border-radius: 4px; background: var(--inset); font-size: 12px; }
+  .legal-body pre { padding: 12px; border-radius: 6px; background: var(--inset); overflow-x: auto; }
+  .legal-body pre code { padding: 0; background: none; }
+  .legal-body blockquote { margin: 0 0 12px; padding: 8px 14px; border-left: 3px solid var(--input-border); color: var(--muted); }
+  .legal-error { padding: 16px; border: 1px solid var(--input-border); border-radius: 6px; background: var(--inset); }
+</style>
+
+<div class="legal-page">
+  <section class="card settings-card">
+    <h1>{{ view.title }}</h1>
+    {% if view.html %}
+    <div class="legal-body">{{ view.html | safe }}</div>
+    {% else %}
+    <div class="legal-error">
+      <p class="setting-desc" style="margin:0 0 10px">暂时获取不到这份文档，请检查网络后重试。</p>
+      <p class="setting-desc" style="margin:0">
+        <a href="{{ url_for('cloud.legal_page', doc=view.doc, refresh=1) }}">重试</a>
+        · <a href="{{ view.source }}" target="_blank" rel="noopener noreferrer">在浏览器打开原文</a>
+      </p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

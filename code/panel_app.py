@@ -1,5 +1,5 @@
 """本地面板：用浏览器查看和修正战绩。只在本机（127.0.0.1）运行；会联网的只有"检查更新"（update_check.py，可以关掉）、
-你点了才下载的一键更新（updater.py），和你同意了才发送的匿名统计（telemetry.py）。
+你点了才下载的一键更新（updater.py）。
 
 运行：python code/panel_app.py                    读正式数据库 data/evo.db
 演示：python code/panel_app.py --db data/demo.db   读伪数据（先运行 python tools/demo_data.py 生成）
@@ -31,13 +31,11 @@ import calibration
 import data_move
 import game_aspect
 import game_lang
-import global_stats
 import ranks
 import screenshots
 import seasons
 import sounds
 import storage
-import telemetry
 import update_check
 import updater
 import paths
@@ -174,6 +172,8 @@ FOLLOW_LINKS = (
 
 # ---- 多账号 ----
 SIMILAR_NAME = 0.6  # 新名字和某个账号的名字这么像，弹窗里提示"名字很像"（可能是识别误差，也可能是改名）
+ACCOUNT_DISPLAY_NAMES_KEY = "account_display_names"
+ACCOUNT_DISPLAY_NAME_MAX = 32
 
 app = Flask(__name__, template_folder=str(PANEL_DIR / "templates"), static_folder=str(PANEL_DIR / "static"))
 app.secret_key = secrets.token_hex(16)  # 每次启动随机生成，用于页面上的提示消息
@@ -194,6 +194,9 @@ def db():
         g.db = storage.connect(app.config["DB"])
         if app.config["DB"] not in _CLEARED:  # 以前大厅校准对不上标的待确认：取消（现在战绩页显示校准行）
             calibration.clear_old_flags(g.db)
+            calibration.drop_misreads(g.db)  # 以前读错的大厅读数（前后一样、夹在中间不一样的）：删掉
+            calibration.fix_rps(g.db)  # 以前的局：每一小段只缺一局 RP 的，按前后的段位补上、改过来（见 calibration.py）
+            calibration.fill_ranks(g.db)  # 以前没有段位的局：用前后的大厅、经验值页和各局 RP 补上
             _CLEARED.add(app.config["DB"])
     return g.db
 
@@ -248,8 +251,6 @@ def template_globals():
         "ask_update": ask_update,
         # 开机自启：回答了上面那个以后再问（一次只问一件事）
         "ask_autostart": ask_start,
-        # 匿名统计：前两个都回答了以后再问（默认不发；见 telemetry.py）
-        "ask_telemetry": not ask_update and not ask_start and telemetry.consent() is None,
         "update_offer": offer,
         "update_job": updater.state(offer),
         "update_result": updater.take_result(),  # 刚一键更新过：顶部说一次"已更新到 x.y.z"或"没装上"
@@ -277,7 +278,7 @@ def account_view():
     有 2 个以上时：这个窗口里选过就看选的那个；没选过（每次打开窗口）看最近玩过的账号——在小号上打完、打开 Evo 看到的就是小号。"""
     if "account_view" in g:
         return g.account_view
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     view = {"accounts": everyone, "current": None, "all": False, "names": None}
     if len(everyone) >= 2:
         choice = session.get("account")
@@ -290,23 +291,66 @@ def account_view():
     return view
 
 
+def account_display_names():
+    """当前数据库的账号编号 → 自定义展示名。按数据库文件名分开，演示数据不会串到正式数据。"""
+    all_names = app_settings.get(ACCOUNT_DISPLAY_NAMES_KEY, {})
+    if not isinstance(all_names, dict):
+        return {}
+    names = all_names.get(db_path().name, {})
+    return names if isinstance(names, dict) else {}
+
+
+def display_accounts(accounts):
+    """给账号加 display_name；识别名 name、names、raw 保持原样，继续用于匹配和筛选。"""
+    custom = account_display_names()
+    return [{**a, "display_name": custom.get(str(a["id"])) or a["name"]} for a in accounts]
+
+
+def display_player_name(name):
+    """一个识别名在界面上应显示的账号名；找不到所属账号时照原样显示。"""
+    if not name:
+        return name
+    key = storage.name_key(name)
+    for account in account_view()["accounts"]:
+        if any(storage.name_key(raw) == key for raw in account["raw"]):
+            return account["display_name"]
+    return name
+
+
+def set_account_display_name(account_id, name):
+    """保存或清除当前数据库中一个账号的展示名；name 为空表示恢复识别名。"""
+    all_names = app_settings.get(ACCOUNT_DISPLAY_NAMES_KEY, {})
+    all_names = dict(all_names) if isinstance(all_names, dict) else {}
+    db_names = all_names.get(db_path().name, {})
+    db_names = dict(db_names) if isinstance(db_names, dict) else {}
+    if name:
+        db_names[str(account_id)] = name
+    else:
+        db_names.pop(str(account_id), None)
+    if db_names:
+        all_names[db_path().name] = db_names
+    else:
+        all_names.pop(db_path().name, None)
+    app_settings.set_value(ACCOUNT_DISPLAY_NAMES_KEY, all_names)
+
+
 def name_question():
     """弹窗要问的新玩家名（最早出现的那个）和可以合并到的账号。没有要问的，或者这个窗口里点过"稍后再问"，返回 None。
     新名字的局在回答之前先单独算一个账号，不会丢。"""
     if session.get("names_later"):
         return None
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     pending = [a for a in everyone if not a["confirmed"]]
     known = [a for a in everyone if a["confirmed"]]
     if not pending:
         return None
     new = pending[0]
-    if not known:  # 原来的账号的局都删光了：没有可合并的，直接当作一个账号
-        storage.answer_name(db(), new["name"])
+    if not known:  # 原来的账号的局都删光了：没有可合并的，直接当作一个账号（几种写法一起）
+        storage.answer_account(db(), new["id"])
         return None
     choices = [{
         "id": a["id"],
-        "name": a["name"],
+        "name": a["display_name"],
         "games": a["games"],
         "last": time_text(a["last"]),
         "similar": max(storage.name_similarity(n, new["name"]) for n in a["names"]) >= SIMILAR_NAME,
@@ -889,10 +933,13 @@ def share_time(ended_at):
 
 
 def share_player(rows):
-    """今日、概况卡片上写的游戏名：分账号时是这个账号的名字，不分时是最近一局认出的名字。"""
-    current = account_view()["current"]
+    """今日、概况卡片上写的名字：优先用账号展示名；看全部账号时用最近一局的识别名。"""
+    view = account_view()
+    current = view["current"]
     if current:
-        return current["name"]
+        return current["display_name"]
+    if len(view["accounts"]) == 1:
+        return view["accounts"][0]["display_name"]
     return next((r["player_name"] for r in reversed(rows) if r["player_name"]), None)
 
 
@@ -1084,7 +1131,7 @@ def matches():
             if r["show_detail"] and r["has_evidence"]:  # 截图的宽高：事先留好位置，下载完不把修改表单推下去
                 r["shot_size"] = screenshots.image_size(storage.get_match(db(), open_id)["evidence_path"])
             if not r["needs_review"]:
-                share = {"player": None if r["player_name"] == "—" else r["player_name"],
+                share = {"player": None if r["player_name"] == "—" else display_player_name(r["player_name"]),
                          "options": [{**share_options("match", match_id=r["id"]), "label": "单局战绩"}]}
     pages = max(1, math.ceil(total / PER_PAGE))
     if mode in (None, "ranked") and not only_review and not legend:  # 校准行只在看全部、排位的时候显示
@@ -1146,10 +1193,7 @@ def match_range(args, open_id=None, only_review=False):
 
 @app.route("/stats")
 def stats():
-    """数据页：最常用武器、常一起玩的队友、传奇表现（详细版）、传奇组合。范围按钮和总览页一样（本赛季 / 上赛季 / 近 30 局 / 全部）。
-    顶部切换"我的 / 全体玩家"：view=all 是全体玩家（stats_everyone）。"""
-    if request.args.get("view") == "all":
-        return stats_everyone()
+    """数据页：最常用武器、常一起玩的队友、传奇表现（详细版）、传奇组合。范围按钮和总览页一样（本赛季 / 上赛季 / 近 30 局 / 全部）。"""
     range_key = choose_range(request.args)
     names = account_view()["names"]
     rows = storage.all_matches(db(), names)
@@ -1184,37 +1228,6 @@ def stats():
         buckets=PLACE_BUCKETS,
         review_count=storage.count_review(db(), names),
     )
-
-
-def stats_everyone():
-    """数据页"全体玩家"（global_stats.py，2026-10-24 用户决定）：开了匿名统计的所有 Evo 玩家的汇总，和自己的比。
-    没开匿名统计：锁住的样子（蒙版 + 锁 + 开启按钮），不下载。开了：用存着的汇总；没有或超过 24 小时，
-    页面打开后脚本马上下载（POST /stats/everyone/refresh），下载好重新打开页面。"""
-    range_key, mode, tier = global_stats.choose(request.args)
-    allowed = global_stats.allowed()
-    cache = global_stats.cached() if allowed else None
-    view = None
-    if cache is not None:
-        names = account_view()["names"]
-        rows = storage.all_matches(db(), names)
-        rank = latest_rank(rows, storage.lobby_readings(db(), names))
-        view = global_stats.page(cache["summary"], rows, storage.all_teammates(db(), names), range_key, mode, tier,
-                                 your_tier=rank[0] if rank else None, icons=LEGEND_ICONS)
-    return render_template(
-        "stats_all.html",
-        allowed=allowed,
-        view=view,
-        fetch_now=allowed and global_stats.stale(cache),
-        range_key=range_key, mode=mode, tier=tier,
-        ranges=global_stats.RANGES, modes=global_stats.MODES, tiers=global_stats.TIERS,
-        review_count=storage.count_review(db(), account_view()["names"]),
-    )
-
-
-@app.post("/stats/everyone/refresh")
-def refresh_everyone():
-    """"全体玩家"右上角的刷新按钮（和页面打开时的自动下载）：现在下载一次汇总。回 {"ok", "error"}。"""
-    return jsonify(global_stats.fetch())
 
 
 def back_to_list(**changes):
@@ -1262,7 +1275,7 @@ def update(match_id):
         flash("没有保存：" + "；".join(errors), "error")
         return back_to_list(open=match_id)
 
-    if row is not None:  # 记下改过哪几项（只记改了哪项，不记原来的值；匿名统计的"识别情况"用，见 telemetry.py）
+    if row is not None:  # 记下改过哪几项（只记改了哪项，不记原来的值）
         edited = {f for f in (row["edited"] or "").split(",") if f} | {
             k for k in EDITABLE if fields[k] != row[k]
         } | {k for k in ("mode", "map") if k in fields and fields[k] != row[k]}
@@ -1308,7 +1321,7 @@ def share_match(match_id):
     row = storage.get_match(db(), match_id)
     if row is None:
         abort(404)
-    player = row["player_name"] if share_name_on() else None
+    player = display_player_name(row["player_name"]) if share_name_on() else None
     return share_svg("match", share_match_card(row, storage.teammates_of(db(), match_id), player))
 
 
@@ -1384,7 +1397,6 @@ def settings():
         feedback_url=FEEDBACK_URL,
         feedback_group=FEEDBACK_GROUP,
         update_auto=app_settings.get("update_auto") is True,
-        stats_on=telemetry.consent() is True,
         last_check=app_settings.get("update_last_check"),
         newest=update_check.known_newer(),
         job=updater.state(update_check.known_newer()),
@@ -1682,22 +1694,6 @@ def clear_data():
     return redirect(url_for("settings"))
 
 
-@app.post("/settings/telemetry")
-def telemetry_setting():
-    """匿名统计：第一次打开时页面顶部的提问，和设置页的开关（next 回到原来的页面）。打开时马上在后台发一次。"""
-    on = request.form.get("on") == "1"
-    was = telemetry.consent()
-    telemetry.set_consent(on)
-    if on:
-        threading.Thread(target=telemetry.send, name="telemetry-now", daemon=True).start()
-        flash("已开启匿名统计：Evo 开着时每小时发送一次同意以后的新对局。谢谢你帮助改进 Evo！", "ok")
-    elif was is None:
-        flash("好的，不发送。以后可以在\"设置\"里打开。", "ok")
-    else:
-        flash("已关闭匿名统计，不会再发送任何数据。", "ok")
-    return back_to_page()
-
-
 # ---------- 检查更新（update_check.py） ----------
 
 def back_to_page():
@@ -1788,22 +1784,25 @@ def update_progress():
 
 @app.post("/accounts/answer")
 def answer_name():
-    """回答弹窗"是不是同一个人"：account = 要合并到的账号编号（同一个人改了名），或 "new"（另一个账号）。"""
+    """回答弹窗"是不是同一个人"：account = 要合并到的账号编号（同一个人改了名），或 "new"（另一个账号）。
+    这个待确认账号的几种写法（只差空格、战队标签、1 / l / I）一起处理（storage.answer_account），弹窗问的局数也是它们加起来的。"""
     name, choice = request.form.get("name", ""), request.form.get("account", "")
-    everyone = storage.accounts(db())
-    new = next((a for a in everyone if not a["confirmed"] and storage.name_key(a["name"]) == storage.name_key(name)), None)
+    everyone = display_accounts(storage.accounts(db()))
+    new = next((a for a in everyone if not a["confirmed"] and
+                any(storage.name_key(n) == storage.name_key(name) for n in a["names"])), None)
     if new is None:  # 已经回答过了（比如开着两个窗口）
         return back_to_page()
     if choice == "new":
-        storage.answer_name(db(), name)
+        storage.answer_account(db(), new["id"])
         flash(f"已记为另一个账号：{name}（{new['games']} 局）", "ok")
         return back_to_page()
     target = next((a for a in everyone if a["confirmed"] and str(a["id"]) == choice), None)
     if target is None:
         flash("没有保存：请选一项", "error")
         return back_to_page()
-    storage.answer_name(db(), name, target["id"])
-    flash(f"已合并：{name} 和 {target['name']} 是同一个账号，共 {new['games'] + target['games']} 局", "ok")
+    storage.answer_account(db(), new["id"], target["id"])
+    set_account_display_name(new["id"], None)
+    flash(f"已合并：{name} 和 {target['display_name']} 是同一个账号，共 {new['games'] + target['games']} 局", "ok")
     return back_to_page()
 
 
@@ -1823,18 +1822,23 @@ def select_account():
 @app.post("/accounts/move")
 def move_name():
     """设置页"账号"一栏：把一个名字改到别的账号下（account = 账号编号），或拆成单独一个账号（account = "new"）。
-    弹窗里选错了，在这里改回来。"""
+    弹窗里选错了，在这里改回来。还没回答的待确认账号：几种写法一起处理，同弹窗（storage.answer_account）。"""
     name, choice = request.form.get("name", ""), request.form.get("account", "")
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     owner = next((a for a in everyone if any(storage.name_key(n) == storage.name_key(name) for n in a["names"])), None)
     if owner is None:
         abort(400)
+    whole = not owner["confirmed"]
+    label = "、".join(owner["names"]) if whole else name
     if choice == "new":
         if len(owner["names"]) == 1 and owner["confirmed"]:
             flash(f"{name} 本来就是单独一个账号，没有改动", "ok")
+        elif whole:
+            storage.answer_account(db(), owner["id"])
+            flash(f"已把 {label} 记为单独一个账号", "ok")
         else:
             storage.answer_name(db(), name)
-            flash(f"已把 {name} {'拆成' if owner['confirmed'] else '记为'}单独一个账号", "ok")
+            flash(f"已把 {name} 拆成单独一个账号", "ok")
         return redirect(url_for("settings"))
     target = next((a for a in everyone if a["confirmed"] and str(a["id"]) == choice), None)  # 只能并到已确认的账号
     if target is None:
@@ -1842,8 +1846,35 @@ def move_name():
     elif target["id"] == owner["id"]:
         flash(f"{name} 本来就在这个账号下，没有改动", "ok")
     else:
-        storage.answer_name(db(), name, target["id"])
-        flash(f"已把 {name} 并到 {target['name']} 的账号下", "ok")
+        if whole:
+            storage.answer_account(db(), owner["id"], target["id"])
+        else:
+            storage.answer_name(db(), name, target["id"])
+        if not any(a["id"] == owner["id"] for a in storage.accounts(db())):
+            set_account_display_name(owner["id"], None)
+        flash(f"已把 {label} 并到 {target['display_name']} 的账号下", "ok")
+    return redirect(url_for("settings"))
+
+
+@app.post("/accounts/display-name")
+def rename_account():
+    """只改账号在 Evo 里的展示名。识别名、账号归属和每局保存的 player_name 都不改。
+    只有已确认的账号能改：待确认的账号回答以后可能并进别的账号、编号空出来，展示名会留给以后的新账号。"""
+    target = next((a for a in storage.accounts(db())
+                   if a["confirmed"] and str(a["id"]) == request.form.get("account", "")), None)
+    if target is None:
+        flash("没有保存：账号不存在", "error")
+        return redirect(url_for("settings"))
+    name = " ".join(request.form.get("display_name", "").split())
+    if len(name) > ACCOUNT_DISPLAY_NAME_MAX:
+        flash(f"没有保存：展示名最多 {ACCOUNT_DISPLAY_NAME_MAX} 个字符", "error")
+        return redirect(url_for("settings"))
+    if not name or name == target["name"]:
+        set_account_display_name(target["id"], None)
+        flash(f"已恢复使用识别名 {target['name']}", "ok")
+    else:
+        set_account_display_name(target["id"], name)
+        flash(f"账号展示名已改为 {name}；识别和战绩匹配仍使用游戏里的名字", "ok")
     return redirect(url_for("settings"))
 
 
@@ -1852,7 +1883,7 @@ def delete_account():
     """设置页"账号"一栏的"删除一个账号"（2026-11-05 用户要的，比如不想要的小号）：account = 账号编号。
     删这个账号的所有记录（见 storage.delete_account），删前先把数据库备份一份（同"清空所有战绩"），
     这些局的截图也删（同战绩页删一局，用户决定）。只有 2 个以上账号时才有这一行（只有一个时用"清空所有战绩"）。"""
-    everyone = storage.accounts(db())
+    everyone = display_accounts(storage.accounts(db()))
     target = next((a for a in everyone if str(a["id"]) == request.form.get("account", "")), None)
     if target is None or len(everyone) < 2:
         flash("没有删除：请选一个账号", "error")
@@ -1860,11 +1891,12 @@ def delete_account():
     backup = db_path().with_name(f"{db_path().name}.bak-account-{datetime.now():%Y%m%d-%H%M%S}")
     storage.backup_db(db(), backup)
     rows, counts = storage.delete_account(db(), target["id"])
+    set_account_display_name(target["id"], None)
     shots = sum(screenshots.discard(db(), row, removing=True) for row in rows)  # 局已经删了：别的局还在用的截图照样不删
     if session.get("account") == target["id"]:  # 正在看的就是它：换回默认（最近玩过的账号）
         session.pop("account")
     also = "".join(f"、{n} {what}" for n, what in ((counts["lobby"], "次大厅段位"), (counts["seasons"], "条历史赛季数据")) if n)
-    flash(f"已删除账号 {target['name']} 的 {counts['matches']} 局战绩{also}" + ("和这些局的截图" if shots else "")
+    flash(f"已删除账号 {target['display_name']} 的 {counts['matches']} 局战绩{also}" + ("和这些局的截图" if shots else "")
           + f"。删除前的数据备份在 {backup}", "ok")
     return redirect(url_for("settings"))
 

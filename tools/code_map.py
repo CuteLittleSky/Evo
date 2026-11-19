@@ -48,7 +48,7 @@ SECTIONS = [
         ("config/templates/", "参照图（外观检查用）：按画面放；legends/ 传奇头像、weapons/ 武器、hud/ 对局中，"
                               "en/、zh-TW/ 是英文、繁体游戏和简体不一样的那些")]),
     ("引擎", None, ["code/ocr.py"]),
-    ("页面", "程序", ["code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/global_stats.py"]),
+    ("页面", "程序", ["code/panel_app.py", "code/panel_seasons.py", "code/app_window.py"]),
     ("页面", "模板（panel/templates/）", ["panel/templates/*.html", "panel/templates/share/*.svg"]),
     ("页面", "图片、字体", [
         ("panel/static/", "样式表 style.css、字体，图标（legends/ 传奇头像由 tools/legend_icons.py 生成、ranks/ 段位、"
@@ -57,9 +57,7 @@ SECTIONS = [
     ("底座", None, [
         "code/evo_app.py", "code/paths.py", "code/source_run.py", "code/storage.py", "code/app_settings.py",
         "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/icons.py", "code/sounds.py",
-        "code/webview2.py", "code/update_check.py", "code/updater.py", "code/telemetry.py",
-        ("server/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
-                    "wrangler.toml 部署配置（派喵分支默认关掉匿名统计）")]),
+        "code/webview2.py", "code/update_check.py", "code/updater.py"]),
     ("诊断", None, ["code/evo_diag.py", "tools/diag_report.py", "tools/build_diag.py", "tools/diag.spec"]),
     # 只在本机、不进 git 的文件（.gitignore 里）扫不到，固定写一段
     ("小程序", None, "只在本机、不进 git（见 docs/小程序.md）：`miniprogram/`，和 Evo 里绑定、上传战绩的 "
@@ -80,7 +78,7 @@ SECTIONS = [
         "tools/feature_cards.py", "tools/window_shots.py"]),
     ("开发用的脚本（tools/）", "查问题、看数据", [
         "tools/ocr_probe.py", "tools/frame_capture.py", "tools/legend_capture.py", "tools/log_speed.py",
-        "tools/stats_report.py", "tools/demo_data.py", "tools/code_map.py", "tools/apex_capture_test.py",
+        "tools/demo_data.py", "tools/code_map.py", "tools/apex_capture_test.py",
         "tools/backfill_teammates.py"]),
     ("测试（tests/）", None, [
         "tests/run_all.py", "tests/fake_game.py", "tests/test_*.py",

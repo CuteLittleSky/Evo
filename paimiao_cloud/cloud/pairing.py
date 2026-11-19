@@ -5,6 +5,8 @@ import os
 import urllib.error
 import urllib.request
 
+from cloud import net_hosts
+
 from cloud import state as cloud_state
 
 TIMEOUT = 8.0
@@ -136,7 +138,7 @@ def request(snapshot, path, payload=None, token=None, method="POST", want_cookie
     url = base + path
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+        with net_hosts.urlopen_with_failover(req, TIMEOUT) as response:
             raw = response.read(MAX_BYTES + 1)
             cookie = _cookie_of(response, want_cookie, None) if want_cookie else ""
     except urllib.error.HTTPError as exc:

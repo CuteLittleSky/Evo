@@ -1,6 +1,6 @@
 """多账号：账号对照表（storage.py）和"检测到新的玩家名"弹窗（panel_app.py + base.html）。不用截图。
 
-- 对照表：第一个名字自动成为第一个账号；只差空格的算同一个名字；新名字先单独算一个账号、等回答；
+- 对照表：第一个名字自动成为第一个账号；只差空格、1 / l / I OCR 混淆的算同一个名字；新名字先单独算一个账号、等回答；
   合并后局数加在一起、显示最近一局用的名字；"另一个账号"保持单独；名字还没登记时回答也有效；
   旧数据库（版本 2）升级后有对照表
 - 弹窗（用 Flask 自带的测试客户端，不开浏览器）：有新名字时弹出，名字很像的账号排在前面；没有口令不能提交；
@@ -60,6 +60,13 @@ def table_checks():
     out["separate"] = summary(conn)
     conn.close()
 
+    _, conn = new_db("ambiguous", [("Pilot1", "2026-10-16 21:00:00"), ("Pilotl", "2026-10-16 22:00:00")])
+    out["ambiguous"] = (summary(conn), storage.accounts(conn)[0]["names"])
+    storage.answer_name(conn, "Pilotl")  # 用户明确拆成两个账号以后，不再自动替用户合并
+    storage.insert_match(conn, {"player_name": "PilotI", "ended_at": "2026-10-16 23:00:00"})
+    out["ambiguous_conflict"] = summary(conn)
+    conn.close()
+
     path = FOLDER / "v2.db"  # 版本 2 的数据库：有 player_name 列，没有对照表
     path.unlink(missing_ok=True)
     old = sqlite3.connect(path)
@@ -70,6 +77,75 @@ def table_checks():
     old.close()
     conn = storage.connect(path)
     out["upgraded"] = (conn.execute("PRAGMA user_version").fetchone()[0], summary(conn))
+    conn.close()
+    return out
+
+
+def variant_checks():
+    """同一个名字的几种写法（只差战队标签、1 / l / I）：自动归到一起；老版本留下的待确认重复顺手归好；
+    弹窗回答时几种写法一起处理（PR #12 审查的"必须改"）。截短的名字照旧问。返回每一步看到的结果。"""
+    out = {}
+    # 战队标签换了（2026-11-19 玩家反馈的 [238] → [248] → [258]）、不带标签、标签加 1 / l 混淆：都是同一个账号
+    _, conn = new_db("tags", [("[238] Evil Scholar", "2026-10-25 16:18:00"), ("[248] Evil Scholar", "2026-11-07 17:17:00"),
+                              ("[258]Evil Scholar", "2026-11-15 21:39:00"), ("Evil Scholar", "2026-11-16 20:00:00"),
+                              ("【DOGE】Evi1 Scholar", "2026-11-16 21:00:00")])
+    out["tags"] = (summary(conn), len(storage.accounts(conn)[0]["names"]))
+    conn.close()
+
+    # 截短的名字（少读最后一个字）：分不出是读漏了还是另一个号，照旧问
+    _, conn = new_db("truncated", [("要公面前刀大关", "2026-11-12 15:00:00"), ("要公面前刀大", "2026-11-12 15:08:00")])
+    out["truncated"] = summary(conn)
+    conn.close()
+
+    def legacy(name, rows):
+        """老版本留下的对照表：rows = [(名字, 账号, 是否已确认), ...]，每个名字一局。"""
+        _, conn = new_db(name, [(n, f"2026-10-1{i} 20:00:00") for i, (n, _, _) in enumerate(rows)])
+        conn.executemany("INSERT INTO player_names (name_key, account_id, confirmed) VALUES (?, ?, ?)",
+                         [(storage.name_key(n), a, c) for n, a, c in rows])
+        conn.commit()
+        found = [(sorted(a["names"]), a["games"], a["confirmed"]) for a in storage.accounts(conn)]
+        conn.close()
+        return found
+
+    # 一种写法已确认、另一种还在待确认：归到已确认的账号，不再问
+    out["legacy_one"] = legacy("legacy_one", [("Pilotl", 1, 1), ("Pilot1", 2, 0)])
+    # 两种写法都还在待确认（各一个账号）：并成一个待确认账号，只问一次
+    out["legacy_pending"] = legacy("legacy_pending", [("Main", 1, 1), ("Alt1", 2, 0), ("Altl", 3, 0)])
+    # 两种写法都已确认、在不同账号：是用户拆开的，不动
+    out["legacy_split"] = legacy("legacy_split", [("[238] Evil Scholar", 1, 1), ("[248] Evil Scholar", 2, 1)])
+
+    # 弹窗：新号的 Alt1、Altl 是一个待确认账号；回答"另一个账号"或"同一个人"，两种写法都跟着走，弹窗不再出现
+    token = panel_app.app.config["TOKEN"]
+    for case in ("new", "merge"):
+        path, conn = new_db(f"variants_{case}", [("Main", "2026-10-16 20:00:00"), ("Main", "2026-10-16 21:00:00"),
+                                                  ("Main", "2026-10-16 22:00:00"), ("Alt1", "2026-10-17 20:00:00"),
+                                                  ("Altl", "2026-10-17 21:00:00")])
+        main_id = storage.accounts(conn)[0]["id"]
+        panel_app.app.config.update(DB=path)
+        client = panel_app.app.test_client()
+        page = client.get("/matches").get_data(as_text=True)
+        asked = re.search(r'id="name-dialog".*?name="name" value="([^"]+)"', page, re.S)
+        done = client.post("/accounts/answer", data={"token": token, "name": asked[1] if asked else "",
+                                                     "account": "new" if case == "new" else str(main_id)},
+                           follow_redirects=True).get_data(as_text=True)
+        out[case] = ([(sorted(a["names"]), a["games"], a["confirmed"]) for a in storage.accounts(conn)],
+                     'id="name-dialog"' not in client.get("/matches").get_data(as_text=True),
+                     "共 5 局" in done if case == "merge" else "（2 局）" in done)
+        conn.close()
+
+    # 设置页里回答（点了"稍后再问"）：待确认账号只有一行"属于哪个账号"，并过去时两种写法一起走；待确认的账号不能改展示名
+    path, conn = new_db("variants_settings", [("Main", "2026-10-16 20:00:00"), ("Alt1", "2026-10-17 20:00:00"),
+                                              ("Altl", "2026-10-17 21:00:00")])
+    main_id, alt_id = [a["id"] for a in storage.accounts(conn)]
+    panel_app.app.config.update(DB=path)
+    client = panel_app.app.test_client()
+    settings = client.get("/settings").get_data(as_text=True)
+    pending_rows = settings.count('action="/accounts/move"') == 2 and settings.count('action="/accounts/display-name"') == 1
+    renamed = client.post("/accounts/display-name", data={"token": token, "account": str(alt_id), "display_name": "小号"},
+                          follow_redirects=True).get_data(as_text=True)
+    client.post("/accounts/move", data={"token": token, "name": "Altl", "account": str(main_id)})
+    out["settings"] = (pending_rows, "账号不存在" in renamed and panel_app.account_display_names() == {},
+                       [(sorted(a["names"]), a["games"], a["confirmed"]) for a in storage.accounts(conn)])
     conn.close()
     return out
 
@@ -149,6 +225,15 @@ def switch_checks():
     panel_app.app.config.update(DB=path)
     client = panel_app.app.test_client()
 
+    renamed = client.post("/accounts/display-name", data={"token": token, "account": str(ids["Main"]),
+                                                           "display_name": "我的主号"}, follow_redirects=True)
+    renamed_page = renamed.get_data(as_text=True)
+    main_match = storage.query_matches(conn, names=["Main"])[0][0]["match_id"]
+    out["display_name"] = ("账号展示名已改为 我的主号" in renamed_page and
+                           'value="我的主号"' in renamed_page and "游戏里的名字：Main" in renamed_page and
+                           "我的主号" in client.get(f"/share/match/{main_match}.svg").get_data(as_text=True) and
+                           summary(conn) == [("Main", 3, True), ("Alt", 2, True)])
+
     def legends(page):
         return re.findall(r'<option value="([^"]+)"\s*>', page.split('name="legend"')[1].split("</select>")[0]) \
             if 'name="legend"' in page else []
@@ -172,13 +257,21 @@ def switch_checks():
 
     # 设置页：把小号的名字并到主号，再拆回来；并到不存在的账号
     settings = client.get("/settings").get_data(as_text=True)
-    out["settings_card"] = 'id="h-accounts"' in settings and settings.count('action="/accounts/move"') == 2
+    out["settings_card"] = ('id="h-accounts"' in settings and settings.count('class="account-block"') == 2 and
+                            settings.count('action="/accounts/move"') == 2)
     client.post("/accounts/move", data={"token": token, "name": "Alt", "account": str(ids["Main"])})
     out["moved"] = summary(conn)
+    settings = client.get("/settings").get_data(as_text=True)  # 并过的名字不再各占一块：一个账号一块，下面列出用过的名字
+    out["grouped"] = (settings.count('class="account-block"') == 1 and "游戏里的名字：Alt、Main" in settings and
+                      settings.count('action="/accounts/move"') == 2)
     client.post("/accounts/move", data={"token": token, "name": "Alt", "account": "new"})
     out["split"] = summary(conn)
     bad = client.post("/accounts/move", data={"token": token, "name": "Alt", "account": "999"}, follow_redirects=True)
     out["bad"] = "要并到的账号不存在" in bad.get_data(as_text=True) and summary(conn) == out["split"]
+    reset = client.post("/accounts/display-name", data={"token": token, "account": str(ids["Main"]),
+                                                         "display_name": ""}, follow_redirects=True)
+    out["display_reset"] = ("已恢复使用识别名 Main" in reset.get_data(as_text=True) and
+                            'value="Main"' in reset.get_data(as_text=True))
     conn.close()
     return out
 
@@ -252,11 +345,16 @@ def delete_checks():
 def main():
     print("多账号：账号对照表、新玩家名的弹窗、切换账号")
     t = table_checks()
+    v = variant_checks()
     p = panel_checks()
     s = switch_checks()
     d = delete_checks()
     return report({
         f"第一个名字自动成为账号，只差空格的算同一个名字（{t['first']}）": t["first"] == [("Imperial Hzd", 2, True)],
+        f"1 / l / I 只差 OCR 易混字符时自动归到同一账号，原始识别名都保留（{t['ambiguous']}）":
+            t["ambiguous"] == ([("Pilotl", 2, True)], ["Pilotl", "Pilot1"]),
+        f"用户已确认成两个账号时，不强行重新合并（{t['ambiguous_conflict']}）":
+            t["ambiguous_conflict"] == [("Pilot1", 1, True), ("Pilotl", 1, True), ("PilotI", 1, False)],
         f"新名字先单独算一个账号，等回答（{t['pending']}）":
             t["pending"] == [("Imperial Hzd", 2, True), ("Yukinoshita", 1, False)],
         f"合并后局数相加，显示最近一局的名字（{t['merged']}，用过的名字 {t['names']}）":
@@ -265,6 +363,22 @@ def main():
             t["separate"] == [("Yukinoshita", 3, True), ("Alt2nd", 1, True)],
         f"版本 2 的数据库升级后有对照表（{t['upgraded']}）":
             t["upgraded"] == (storage.SCHEMA_VERSION, [("ImperialHzd", 1, True)]),
+        f"只差战队标签（换了、去掉、全角括号加 1 / l）的名字自动归到同一账号，每种写法都留着（{v['tags']}）":
+            v["tags"] == ([("【DOGE】Evi1 Scholar", 5, True)], 5),
+        f"截短的名字照旧等回答（{v['truncated']}）":
+            v["truncated"] == [("要公面前刀大关", 1, True), ("要公面前刀大", 1, False)],
+        f"老数据：一种写法已确认、另一种待确认，归到已确认的账号（{v['legacy_one']}）":
+            v["legacy_one"] == [(["Pilot1", "Pilotl"], 2, True)],
+        f"老数据：两种写法各是一个待确认账号，并成一个，只问一次（{v['legacy_pending']}）":
+            v["legacy_pending"] == [(["Main"], 1, True), (["Alt1", "Altl"], 2, False)],
+        f"老数据：两种写法都已确认、在不同账号（用户拆开的），不动（{v['legacy_split']}）":
+            v["legacy_split"] == [(["[238] Evil Scholar"], 1, True), (["[248] Evil Scholar"], 1, True)],
+        f"弹窗问 Alt1 / Altl 选\"另一个账号\"：两种写法一起成为一个账号，不再弹（{v['new']}）":
+            v["new"] == ([(["Main"], 3, True), (["Alt1", "Altl"], 2, True)], True, True),
+        f"弹窗问 Alt1 / Altl 选\"同一个人\"：两种写法都并过去，提示共 5 局，不再弹（{v['merge']}）":
+            v["merge"] == ([(["Alt1", "Altl", "Main"], 5, True)], True, True),
+        f"设置页回答待确认账号：只有一行，两种写法一起并过去；待确认的账号不能改展示名（{v['settings']}）":
+            v["settings"] == (True, True, [(["Alt1", "Altl", "Main"], 3, True)]),
         "面板：有新名字时弹窗": p["shown"],
         "弹窗：名字很像的账号排在最前，最后是\"另一个账号\"；只有很像的那个有提示": p["order"] and p["hint"],
         f"没有口令不能提交（状态码 {p['no_token']}）": p["no_token"] == 403,
@@ -282,9 +396,11 @@ def main():
         f"切换后回到原来的页面，去掉页码、展开的局和传奇筛选（{s['redirect']}）": s["redirect"] == "/matches?mode=ranked",
         f"全部账号：所有局（含没认出玩家名的），段位和走势图提示选一个账号（{s['all']}）": s["all"] == (6, True),
         f"新开的窗口又默认看最近玩的账号（局数 {s['fresh_window']}）": s["fresh_window"] == 2,
-        "设置页有\"账号\"一栏，每个名字一行": s["settings_card"],
+        "设置页有\"账号\"一栏，每个账号一块，每个名字一行可以改属于哪个账号": s["settings_card"],
+        "账号展示名可自定义；识别名和账号匹配不变；清空后恢复识别名": s["display_name"] and s["display_reset"],
         f"设置页：把小号并到主号（{s['moved']}），再拆回来（{s['split']}）":
             s["moved"] == [("Alt", 5, True)] and s["split"] == [("Main", 3, True), ("Alt", 2, True)],
+        "设置页：并在一起的两个名字只占一块，写着用过的名字": s["grouped"],
         "设置页：并到不存在的账号，不保存": s["bad"],
         "设置页有\"删除一个账号\"，每个账号一项、写着局数": d["form"],
         f"删除账号：没有口令不能删（状态码 {d['no_token']}）；选了不存在的账号不删，有提示":

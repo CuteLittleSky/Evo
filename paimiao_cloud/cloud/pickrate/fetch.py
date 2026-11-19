@@ -49,6 +49,8 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+
+from cloud import net_hosts
 from pathlib import Path
 
 # 接口路径（挂在配对根下面，与 /battlestats、/maprotation 同级）
@@ -109,7 +111,7 @@ def unavailable_reason():
 
         snapshot = cloud_state.load()
         if not cloud_state.agreed(snapshot):
-            return "先去「派喵云同步」同意数据传输指引"
+            return "先去「派喵云同步」同意《用户协议》与《隐私政策》"
         if not cloud_state.paired(snapshot):
             return "先去「派喵云同步」完成设备配对"
         return None
@@ -225,7 +227,7 @@ def _request(tier):
     """真正发一次请求。抛 Unavailable / AuthExpired。"""
     req = urllib.request.Request(_api_url(tier), headers=_headers(), method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with net_hosts.urlopen_with_failover(req, TIMEOUT) as resp:
             raw = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):

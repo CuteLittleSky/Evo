@@ -1,0 +1,30 @@
+{# 配对码展示块：服务端首屏渲染 与 生成后的 AJAX 换入 共用这一份，避免两处标记漂移。
+   依赖上下文里的 view（page_view 的返回值）。JS（二维码/倒计时/轮询）不在这里，见 cloud_page.html 的 initCloudPair。 #}
+<div class="cloud-pair" style="flex-direction:column;align-items:flex-start;gap:14px">
+  <div class="cloud-pair-grid">
+    <div class="cloud-qr">
+      <div class="cloud-qr-busy-mask">
+        <span class="cloud-spinner"></span>
+        <span>正在生成新的配对码…</span>
+      </div>
+      {% if view.pair_mini_code %}
+      <img id="cloud-mini-img" class="cloud-qr-img" alt="小程序码" src="{{ view.pair_mini_code }}">
+      {% elif view.pair_qr_url %}
+      <div id="cloud-qr-img" class="cloud-qr-img" data-url="{{ view.pair_qr_url }}"></div>
+      {% else %}
+      <div class="cloud-qr-fallback">二维码暂不可用<br>请用下面的配对码</div>
+      {% endif %}
+    </div>
+    <div class="cloud-pair-code">
+      <div class="cloud-code">{{ view.pair_code }}</div>
+      <ol class="cloud-steps">
+        <li>用微信「扫一扫」扫左边的码，直接打开小程序并自动配对</li>
+        <li>也可以打开「派喵APEX工具」小程序 →「战绩中心」→「扫一扫配对」，或在下面直接输入这 6 位码</li>
+        <li>配对成功后，这个页面会自动变成已配对</li>
+      </ol>
+    </div>
+  </div>
+  <div class="cloud-wait" id="cloud-wait">
+    <span class="cloud-dot"></span>等待手机确认…（还剩 <span id="cloud-left">{{ view.pair_left }}</span> 秒）
+  </div>
+</div>

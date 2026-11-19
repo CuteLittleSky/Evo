@@ -1,6 +1,6 @@
 # Evo 派喵云同步版
 
-**Evo 的非官方修改分支**，由派喵小程序作者维护。
+**Evo 的非官方修改分支**，由派喵APEX工具小程序作者维护。
 
 - 上游：[AugustHuangMX/Evo](https://github.com/AugustHuangMX/Evo)
 - 本分支：[CuteLittleSky/Evo](https://github.com/CuteLittleSky/Evo)

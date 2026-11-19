@@ -60,6 +60,8 @@ import json
 import time
 import urllib.request
 
+from cloud import net_hosts
+
 # 接口地址（相对派喵云的根）。根从 cloud/state.py 退出来（.../apex/api），
 # 这样自检时把 EVO_CLOUD_SERVER 指到本机假接口，这里也跟着走。
 API_PATH = "/maprotation?evo=true"
@@ -225,7 +227,7 @@ def fetch(force=False):
             headers=_api_headers(),
             method="GET",
         )
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with net_hosts.urlopen_with_failover(req, TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         raise Unavailable(str(exc)) from exc

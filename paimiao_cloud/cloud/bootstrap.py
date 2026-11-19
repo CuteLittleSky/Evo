@@ -76,6 +76,14 @@ def install():
     except Exception as exc:
         _log(f"更新地址注入失败（可能去官方源查更新，需人工检查）：{exc!r}")
 
+    # 段位名兜底：库里可能有英文段位（Silver/Unranked 等旧数据），上游 ranks.has_divisions
+    # 会 KeyError，把打开面板/开始记录打挂。放在最前面，早于面板和记录程序用到 ranks。
+    try:
+        from cloud import ranks_safety
+        ranks_safety.install()
+    except Exception as exc:
+        _log(f"段位名兜底注入失败（不影响使用）：{exc!r}")
+
     try:
         from cloud.obs import inject as obs_inject
         obs_inject.install()
@@ -143,6 +151,18 @@ def install():
         _log(f"同一局去重注入失败（Evo 本身不受影响）：{exc!r}")
 
     try:
+        from cloud.stats import inject as stats_inject
+        stats_inject.install()
+    except Exception as exc:
+        _log(f"匿名统计注入失败（Evo 本身不受影响）：{exc!r}")
+
+    try:
+        from cloud.boss_score import inject as boss_inject
+        boss_inject.install()
+    except Exception as exc:
+        _log(f"老板分补算注入失败（Evo 本身不受影响）：{exc!r}")
+
+    try:
         from cloud import season_align
         season_align.install()
     except Exception as exc:
@@ -198,6 +218,18 @@ def attach(module):
 
     app = module.app
 
+    if not getattr(app, "_paimiao_stats_ctx", False):
+        app._paimiao_stats_ctx = True
+
+        @app.context_processor
+        def _paimiao_stats_context():
+            try:
+                import app_settings as _app_settings
+                on = not bool(_app_settings.get("paimiao_stats_opt_out"))
+            except Exception:
+                on = True
+            return {"paimiao_stats_on": on}
+
     if not getattr(app, "_cloud_loader_installed", False):
         app.jinja_loader = splice_loader(app.jinja_loader, _TEMPLATES)
         app._cloud_loader_installed = True
@@ -209,14 +241,6 @@ def attach(module):
     if not getattr(app, "_cloud_notice_installed", False):
         app._cloud_notice_installed = True
         cloud_notice.register(app, module)
-
-    if not getattr(app, "_paimiao_global_stats_installed", False):
-        app._paimiao_global_stats_installed = True
-        try:
-            from cloud.global_stats import inject as global_stats_inject
-            global_stats_inject.register(app)
-        except Exception as exc:
-            _log(f"全体玩家关闭注入失败（Evo 本身不受影响）：{exc!r}")
 
     if not getattr(app, "_cloud_obs_page_installed", False):
         app._cloud_obs_page_installed = True

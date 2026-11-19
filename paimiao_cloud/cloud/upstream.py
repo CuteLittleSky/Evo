@@ -6,13 +6,22 @@ from urllib.parse import urlparse
 
 from cloud import state as cloud_state
 
-UPDATE_BASE = os.environ.get(
-    "EVO_UPDATE_BASE", "https://tools.skycraft.cn/apex/api/battlestats")
+def _default_update_base() -> str:
+    try:
+        from cloud import net_hosts  # noqa: PLC0415
+
+        return net_hosts.api_root().rstrip("/") + "/battlestats"
+    except Exception:
+        return "https://tools.skycraft.cn/apex/api/battlestats"
+
+
+UPDATE_BASE = os.environ.get("EVO_UPDATE_BASE") or _default_update_base()
 UPDATE_URL = UPDATE_BASE.rstrip("/") + "/latest.json"
 
 UPDATE_PAGE = "https://apex.skycraft.cn/#evo"
 
-UPDATE_HOSTS = {"tools.skycraft.cn", "apex.skycraft.cn", "cfr2-apex.skycraft.cn",
+UPDATE_HOSTS = {"tools.skycraft.cn", "tools1.skycraft.cn", "tools3.skycraft.cn",
+                "apex.skycraft.cn", "cfr2-apex.skycraft.cn",
                 "paimiaoesa.skycraft.cn",
                 "github.com", "www.github.com", "objects.githubusercontent.com"}
 
@@ -35,16 +44,22 @@ _FEEDBACK_OPEN = '<div class="feedback">'
 CARD_BRAND_OLD = "<span>evotracker.cn</span>"
 CARD_BRAND_NEW = "<span>apex.skycraft.cn</span>"
 
-TELEMETRY_ENABLED = os.environ.get("EVO_PAIMIAO_TELEMETRY", "1") != "0"
-
-_TELEMETRY_START = "{# 匿名统计（telemetry.py）"
-_TELEMETRY_SECTION = '<section class="card settings-card" id="stats"'
-
-_ASK_OPEN = "{% if ask_telemetry %}"
-_ASK_HIDDEN = "{% if false and ask_telemetry %}"
-
-OLD_ABOUT_ONLINE = "只有更新和你同意的匿名统计会联网"
-NEW_ABOUT_ONLINE = "只有检查更新和派喵云同步会联网"
+# 派喵匿名统计卡：注入到上游「设置 → 数据与隐私」卡里（运行时拼接，不改上游磁盘）
+_STATS_SETTINGS_ANCHOR = '<h2 id="h-data">数据与隐私</h2>'
+_STATS_SETTINGS_BLOCK = """
+      <div class="setting" id="paimiao-stats">
+        <div class="setting-text">
+          <div class="setting-name">匿名统计</div>
+          <div class="setting-desc">未绑定派喵云同步时上报去标识的对局统计（模式/地图/传奇/名次/伤害/RP/段位/队友数据/武器时长等，含随机匿名编号与 Evo 版本号；不含游戏名、玩家 ID、队友名字/ID、截图、日志）。绑定派喵云同步后自动停发。</div>
+          {% if not paimiao_stats_on %}<div class="setting-desc stats-status">已关闭：不发送任何数据</div>{% endif %}
+        </div>
+        <form method="post" action="/cloud/stats/toggle"{% if paimiao_stats_on %} onsubmit="return confirm('确定关闭匿名统计吗？关闭后不会再上传任何统计数据，可随时重新开启。')"{% endif %}>
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="on" value="{{ '0' if paimiao_stats_on else '1' }}">
+          <input type="hidden" name="next" value="/settings">
+          <button type="submit" class="btn">{{ '关闭匿名统计' if paimiao_stats_on else '开启匿名统计' }}</button>
+        </form>
+      </div>"""
 
 FOLLOW_ENABLED = os.environ.get("EVO_PAIMIAO_FOLLOW", "0") == "1"
 # 派喵版隐藏了上游的「关注我」卡（开发者的 B 站/小黑盒），那块现在放我们自己的
@@ -72,7 +87,6 @@ def apply(module, env=None):
         done += _install_template_hook(env)
     if module is not None:
         done += _patch_panel_module(module)
-    done += _patch_telemetry()
     _log("派喵版差异：" + ("、".join(done) if done else "没有需要改的"))
     return done
 
@@ -206,60 +220,6 @@ def _patch_panel_module(module):
         done.append("follow_off")
     return done
 
-def _patch_telemetry():
-
-    if not TELEMETRY_ENABLED:
-        return []
-    try:
-        import telemetry
-    except Exception:
-        return []
-    done = []
-    if not getattr(telemetry.consent, "_paimiao_patched", False):
-
-        def consent():
-            return False
-
-        consent._paimiao_patched = True
-        telemetry.consent = consent
-        done.append("telemetry_off")
-
-    # 用户 2026-10-25 的决定：光让 `consent()` 恒为假，`send()` 仍是「先判断、再发」的流程，
-    # 哪天上游调换顺序、或者别的代码直接调 `_post()`，请求就发出去了。这里把**发送端**
-    # 整个包住：不联网、不写设置，并补上 consent()=False 时原来的 return None 分支
-    # （上游 send() 在 :230 就是「没同意 → 返回 None」，这里不改那个行为）。
-    #
-    # ⚠ 不要再把整个 `send()` 换成「直接返回一个 dict」的空函数：上游 send() 的第一句
-    # 就是 `if consent() is not True: return None`，调用方（面板、云同步、测试）都按
-    # 「None = 没发」来判断。替换成 dict 会让 tests/test_global_stats.py 在
-    # `install not in json.dumps(...)` 上炸 TypeError（install 为 None），事实是那条断言
-    # 之前从未被走到 —— 它默认「开了匿名统计就会联网」，正是我们要断的。
-    if not getattr(telemetry.send, "_paimiao_noop", False):
-        original_send = telemetry.send
-
-        @functools.wraps(original_send)
-        def send(*args, **kwargs):
-            if consent() is not True:
-                return None
-            return {"ok": True, "matches": 0, "ping": False, "error": None, "at": None}
-
-        send._paimiao_noop = True
-        telemetry.send = send
-        done.append("telemetry_send_noop")
-
-    # 最后一道闸：连底层 POST 也封掉。上游 `_post()` 是唯一出网的入口
-    # （send() 只经它发；别的模块要发也得走它）。
-    if not getattr(telemetry._post, "_paimiao_noop", False):
-        original_post = telemetry._post
-
-        def _post(path, body, timeout=None, *args, **kwargs):
-            raise telemetry.SendError("派喵版不发送匿名统计")
-
-        _post._paimiao_noop = True
-        telemetry._post = _post
-        done.append("telemetry_post_blocked")
-    return done
-
 def _install_template_hook(env):
 
     if getattr(env, "_paimiao_cloud_preprocess", False):
@@ -290,43 +250,11 @@ def _patch_template(source):
         source = source.replace(OLD_SETTING, _NEW_SETTING)
     if _FEEDBACK_START in source:
         source = _drop_feedback_block(source)
-    if _TELEMETRY_START in source and TELEMETRY_ENABLED:
-        source = _hide_telemetry_section(source)
-    if _ASK_OPEN in source and TELEMETRY_ENABLED:
-        source = _hide_ask_card(source)
-    if OLD_ABOUT_ONLINE in source and TELEMETRY_ENABLED:
-        source = source.replace(OLD_ABOUT_ONLINE, NEW_ABOUT_ONLINE)
     if _FOLLOW_START in source and not FOLLOW_ENABLED:
         source = _hide_follow_block(source)
+    if _STATS_SETTINGS_ANCHOR in source and "paimiao-stats" not in source:
+        source = source.replace(_STATS_SETTINGS_ANCHOR, _STATS_SETTINGS_ANCHOR + _STATS_SETTINGS_BLOCK)
     return source
-
-_SETTINGS_BLOCK_END = "</section>"
-
-_TELEMETRY_END = _SETTINGS_BLOCK_END
-
-def _hide_ask_card(source):
-
-    if _ASK_HIDDEN in source:
-        return source
-    if source.count(_ASK_OPEN) != 1:
-        return source
-    return source.replace(_ASK_OPEN, _ASK_HIDDEN)
-
-def _hide_telemetry_section(source):
-
-    start = source.find(_TELEMETRY_START)
-    if start < 0:
-        return source
-    if source.find(_TELEMETRY_START, start + 1) >= 0:
-        return source
-    section = source.find(_TELEMETRY_SECTION, start)
-    if section < 0:
-        return source
-    end = source.find(_TELEMETRY_END, section)
-    if end < 0:
-        return source
-    end += len(_TELEMETRY_END)
-    return source[:start] + source[end:].lstrip("\r\n")
 
 def _hide_follow_block(source):
 

@@ -8,7 +8,7 @@ ApexPacks 服务端，不是上游的匿名统计，也不需要同意任何数�
     Evo 面板「榜单」页
         → GET {pair_server}/evo/pick-rate?tier=all     (Authorization: Bearer <配对令牌>)
         → server/api/evo/pick-rate.get.ts
-        → 服务端缓存（5 分钟）→ Apex Legends Status 的选取率表
+        → 服务端缓存（5 分钟）→ 派喵APEX工具 的选取率表
         → 返回 28 个传奇：pickRate / trend / avgRank / 战绩胜率 / 平均场杀
 
 ## 只读
@@ -20,7 +20,7 @@ ApexPacks 服务端，不是上游的匿名统计，也不需要同意任何数�
 ## 开关
 
 不需要「同意匿名统计」。能不能看只看一件事：**有没有配对过**（配对时已经同意过
-派喵自己的数据传输指引）。所以上游那个「同意匿名信息收集」的界面隐藏掉之后，
+派喵自己的《用户协议》与《隐私政策》）。所以上游那个「同意匿名信息收集」的界面隐藏掉之后，
 这条链路照常可用 —— 它本来就没走上游的 `telemetry.py`。
 
 ## 文件

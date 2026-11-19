@@ -12,8 +12,16 @@ LOG_NAME = "cloud.log"
 DEFAULT_SERVER = "https://tools.skycraft.cn/apex/api/battlestats"
 
 def default_server() -> str:
+    """云同步 / 接口根。优先跟随 net_hosts 当前线路（主/备用），可被 EVO_CLOUD_SERVER 覆盖。"""
+    env = os.environ.get("EVO_CLOUD_SERVER")
+    if env:
+        return env.rstrip("/")
+    try:
+        from cloud import net_hosts  # noqa: PLC0415 —— 避免与 net_hosts 的循环导入
 
-    return (os.environ.get("EVO_CLOUD_SERVER") or DEFAULT_SERVER).rstrip("/")
+        return net_hosts.api_root().rstrip("/") + _PAIR_SUFFIX
+    except Exception:
+        return DEFAULT_SERVER.rstrip("/")
 
 _PAIR_SUFFIX = "/battlestats"
 
@@ -25,12 +33,12 @@ def pair_server(snapshot) -> str:
     root = (os.environ.get("EVO_CLOUD_PAIR_SERVER") or "").rstrip("/")
     if root:
         return root
-    server = (snapshot.get("server") or default_server()).rstrip("/")
+    server = default_server()
     if server.endswith(_PAIR_SUFFIX):
         return server[: -len(_PAIR_SUFFIX)]
     return server
 
-CONSENT_VERSION = "2026-10-22b"
+CONSENT_VERSION = "2026-11-20"
 
 def data_dir() -> Path:
 
@@ -79,6 +87,7 @@ DEFAULTS = {
 
     "notice_seen": "",
     "recommend_seen": "",
+    "terms_seen": "",
 }
 
 def load() -> dict:
@@ -97,6 +106,7 @@ def load() -> dict:
     merged["consent"] = raw.get("consent") or {}
     merged["notice_seen"] = str(raw.get("notice_seen") or "")
     merged["recommend_seen"] = str(raw.get("recommend_seen") or "")
+    merged["terms_seen"] = str(raw.get("terms_seen") or "")
 
     merged["server"] = default_server()
     return merged

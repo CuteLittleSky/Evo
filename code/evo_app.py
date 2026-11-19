@@ -154,32 +154,6 @@ def start_update_checker(log, notify, stop, first_delay=UPDATE_FIRST_DELAY):
     threading.Thread(target=loop, name="update-check", daemon=True).start()
 
 
-STATS_FIRST_DELAY = 60  # 秒：启动后等一会儿再发匿名统计，排在检查新版本后面
-STATS_FIRST_DELAY_BACKGROUND = 180  # 开机自启时：等网络连上
-STATS_EVERY = 3600  # 之后每小时一次（没有要发的就不联网；2026-10-22 用户决定，原来是 8 小时）
-
-
-def start_telemetry(log, stop, first_delay=STATS_FIRST_DELAY):
-    """用户同意了匿名统计（telemetry.py）才联网：启动 1 分钟（开机自启时 3 分钟）后发一次，之后每小时一次。
-    没同意时什么都不做；没有要发的也不联网。发了什么、没发出去都写进日志。"""
-
-    def loop():
-        if stop.wait(first_delay):
-            return
-        while True:
-            import telemetry
-
-            result = telemetry.send()
-            if result is not None and not result["ok"]:
-                log(f"匿名统计：没发出去（{result['error']}），下次再发")
-            elif result is not None and (result["matches"] or result["ping"]):
-                log(f"匿名统计：发送了 {result['matches']} 局" + ("和今天的日活" if result["ping"] else ""))
-            if stop.wait(STATS_EVERY):
-                return
-
-    threading.Thread(target=loop, name="telemetry", daemon=True).start()
-
-
 SOURCE_BACKUPS = 5  # 源码运行前的数据库备份留最近几份
 
 
@@ -667,8 +641,6 @@ def main():
             listen_for_show(lambda: panel.open())  # 再次双击 Evo 时弹出窗口
             start_update_checker(log, icon.notify, stop_update_checker,  # 用户同意了才联网检查新版本
                                  UPDATE_FIRST_DELAY_BACKGROUND if args.background else UPDATE_FIRST_DELAY)
-            start_telemetry(log, stop_update_checker,  # 用户同意了才发匿名统计
-                            STATS_FIRST_DELAY_BACKGROUND if args.background else STATS_FIRST_DELAY)
             try:  # 绑定了微信小程序才联网，定时上传战绩（cloud_sync.py）。小程序的文件只在开发者电脑上，
                 import cloud_sync  # 不上传 GitHub、小程序上线前不打进安装包（2026-10-24 用户决定）：没有就不同步
             except ImportError:

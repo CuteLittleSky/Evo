@@ -128,7 +128,7 @@ RP：游戏里没有单一的"总 RP"，只有"段位 + 段内进度"。**总分
 - 不要删除或覆盖我的截图样本
 - 不提交到仓库：`captures/`（测试截图、注入验证脚本）、`data/`、数据库文件、`site/`；小程序的 AppSecret、云开发的密钥（也不写进 Evo）；别的玩家的名字和 ID（队友的测试答案只在本机：`tests/replay_20261016_teammates.csv`、`tests/in_match_teammates.json`）
 - **微信小程序的内容永远不上传 GitHub**（上游 2026-10-24 决定；派喵分支遵守同一规则）：`miniprogram/`、`docs/小程序.md`，以及 Evo 里绑定、上传战绩的 `code/cloud_sync.py`、`code/panel_cloud.py`、`code/qr.py`、`panel/templates/_cloud.html`、`tests/test_cloud_sync.py`、`tools/cloud_ping.py`（都写在 `.gitignore` 里，只在本机；之前的提交在本机分支 `local/miniprogram-history`，不推送）。GitHub 上的 Evo 没有这些文件也要能运行（找不到就不显示那一栏、不同步）；小程序上线前也不打进安装包（`tools/evo.spec` 的 `WITH_CLOUD`）。别的文档里写到小程序照常上传。推送前先查 `git log origin/main..main -- <这些路径>` 为空
-- **合并上游一律「无历史合并」**（2026-10-25 用户决定）：不要用 `git merge upstream/main`——那会把上游的原始提交（现在 45 条，以后会更多）全部变成我们历史的祖先。改用 `git merge --squash upstream/main`（或软重置后重做一次提交），上游的改动只变成我们这边**一条**新提交，历史里始终只有我们自己的提交。GitHub 上的 "N commits behind" 就是这个原因造成的计数，**不是内容缺失**，下次无历史合并后自动归零。squash 不等于违约：AGPL-3.0 不要求保留 git 提交历史，要求的是保留版权声明、修改说明和源码可获取（LICENSE 全文、README 里的 `Copyright (c) 2026 AugustHuangMX` 与上游链接、`paimiao_cloud/README.md` 的改动清单都在）。**追溯线索写进提交信息**：合并提交里注明上游范围，如 `合并上游 0.4.0（upstream/main e61a85a..457a159，45 个提交）`。
+- **合并上游保留上游历史**（2026-11-20 用户改定，取代 2026-10-25 的「无历史合并」）：用普通的 `git merge upstream/main` 生成真正的合并提交，上游的原始提交会进入我们的历史（`git log --graph` 能看到）。**不再用 `git merge --squash`**。合并时仍要照下面「不要带回来的东西」清单剔除：被排除的改动（增量补丁包/COS/匿名统计/赛事看直播等）会在合并里冒出来，按清单保留我们的版本或直接删掉；每次合并后跑 `tests/run_all.py` 和注入自检。AGPL-3.0 不要求保留 git 提交历史，但要保留版权声明、修改说明和源码可获取（LICENSE 全文、README 里的 `Copyright (c) 2026 AugustHuangMX` 与上游链接、`paimiao_cloud/README.md` 的改动清单都在）。**追溯线索写进提交信息**：合并提交里注明上游范围，如 `合并上游 0.6.1（upstream/main 3481a1d..f59b59e）`。
 - **合并上游时不要把这些东西带回来**（2026-10-25 用户确认）：
 
   | 上游有、派喵版**已经删掉或改过**的 | 应该怎么做 |

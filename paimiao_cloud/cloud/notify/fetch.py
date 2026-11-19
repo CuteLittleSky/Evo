@@ -13,6 +13,8 @@ import time
 import urllib.parse
 import urllib.request
 
+from cloud import net_hosts
+
 from cloud.notify import model, store, version
 
 TIMEOUT = 6.0
@@ -78,7 +80,7 @@ def refresh(force: bool = False) -> list:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with net_hosts.urlopen_with_failover(req, TIMEOUT) as resp:
             raw = resp.read().decode("utf-8", "replace")
         data = json.loads(raw)
         if not isinstance(data, dict):
