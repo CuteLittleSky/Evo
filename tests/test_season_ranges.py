@@ -166,9 +166,10 @@ def panel_checks():
     get = lambda url: empty_client.get(url).get_data(as_text=True)  # noqa: E731
     fresh, fresh_stats, fresh_matches = get("/"), get("/stats"), get("/matches")
     text = "本赛季（第 31 赛季：11/03 起）还没有对局，打完一局就会算进来"
-    out["新赛季刚开始（只读过一次大厅）：总览页段位是大厅读到的白银 I 688，统计都是\"—\"、胜率不标红"] = (
-        "白银 I" in fresh and ">688<" in fresh and stat(fresh, "统计局数") == "0" and stat(fresh, "胜率") == "—"
-        and 'class="stat-value num accent"' not in fresh)
+    out["新赛季刚开始（只读过一次大厅）：总览页段位是大厅读到的白银 I 688，统计都是\"—\""] = (
+        "白银 I" in fresh and ">688<" in fresh and stat(fresh, "统计局数") == "0" and stat(fresh, "胜率") == "—")
+    out["胜率不再标红（2026-11-19 用户要求）：统计数字六格都是一样的颜色"] = (
+        all(page.count('class="stat-value num" data-count') == 6 and "stat-value num accent" not in page for page in (home, fresh)))
     out["新赛季刚开始：最近对局、数据页、战绩页都写明本赛季还没有对局，给出去上赛季、全部的链接"] = (
         all(text in page for page in (fresh, fresh_stats, fresh_matches))
         and '看看<a class="text-link" href="/?range=last" title="第 30 赛季：08/04 起，到 11/03">上赛季</a>或' in fresh

@@ -481,7 +481,6 @@ code { font-family: Consolas, monospace; font-size: 13px; padding: 1px 6px; bord
 .stat-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
 .stat { padding: 18px 20px; }
 .stat-value { font-size: 30px; font-weight: 600; margin-top: 4px; }
-.stat-value.accent { color: var(--accent); }
 
 .ov-bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 20px; align-items: start; }
 .ov-side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }  /* 右边一列：六维图、传奇表现 */

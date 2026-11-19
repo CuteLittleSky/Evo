@@ -644,7 +644,7 @@ def stat_cards(rows):
         {"label": "场均击杀", "value": n["avg_kills"]},
         {"label": "场均伤害", "value": n["avg_damage"]},
         {"label": "前五率", "value": n["top5"]},
-        {"label": "胜率", "value": n["win_rate"], "accent": n["win_rate"] != "—"},  # 新赛季还没有对局时"—"不标红
+        {"label": "胜率", "value": n["win_rate"]},  # 原来用红色标出来，2026-11-19 用户要求不再标红，和别的几格一样
         {"label": "统计局数", "value": str(n["games"])},
     ]
 
