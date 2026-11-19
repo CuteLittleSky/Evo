@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE INDEX IF NOT EXISTS pings_day ON pings (day);
 CREATE INDEX IF NOT EXISTS matches_day ON matches (day);
 CREATE INDEX IF NOT EXISTS matches_received ON matches (received_at);  -- 汇总前看有没有新数据（只读一行）
+CREATE INDEX IF NOT EXISTS usage_day ON usage (day);  -- 后台「数据」页按天算占用（server/team/statsroll.js，2026-11-19 加的）
 
 -- 全体玩家的汇总（Evo 数据页"全体玩家"下载的就是 body；worker.js 每天算一次，有新数据或换了一天才重算）
 CREATE TABLE IF NOT EXISTS summary (

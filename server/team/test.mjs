@@ -11,6 +11,7 @@
 //   test_tidy.mjs      2026-11-19 的优化：结束的赛事不挡发布、提示收起来、还没发布的提醒、改动记录写清楚、复制赛事、
 //                      换队并队、批量填直播间、一键配队徽
 //   test_manualpros.mjs  Liquipedia 上没有页面的选手：手动建资料
+//   test_stats.mjs     「数据」页：从匿名统计的数据库增量算数（Node 自带的 SQLite 当 D1）、页面
 //
 // 另外几个用法（tests/test_team_publish.py 用，和 tools/esports.py 对照）：
 //   --build 输入.json          输入 {"players", "events", "switches", "now", "teams"}，打印生成的 esports.json 和检查结果
@@ -75,5 +76,7 @@ if (args[0] === "--build") {
   await import("./test_tidy.mjs");
   console.log("\n手动建的选手资料");
   await import("./test_manualpros.mjs");
+  console.log("\n数据页");
+  await import("./test_stats.mjs");
   process.exit(summary());
 }

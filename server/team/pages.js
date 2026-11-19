@@ -20,6 +20,7 @@ const CSS = `
   --info-bg: #0F1A2B; --info-border: #24456E; --info-text: #8EC0FF;
   --warn-bg: #1E1A10; --warn-border: #5A4A1E; --warn-text: #F4D68A;
   --focus: #8EC0FF;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --band: rgba(255,255,255,.07);  /* 图表的三种颜色（dataviz 参考色板的深色那一套，验过） */
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -31,6 +32,7 @@ const CSS = `
     --info-bg: #EEF4FC; --info-border: #BCD3F0; --info-text: #1D4F99;
     --warn-bg: #FBF5E3; --warn-border: #E8D9A8; --warn-text: #6B4E06;
     --focus: #1D4F99;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --band: rgba(0,0,0,.05);
     color-scheme: light;
   }
 }
@@ -229,6 +231,39 @@ details.note > summary .help { color: inherit; opacity: .85; }
 .match-row > a { min-height: 44px; display: inline-flex; align-items: center; }
 .banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .links { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+/* 「数据」页（pages_stats.js）：图、图例、横条、数字表、悬停的小框 */
+.tiles.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }  /* 手机上两个一行 */
+.tile p.hero { font-size: 28px; line-height: 1.2; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.viz .title-row h2 { margin: 0; }
+.chart { display: block; width: 100%; height: auto; }
+.chart .grid { stroke: var(--row-border); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .line.s1 { stroke: var(--s1); } .chart .line.s2 { stroke: var(--s2); } .chart .line.s3 { stroke: var(--s3); }
+.chart .line.partial { stroke-dasharray: 4 4; }
+.chart .bar.s1 { fill: var(--s1); } .chart .bar.s2 { fill: var(--s2); } .chart .bar.s3 { fill: var(--s3); }
+.chart .bar.partial { opacity: .45; }
+.chart .hit { fill: transparent; }
+.chart .hit:hover { fill: var(--band); }
+.chart-narrow { display: none; }
+@media (max-width: 599px) { .chart-wide { display: none; } .chart-narrow { display: block; } }
+.legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14px; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.swatch.s1 { background: var(--s1); } .swatch.s2 { background: var(--s2); } .swatch.s3 { background: var(--s3); }
+.hbars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.hbars li { display: grid; grid-template-columns: 6em 1fr auto; gap: 10px; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; }
+.hb-track { height: 12px; }
+.hb-bar { display: block; height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; }
+.hb-bar.s1 { background: var(--s1); }
+.hb-val { color: var(--muted); }
+.table-wrap { overflow-x: auto; }
+table.nums { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+table.nums th, table.nums td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--row-border); white-space: nowrap; }
+table.nums th:first-child, table.nums td:first-child { text-align: left; }
+table.nums th { color: var(--muted); font-weight: 600; }
+#viz-tip { position: fixed; z-index: 50; pointer-events: none; max-width: 260px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text); font-size: 13px; line-height: 1.5; white-space: pre-line; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
 .banner-text { flex: 1 1 240px; min-width: 0; }
 @media (min-width: 720px) {
   .fold > summary { padding: 0 24px; }
@@ -290,6 +325,25 @@ document.addEventListener("change", async (event) => {
     note.textContent = "这张图读不出来：换一张 PNG、JPG 或 WebP";
   }
 });
+// 「数据」页的图：悬停（手机上点一下）看那一天的数（每一天一整列，data-tip 里是要显示的字）
+let vizTip = null;
+function showVizTip(event) {
+  const target = event.target.closest && event.target.closest("[data-tip]");
+  if (!target) { if (vizTip) vizTip.hidden = true; return; }
+  if (!vizTip) { vizTip = document.createElement("div"); vizTip.id = "viz-tip"; document.body.appendChild(vizTip); }
+  vizTip.textContent = target.dataset.tip;
+  vizTip.hidden = false;
+  const box = vizTip.getBoundingClientRect();
+  let left = event.clientX + 14;
+  if (left + box.width > innerWidth - 8) left = event.clientX - 14 - box.width;
+  let top = event.clientY + 14;
+  if (top + box.height > innerHeight - 8) top = event.clientY - 14 - box.height;
+  vizTip.style.left = Math.max(8, left) + "px";
+  vizTip.style.top = Math.max(8, top) + "px";
+}
+document.addEventListener("pointermove", showVizTip);
+document.addEventListener("pointerdown", showVizTip);
+document.addEventListener("scroll", () => { if (vizTip) vizTip.hidden = true; }, { passive: true });
 document.addEventListener("focusin", (event) => {
   if (event.target.matches && event.target.matches("input[readonly]")) event.target.select();
 });
@@ -356,7 +410,7 @@ export function publishBanner(me, info, now, onPublish = false) {
 export function layout({ title, me = null, current = "", body, narrow = false, banner = "" }) {
   const link = (href, key, text) => `<a href="${href}"${current === key ? ' aria-current="page"' : ""}>${text}</a>`;
   const nav = me ? `<nav class="nav" aria-label="主导航">
-      ${link("/", "home", "首页")}${link("/players", "players", "选手库")}${link("/events", "events", "赛程")}${link("/publish", "publish", "发布")}${link("/pros", "pros", "资料")}
+      ${link("/", "home", "首页")}${link("/stats", "stats", "数据")}${link("/players", "players", "选手库")}${link("/events", "events", "赛程")}${link("/publish", "publish", "发布")}${link("/pros", "pros", "资料")}
       ${me.role === "admin" ? link("/members", "members", "成员") : ""}
     </nav>
     <div class="me"><span class="me-name" title="${escape(me.name)}">${escape(me.name)}</span>${roleBadge(me.role)}
@@ -367,13 +421,13 @@ export function layout({ title, me = null, current = "", body, narrow = false, b
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>${escape(title)} · Evo 赛事数据</title>
+<title>${escape(title)} · Evo 后台</title>
 <link rel="icon" href="${FAVICON}">
 <style>${CSS}</style>
 </head>
 <body>
 <header class="top"><div class="top-inner">
-  <a class="brand" href="/" aria-label="Evo 赛事数据 首页">${ICON}<b>EVO</b><span>赛事数据</span></a>
+  <a class="brand" href="/" aria-label="Evo 后台 首页">${ICON}<b>EVO</b><span>后台</span></a>
   ${nav}
 </div></header>
 <main class="wrap${narrow ? " narrow" : ""}">
@@ -389,8 +443,8 @@ ${banner}${body}
 export function loginPage() {
   return layout({ title: "登录", narrow: true, body: `
 <section class="card stack">
-  <h1>Evo 赛事数据</h1>
-  <p>这是 Evo 的赛事数据协作网页：几个人一起管职业选手、直播间和赛程。</p>
+  <h1>Evo 后台</h1>
+  <p>这是 Evo 的后台：看 Evo 的使用数据，几个人一起管职业选手、直播间和赛程。</p>
   <p class="muted">要进来，请找管理员要一个邀请链接。进来过的人在原来那台设备上直接打开这个网址就行；换了手机或电脑，请管理员再发一个新链接。</p>
 </section>` });
 }
@@ -402,7 +456,7 @@ export function invitePage(invite, action) {
   <p class="muted small">你能做的：${escape(abilities(invite))}。</p>`;
   return layout({ title: "加入", narrow: true, body: `
 <section class="card stack">
-  <h1>加入 Evo 赛事数据</h1>
+  <h1>加入 Evo 后台</h1>
   ${who}
   <form method="post" action="${escape(action)}"><button class="btn btn-primary btn-wide" type="submit">进入</button></form>
   <p class="muted small">点了以后这个链接就作废了；这个浏览器会记住你 ${SESSION_DAYS} 天，以后用同一个浏览器打开 team.evotracker.cn 就行。建议用 Chrome 这类常用的浏览器，不要在微信里直接点开。</p>
@@ -433,6 +487,7 @@ export function homePage(me, { stats, recent, now, banner = "" }) {
       <div class="tile-head">${escape(name)}<span aria-hidden="true">›</span></div><p>${escape(text)}</p>${count ? `<p class="tile-count">${escape(count)}</p>` : ""}</a>`;
   const last = stats.published?.official;
   const tiles = [
+    tile("/stats", "数据", "日活、对局、版本、识别情况、Evo 的占用（只算开了匿名统计的玩家）", stats.dau !== null && stats.dau !== undefined ? `昨天日活 ${stats.dau}` : ""),
     tile("/players", "选手库", "职业选手、战队和直播间", `${stats.players} 位选手、${stats.teams} 支队`),
     tile("/events", "赛程", "联赛、训练赛、杯赛", `${stats.events} 场赛事`),
     tile("/publish", "发布", "生成 Evo 赛事页读的文件", last ? `正式文件：${last.by} ${ago(last.at, now)}发的` : "正式文件还没从这里发过"),

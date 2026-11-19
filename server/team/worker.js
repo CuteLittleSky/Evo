@@ -1,4 +1,5 @@
-// Evo 赛事数据的协作网页（2026-11-17 用户决定）：Cloudflare Worker，地址 https://team.evotracker.cn。
+// Evo 后台（2026-11-17 用户决定，原来叫"赛事数据的协作网页"，11-19 改名）：Cloudflare Worker，地址 https://team.evotracker.cn。
+// 11-19 起也是 Evo 的数据中心：「数据」页显示日活、对局等趋势（statsroll.js 每 3 小时从匿名统计的数据库增量算好，pages_stats.js）。
 // 几个人一起管选手库、赛程和从 Liquipedia 抓来的选手资料，管好了发布成 Evo 赛事页读的 esports.json。
 // 计划和用户定的做法见 claude/todo.md「赛事数据管理网页」；部署、怎么用见 docs/底座.md"协作网页"。
 //
@@ -34,6 +35,8 @@ import { addFromLiquipedia, eventEntries, teamEntries } from "./lpimport.js";
 import { logoHref, logoPage, logosPage } from "./pages_logos.js";
 import { LOGO_FILE, autoMatches, library, libraryKey, pickLogo, pickMany, removeLogo, search, suggest, teamLogos, uploadLogo } from "./logos.js";
 import { manualProPage, newProPage, proHref, proPage, prosPage, teamProfilePage } from "./pages_pros.js";
+import { statsPage } from "./pages_stats.js";
+import { daily, isoDay, rollup } from "./statsroll.js";
 import { createPro, deletePro, manualPros, onLiquipedia, savePro, visible } from "./manualpros.js";
 import { merged, overrides, removeOverride, resolveConflict, setOverride } from "./overrides.js";
 import {
@@ -189,11 +192,18 @@ export async function handle(request, env, now = Date.now()) {
     const [playerItems, eventItems, recent, last, idx, no, ov, mp] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
       published(bucket), index(bucket), rejects(bucket), overrides(bucket), manualPros(bucket)]);
     const pend = pending(playerItems, idx, no, ov, mp);
-    return respond(homePage(me, { now, recent, banner: publishBanner(me, await unpublished(env, now), now), stats: { players: playerItems.length, teams: teamsOf(playerItems).size,
+    const dayStats = (await daily(bucket)).days[isoDay(now + 8 * 3600 * 1000 - 24 * 3600 * 1000)];  // 北京时间的昨天
+    return respond(homePage(me, { now, recent, banner: publishBanner(me, await unpublished(env, now), now), stats: { dau: dayStats?.dau ?? null,
+      players: playerItems.length, teams: teamsOf(playerItems).size,
       events: eventItems.length, published: last, lpPlayers: Object.values(idx.players).filter((x) => !x.missing).length,
       pending: pendingCount(pend) } }));
   }
   if (path === "/log" && method === "GET") return respond(logPage(me, await recentLog(bucket), now));
+  // 数据（11-19）：有后台权限的人都能看（用户定的）；只读算好的文件，不读数据库
+  if (path === "/stats" && method === "GET") {
+    const range = ["30", "90", "all"].includes(url.searchParams.get("range")) ? url.searchParams.get("range") : "30";
+    return respond(statsPage(me, { doc: await daily(bucket), range, now }));
+  }
   const notFound = () => respond(messagePage("没有这个页面", "地址可能写错了。", me), { status: 404 });
   const readOnly = () => respond(messagePage("不能改", "只读的身份只能看，要改请找管理员。", me), { status: 403 });
 
@@ -598,9 +608,11 @@ export async function handle(request, env, now = Date.now()) {
 }
 
 export default {
-  // 定时任务（wrangler.toml 的 crons，每 3 分钟）：从 Liquipedia 抓一步（lpsync.js）
+  // 定时任务（wrangler.toml 的 crons，每 3 分钟）：从 Liquipedia 抓一步（lpsync.js）；「数据」页的数离上次超过 3 小时就增量算一次
+  // （statsroll.js）。两件事互不影响：一件出错另一件照做
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(tick(env, Date.now()));
+    const now = Date.now();
+    ctx.waitUntil(Promise.allSettled([tick(env, now), rollup(env, now)]));
   },
   async fetch(request, env) {
     try {

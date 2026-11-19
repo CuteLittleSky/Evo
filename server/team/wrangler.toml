@@ -23,5 +23,12 @@ bucket_name = "evo-team"
 binding = "PUBLIC"
 bucket_name = "evotracker"
 
+# 匿名统计的数据库（统计服务器 server/stats/ 往里写）：「数据」页的数从这里算（statsroll.js，只有 SELECT；
+# Cloudflare 的绑定不能设成只读）。D1 的免费额度整个账号共用，所以每 3 小时增量算一次，页面打开时不读它
+[[d1_databases]]
+binding = "STATS"
+database_name = "evo-stats"
+database_id = "909dfd16-857d-45fa-96cd-bc828da97e29"
+
 [observability]
 enabled = false  # 不记请求日志（里面会有 IP 地址）
