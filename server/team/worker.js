@@ -22,10 +22,10 @@ import {
   sessionCookie, setRole, validId, whoami,
 } from "./auth.js";
 import { APP_JS, homePage, invitePage, layout, loginPage, membersPage, messagePage, publishBanner } from "./pages.js";
-import { eventsPage, logPage, playersPage, publishPage } from "./pages_esports.js";
+import { eventsPage, logPage, playersPage, publishPage, roomsPage } from "./pages_esports.js";
 import { importEvents, importPlayers } from "./esports.js";
 import {
-  addEvent, addPlayer, deleteEvent, deletePlayer, events, importEventRows, importPlayerRows, mergeTeam, movePlayer, players, published, recentLog,
+  addEvent, addPlayer, deleteEvent, deletePlayer, events, importEventRows, importPlayerRows, mergeTeam, movePlayer, players, published, recentLog, saveRooms,
   renameTeam, saveEvent, savePlayer, teamsOf,
 } from "./data.js";
 import { preview, publish, setPlatform, unpublished } from "./publish.js";
@@ -117,6 +117,10 @@ function okText(params) {
   if (params.get("ok") === "fromlp") {
     return `从 Liquipedia 加进来 ${count("added")} 位${count("pending") ? `（${count("pending")} 位直播间待填：在下面补上，或者平台选"不直播"）` : ""}`
       + `${count("skipped") ? `，跳过 ${count("skipped")} 位（选手库里已经有了）` : ""}`;
+  }
+  if (params.get("ok") === "rooms") {
+    const n = count("n");
+    return n ? `保存好了：改了 ${n} 位的直播间` : "没有改动（和原来一样，没存）";
   }
   if (params.get("ok") === "imported") {
     const added = Number.parseInt(params.get("added"), 10) || 0;
@@ -233,11 +237,28 @@ export async function handle(request, env, now = Date.now()) {
       const [items, logos, changed] = await Promise.all([players(bucket), teamLogos(bucket), unpublished(env, now)]);
       return respond(playersPage(me, items, { now, logos, banner: publishBanner(me, changed, now), ...options }), { status });
     };
-    if (method === "GET") return path === "/players" ? show({ ok: okText(url.searchParams) }) : notFound();
+    // 一张表批量填直播间（11-19）
+    const showRooms = async (options = {}, status = 200) => {
+      const [items, changed] = await Promise.all([players(bucket), unpublished(env, now)]);
+      return respond(roomsPage(me, items, { now, banner: publishBanner(me, changed, now), ...options }), { status });
+    };
+    if (method === "GET") {
+      if (path === "/players/rooms") return showRooms({ all: url.searchParams.get("all") === "1", ok: okText(url.searchParams) });
+      return path === "/players" ? show({ ok: okText(url.searchParams) }) : notFound();
+    }
     if (!can(me, "edit")) return readOnly();
     let form = {};
     try {
       form = await readFields(request);
+      if (path === "/players/rooms") {
+        try {
+          const n = await saveRooms(bucket, me, form, now);
+          return redirect(`/players/rooms?ok=rooms&n=${n}${form.all === "1" ? "&all=1" : ""}`);
+        } catch (error) {
+          if (!(error instanceof Refuse)) throw error;
+          return showRooms({ all: form.all === "1", error: error.message, draft: form }, 400);
+        }
+      }
       if (path === "/players/add") {
         await addPlayer(bucket, me, form, now);
         return redirect("/players?ok=added");

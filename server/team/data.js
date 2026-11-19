@@ -169,6 +169,59 @@ export async function movePlayer(bucket, by, id, team, rev, now) {
   return diff;
 }
 
+// 一张表批量填直播间（2026-11-19 用户要的：原来一次只能改一个人，2ephykr 11-18 花了 54 分钟填了 20 人）。
+// form 里每个人三格：p_<编号> 平台、r_<编号> 房间号、v_<编号> 打开页面时的 rev。只存改过的；有一个人不对整批都不存，
+// 一条一条写清楚是谁；别人刚改过的那个人也不存（rev 对不上）。平台空着（"直播间待填"）只能是原来就待填、房间号也空着的
+export async function saveRooms(bucket, by, form, now) {
+  const result = await updateDoc(bucket, PLAYERS, emptyList, (list) => {
+    const errors = [];
+    const changed = [];
+    for (const item of list.items) {
+      if (!Object.hasOwn(form, `p_${item.id}`)) continue;
+      const platform = squash(form[`p_${item.id}`]);
+      const room = squash(form[`r_${item.id}`]);
+      if (!platform) {
+        if (room) errors.push(`「${item.name}」：填了房间号，先选平台`);
+        else if (item.platform) errors.push(`「${item.name}」：选一个平台（不开直播的选"不直播"）`);
+        continue;
+      }
+      let fields;
+      try {
+        fields = cleanPlayerFields({ ...item, platform, room });
+      } catch (error) {
+        if (!(error instanceof Refuse)) throw error;
+        errors.push(`「${item.name}」：${error.message}`);
+        continue;
+      }
+      if (fields.platform === item.platform && fields.room === item.room) continue;
+      const rev = form[`v_${item.id}`];
+      if (rev !== undefined && rev !== "" && Number(rev) !== item.rev) {
+        errors.push(`「${item.name}」：${item.updatedBy} 刚改过（你打开以后），看一眼现在的样子再填`);
+        continue;
+      }
+      changed.push({ item, fields });
+    }
+    const after = new Map(list.items.map((p) => [p.id, p]));
+    for (const { item, fields } of changed) after.set(item.id, { ...item, platform: fields.platform, room: fields.room });
+    const rooms = new Map();
+    for (const p of after.values()) {
+      if (p.platform === NO_STREAM || !p.platform) continue;
+      const key = `${p.platform}-${p.room}`;
+      if (rooms.has(key)) errors.push(`${platformName(p.platform)} 房间 ${p.room} 同时填给了「${rooms.get(key)}」和「${p.name}」`);
+      rooms.set(key, p.name);
+    }
+    if (errors.length) throw new Refuse(`没有保存，有 ${errors.length} 处要改：\n${errors.join("\n")}`);
+    for (const { item, fields } of changed) {
+      item.platform = fields.platform;
+      item.room = fields.room;
+      stamp(item, by, now);
+    }
+    return changed.map(({ item }) => `${item.name} ${item.platform === NO_STREAM ? platformName(item.platform) : `${platformName(item.platform)} ${item.room}`}`);
+  });
+  if (result.length) await writeLog(bucket, by, now, `批量填直播间（${result.length} 位）：${result.join("、")}`);
+  return result.length;
+}
+
 // 两支队并成一支（2026-11-19 用户要的）：from 的选手都挪到 to，赛程里的 from 换成 to（同一场里两支都有的只留一个），
 // to 没有队徽时用 from 的
 export async function mergeTeam(bucket, by, from, to, now) {

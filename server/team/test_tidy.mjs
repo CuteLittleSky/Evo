@@ -196,3 +196,49 @@ check("并队：选手挪过去、赛程里换掉且不重复、队徽跟过去�
   && logTexts()[0] === "战队「全新队」并进「HABNW」（1 位选手，赛程里 1 场跟着改了，队徽用「全新队」的）");
 r = await editor.post("/teams/rename", { from: "星火", to: "HABNW" });
 check("改队名改成已有的队 → 提示可以并队", r.status === 400 && r.text.includes("并到另一支队"));
+
+// ---------- 一张表批量填直播间 ----------
+{
+  const base = env.DATA.json(PLAYERS);
+  await env.DATA.put(PLAYERS, JSON.stringify({ ...base, items: [...base.items,
+    { id: "b0000001", name: "Chisu", team: "ARAM", platform: "", room: "", liquipedia: "Chisu", rev: 1 },
+    { id: "b0000002", name: "SongYou", team: "ARAM", platform: "", room: "", liquipedia: "", rev: 1 },
+    { id: "b0000003", name: "Razi", team: "ASC3NT", platform: "", room: "", liquipedia: "", rev: 1 }] }));
+}
+const byName = (name) => P().find((p) => p.name === name);
+r = await editor.get("/players");
+check("选手库上有去批量填的链接（介绍里、待填的提示里）", (r.text.match(/href="\/players\/rooms"/g) ?? []).length === 2);
+r = await editor.get("/players/rooms");
+check("批量填：默认只列待填的、按队分组、平台先是直播间待填", r.status === 200 && r.text.includes("直播间待填的（3）")
+  && r.text.includes("<h3>ARAM</h3>") && r.text.includes('name="p_b0000001"') && !r.text.includes('name="p_' + byName("Kite").id + '"')
+  && r.text.includes('<option value="" selected>直播间待填</option>'));
+r = await editor.get("/players/rooms?all=1");
+check("切到全部：已经填了的人也列出来，有打开直播间", r.text.includes(`name="p_${byName("Kite").id}"`) && r.text.includes("打开直播间"));
+r = await viewer.get("/players/rooms");
+check("只读的能看、不能改（输入框灰掉、没有保存）", r.status === 200 && r.text.includes(" disabled") && !r.text.includes("保存改过的"));
+r = await viewer.post("/players/rooms", { p_b0000001: "none", r_b0000001: "", v_b0000001: "1" });
+check("只读的不能存", r.status === 403);
+// 一次填三个人，有一个写错 → 整批不存，写着是谁，填的留着
+r = await editor.post("/players/rooms", { p_b0000001: "none", r_b0000001: "", v_b0000001: "1", p_b0000002: "douyu", r_b0000002: "abc", v_b0000002: "1",
+  p_b0000003: "bilibili", r_b0000003: "7734200", v_b0000003: "1" });
+check("有一个写错 → 整批不存、说是谁、填的留着", r.status === 400 && r.text.includes("「SongYou」：房间号「abc」只能是数字")
+  && byName("Chisu").platform === "" && r.text.includes('value="7734200"') && /name="p_b0000001"[^>]*>[\s\S]*?value="none" selected/.test(r.text));
+r = await editor.post("/players/rooms", { p_b0000002: "", r_b0000002: "123", v_b0000002: "1" });
+check("填了房间号没选平台 → 提示", r.status === 400 && r.text.includes("「SongYou」：填了房间号，先选平台"));
+const kiteNow = byName("Kite");
+r = await editor.post("/players/rooms", { p_b0000002: "douyu", r_b0000002: kiteNow.room, v_b0000002: "1" });
+check("和别人的房间撞了 → 提示", r.status === 400 && r.text.includes(`斗鱼 房间 ${kiteNow.room} 同时填给了`));
+r = await editor.post("/players/rooms", { p_b0000001: "none", r_b0000001: "", v_b0000001: "1", p_b0000002: "douyin", r_b0000002: "SongYou_1", v_b0000002: "1",
+  p_b0000003: "", r_b0000003: "", v_b0000003: "1", [`p_${kiteNow.id}`]: "douyu", [`r_${kiteNow.id}`]: kiteNow.room, [`v_${kiteNow.id}`]: "1" });
+check("都对 → 只存改过的两位（抖音号转小写），没改的不动、不算", r.location === "/players/rooms?ok=rooms&n=2"
+  && byName("Chisu").platform === "none" && byName("SongYou").room === "songyou_1" && byName("SongYou").updatedBy === "毛毛"
+  && byName("Razi").platform === "" && byName("Kite").rev === kiteNow.rev);
+check("改动记录一条写完", logTexts()[0] === "批量填直播间（2 位）：Chisu 不直播、SongYou 抖音 songyou_1");
+r = await editor.get(r.location);
+check("回到批量页：说改了几位，待填的少了", r.text.includes("保存好了：改了 2 位的直播间") && r.text.includes("直播间待填的（1）"));
+r = await editor.post("/players/rooms", { p_b0000002: "douyin", r_b0000002: "songyou_2", v_b0000002: "1" });
+check("别人刚改过（rev 对不上）→ 不存", r.status === 400 && r.text.includes("「SongYou」：毛毛 刚改过") && byName("SongYou").room === "songyou_1");
+r = await editor.post("/players/rooms", { p_b0000001: "", r_b0000001: "", v_b0000001: "2" });
+check("已经填了的人不能改回待填", r.status === 400 && r.text.includes("「Chisu」：选一个平台"));
+r = await editor.post("/players/rooms", { all: "1" });
+check("什么都没改 → 说没有改动", r.location === "/players/rooms?ok=rooms&n=0&all=1");

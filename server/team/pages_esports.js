@@ -75,7 +75,50 @@ function pendingRooms(items) {
   const count = [...byTeam.values()].reduce((n, names) => n + names.length, 0);
   if (!count) return "";
   return `<details class="note note-info"><summary><span>${count} 位选手直播间待填<span class="help">（${byTeam.size} 支队；不补也能发布，发布时按"不直播"算）</span></span></summary>
-    <ul class="plain team-pend">${[...byTeam].map(([team, names]) => `<li><b>${escape(team)}</b>：${names.map(escape).join("、")}</li>`).join("")}</ul></details>`;
+    <ul class="plain team-pend">${[...byTeam].map(([team, names]) => `<li><b>${escape(team)}</b>：${names.map(escape).join("、")}</li>`).join("")}</ul>
+    <p><a class="btn" href="/players/rooms">在一张表里填 ›</a></p></details>`;
+}
+
+// ---------- 一张表批量填直播间（2026-11-19 用户要的）----------
+// 默认只列直播间待填的人，可以切到全部；按队分组。只存改过的，有一个不对整批不存（data.js 的 saveRooms）。
+// draft：保存出错时填的样子（form 原样），照它显示
+export function roomsPage(me, items, { now, all = false, error = "", ok = "", draft = null, banner = "" }) {
+  const editable = can(me, "edit");
+  const pendingCount = items.filter((p) => !p.platform).length;
+  const shown = all ? items : items.filter((p) => !p.platform || (draft && Object.hasOwn(draft, `p_${p.id}`)));
+  const teams = [...new Set(shown.map((p) => p.team))];
+  const value = (p, key, current) => (draft && Object.hasOwn(draft, `${key}_${p.id}`) ? draft[`${key}_${p.id}`] : current);
+  const row = (p) => {
+    const platform = value(p, "p", p.platform);
+    const room = value(p, "r", p.room);
+    return `<li class="bulk-row">
+      <div class="bulk-who"><b>${escape(p.name)}</b>${p.platform ? "" : '<span class="badge badge-warn">待填</span>'}
+        ${p.platform && p.platform !== NO_STREAM ? `<a class="small" href="${escape(roomUrl(p.platform, p.room))}" target="_blank" rel="noopener noreferrer">打开直播间</a>` : ""}</div>
+      <input type="hidden" name="v_${p.id}" value="${p.rev ?? ""}">
+      <select class="input" name="p_${p.id}" aria-label="${escape(p.name)} 的平台"${editable ? "" : " disabled"}>
+        ${platform ? "" : '<option value="" selected>直播间待填</option>'}${platformOptions(platform)}
+        <option value="${NO_STREAM}"${platform === NO_STREAM ? " selected" : ""}>${NO_STREAM_NAME}</option></select>
+      <input class="input" name="r_${p.id}" value="${escape(room)}" placeholder="房间号" aria-label="${escape(p.name)} 的房间号" maxlength="24"
+        autocomplete="off" autocapitalize="off" spellcheck="false"${editable ? "" : " disabled"}>
+    </li>`;
+  };
+  const groups = teams.map((team) => `<section class="bulk-team"><h3>${escape(team)}</h3>
+    <ul class="list bulk-list">${shown.filter((p) => p.team === team).map(row).join("")}</ul></section>`).join("");
+  const tabs = `<nav class="tabs" aria-label="列哪些人">
+    <a href="/players/rooms"${all ? "" : ' aria-current="page"'}>直播间待填的（${pendingCount}）</a>
+    <a href="/players/rooms?all=1"${all ? ' aria-current="page"' : ""}>全部（${items.length}）</a></nav>`;
+  return layout({ title: "批量填直播间", me, current: "players", banner, body: `
+<p class="small"><a href="/players">‹ 选手库</a></p>
+<div class="stack"><h1>批量填直播间</h1>
+  <p class="muted">一张表里改很多人的平台和房间号，点一次保存。房间号是直播间地址最后那一段：一般是数字；抖音也可以是主播的抖音号。不开直播的选"不直播"，房间号空着。
+    只存改过的；有一个人不对就整批都不存，会说是谁。</p></div>
+${notes({ error, ok })}
+${tabs}
+${shown.length ? `<form class="stack" method="post" action="/players/rooms">${all ? '<input type="hidden" name="all" value="1">' : ""}
+  ${groups}
+  ${editable ? `<div class="bulk-bar"><button class="btn btn-primary" type="submit">保存改过的</button>
+    <span class="small muted">改了还没保存的，换页、刷新就没了</span></div>` : ""}
+</form>` : `<p class="muted">${all ? "选手库里还没有人。" : "没有直播间待填的人了。"}</p>`}` });
 }
 
 export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "", logos = {}, banner = "" }) {
@@ -130,7 +173,8 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
   }).join("");
   return layout({ title: "选手库", me, current: "players", banner, body: `
 <div class="stack"><h1>选手库</h1>
-  <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p></div>
+  <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p>
+  ${editable && items.length ? '<p><a href="/players/rooms">在一张表里批量填直播间 ›</a></p>' : ""}</div>
 ${notes({ error, ok })}
 ${noteList("error", `发布前要改好（${problems.length} 处）：`, problems)}
 ${pendingRooms(items)}
