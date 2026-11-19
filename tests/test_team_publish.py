@@ -60,7 +60,7 @@ def sample():
         for name, platform, room, liquipedia in people:
             players.append({"name": name, "team": team, "platform": platform, "room": room, "liquipedia": liquipedia})
     events = [
-        ("联赛 第 3 周", "联赛", "B 组对 C 组", at(17, 19), at(17, 23), ["北辰", "星火电竞"], MAIN),
+        ("联赛 第 3 周", "联赛", "B 组对 C 组", at(17, 19), at(17, 23), ["北辰", "星火电竞"], MAIN, "Ace@北辰、北一@星火电竞"),
         ("同时的杯赛 一", "杯赛", "", at(18, 19), at(18, 21), ["北辰"]),
         ("训练赛", "训练赛", "", at(17, 10), at(17, 13), ["星火电竞", "安静队"]),
         ("同时的杯赛 二", "杯赛", "决赛", at(18, 19), at(18, 22), ["星火电竞"]),
@@ -68,7 +68,7 @@ def sample():
         ("8 天前结束", "杯赛", "", at(9, 10), at(9, 12), ["北辰"]),
     ]
     events = [{"name": e[0], "type": e[1], "stage": e[2], "start": e[3].isoformat(), "end": e[4].isoformat(), "teams": e[5],
-               "mainText": e[6] if len(e) > 6 else ""} for e in events]
+               "mainText": e[6] if len(e) > 6 else "", "observersText": e[7] if len(e) > 7 else ""} for e in events]
     return players, events
 
 
@@ -94,9 +94,11 @@ def main():
     rows, _ = tool.check_players(table, errors)
     plans = [{"line": i + 2, "name": e["name"], "type": e["type"], "stage": e["stage"],
               "start": datetime.fromisoformat(e["start"]), "end": datetime.fromisoformat(e["end"]), "teams": e["teams"],
-              "main": tool.check_main(" ".join(e["mainText"].split()), "赛程.csv", errors)}
+              "main": tool.check_main(" ".join(e["mainText"].split()), "赛程.csv", errors),
+              "observers": tool.check_observers(e["observersText"], e["teams"], rows, "赛程.csv", errors)}
              for i, e in enumerate(events)]
-    python = tool.build(rows, plans, switches, [], now=NOW, teams=teams)
+    # 选手放全部（2026-11-19 起网页这样发布：Evo 电竞页的"主播"一块列开直播的选手）
+    python = tool.build(rows, plans, switches, [], now=NOW, teams=teams, everyone=True)
 
     checks.append(("两边检查都没问题", web["errors"] == [] and errors == [], (web["errors"], errors)))
     checks.append(("两边生成的 esports.json 一模一样", web["data"] == python,
@@ -105,10 +107,10 @@ def main():
     checks.append(("赛事按开始时间排、同一时刻的同类赛事加 -2、8 天前的不放、正好 7 天的还放",
                    ids == ["20261110-1700-cup", "20261117-1000-scrim", "20261117-1900-league", "20261118-1900-cup",
                            "20261118-1900-cup-2"], ids))
-    checks.append(("没比赛的队不放、40 个字的名字留着", {p["team"] for p in python["players"]} == {"星火电竞", "北辰", "安静队"}
-                   and any(p["name"] == LONG for p in python["players"]), [p["name"] for p in python["players"]]))
+    checks.append(("选手放全部（没比赛的队也在）、40 个字的名字留着", {p["team"] for p in python["players"]} == {"星火电竞", "北辰", "没比赛的队", "安静队"}
+                   and len(python["players"]) == 12 and any(p["name"] == LONG for p in python["players"]), [p["name"] for p in python["players"]]))
     cleaned = esports_data.clean(web["data"])
-    checks.append(("Evo 读网页生成的文件一条都不去掉", len(cleaned["players"]) == 9 and len(cleaned["events"]) == 5,
+    checks.append(("Evo 读网页生成的文件一条都不去掉", len(cleaned["players"]) == 12 and len(cleaned["events"]) == 5,
                    (len(cleaned["players"]), len(cleaned["events"]))))
     checks.append(("平台开关照给的原样（没写的当作开）",
                    python["platforms"] == {"douyu": False, "huya": True, "bilibili": True, "douyin": True}, python["platforms"]))
@@ -120,7 +122,12 @@ def main():
     checks.append(("主舞台：两路、抖音号转小写、名字里有空格、放在 teams 后面",
                    league.get("main") == [{"id": "bilibili-7734200", "name": "官方直播", "platform": "bilibili", "room": "7734200"},
                                           {"id": "douyin-xxfps", "name": "某某 解说", "platform": "douyin", "room": "xxfps"}]
-                   and list(league)[-2:] == ["teams", "main"], league))
+                   and list(league)[-3:] == ["teams", "main", "observers"], league))
+    checks.append(("观战：选手的 id 和他看的队、放在主舞台后面",
+                   league.get("observers") == [{"id": "bilibili-100", "team": "北辰"}, {"id": "douyin-xxfps", "team": "星火电竞"}]
+                   and list(league)[-1] == "observers", league.get("observers")))
+    checks.append(("Evo 读的时候观战一位都不去掉",
+                   next(e for e in cleaned["events"] if e["name"] == "联赛 第 3 周").get("observers") == league.get("observers"), None))
     checks.append(("Evo 读的时候主舞台一路都不去掉",
                    next(e for e in cleaned["events"] if e["name"] == "联赛 第 3 周").get("main") == league["main"], None))
 
