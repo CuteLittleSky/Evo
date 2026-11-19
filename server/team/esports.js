@@ -302,16 +302,35 @@ export function checkPlayers(players) {
   return { errors, teams: [...teams.keys()] };
 }
 
-// 赛程：同 check_events（队伍都在选手库里、不重复）；一般 20 支队，不是的只提醒
-export function checkEvents(events, knownTeams) {
+// 一场赛事在提示里的叫法：「名称 · 阶段」（A 组、B 组同名时分得清）
+export function eventLabel(e) {
+  return `「${e.name}${e.stage ? ` · ${e.stage}` : ""}」`;
+}
+
+// 已经结束了（结束时间到了）：有问题只提醒、不挡发布（2026-11-19 用户定的）
+export function ended(e, now) {
+  return now !== undefined && now !== null && parseIso(e.end) !== null && parseIso(e.end) <= now;
+}
+
+// 赛程：同 check_events（队伍都在选手库里、不重复）；一般 20 支队，不是的只提醒。
+// 已经结束的赛事有问题不挡发布（2026-11-19 用户定的：比如选手挪到别的队以后，旧赛程里还写着原来的队）：
+// 只提醒，发布时不放选手库里没有的那支队（build）。不给 now 的时候照旧都算错（同 tools/esports.py）
+export function checkEvents(events, knownTeams, now = null) {
   const errors = [];
   const notes = [];
   for (const e of events) {
+    const done = ended(e, now);
+    const problems = [];
     for (const team of new Set(e.teams)) {
-      if (e.teams.filter((t) => t === team).length > 1) errors.push(`「${e.name}」：队伍「${team}」写了两次`);
-      if (!knownTeams.includes(team)) errors.push(`「${e.name}」：队伍「${team}」不在选手库里${closest(team, knownTeams)}`);
+      if (e.teams.filter((t) => t === team).length > 1) problems.push(`队伍「${team}」写了两次`);
+      if (!knownTeams.includes(team)) problems.push(`队伍「${team}」不在选手库里${closest(team, knownTeams)}`);
     }
-    if (e.teams.length !== USUAL_TEAMS) notes.push(`「${e.name}」有 ${e.teams.length} 支队（一般是 ${USUAL_TEAMS} 支），没写错就不用管`);
+    if (done) {
+      for (const p of problems) notes.push(`${eventLabel(e)}（已经结束）：${p}，发布时不放这支队`);
+    } else {
+      errors.push(...problems.map((p) => `${eventLabel(e)}：${p}`));
+      if (e.teams.length !== USUAL_TEAMS) notes.push(`${eventLabel(e)}有 ${e.teams.length} 支队（一般是 ${USUAL_TEAMS} 支），没写错就不用管`);
+    }
   }
   return { errors, notes };
 }
@@ -333,13 +352,16 @@ export function build(players, events, switches, now, teams = {}) {
   }
   const roster = checkPlayers(players);
   errors.push(...roster.errors);
-  const schedule = checkEvents(events, roster.teams);
+  const schedule = checkEvents(events, roster.teams, now);
   errors.push(...schedule.errors);
   notes.push(...schedule.notes);
+  // 已经结束的赛事：选手库里没有的队不放（上面提醒过），写了两次的只放一次；一支队都不剩的整场不放
+  const teamsOut = (e) => [...new Set(e.teams)].filter((t) => !ended(e, now) || roster.teams.includes(t));
+  events = events.filter((e) => teamsOut(e).length);
 
   const indexed = events.map((e, line) => ({ e, line, start: parseIso(e.start), end: parseIso(e.end) }));
   const old = indexed.filter((x) => now - x.end > RECENT_DAYS * DAY);
-  if (old.length) notes.push(`${old.length} 场赛事结束超过 ${RECENT_DAYS} 天，不放进去（可以在赛程页删掉）：${old.map((x) => `「${x.e.name}」`).join("、")}`);
+  if (old.length) notes.push(`${old.length} 场赛事结束超过 ${RECENT_DAYS} 天，不放进去（可以在赛程页删掉）：${old.map((x) => eventLabel(x.e)).join("、")}`);
   const kept = [];
   const ids = new Set();
   for (const x of indexed.filter((y) => !old.includes(y)).sort((a, b) => a.start - b.start || a.line - b.line)) {
@@ -348,14 +370,14 @@ export function build(players, events, switches, now, teams = {}) {
     for (let n = 2; ids.has(id); n++) id = `${base}-${n}`;  // 同一时刻开始的同类赛事：后面的加 -2、-3
     ids.add(id);
     kept.push({ id, name: x.e.name, type: x.e.type, stage: x.e.stage, start: isoBeijing(x.start), end: isoBeijing(x.end),
-                teams: [...x.e.teams] });
+                teams: teamsOut(x.e) });
     if (x.e.main?.length) {  // 主舞台：有才写这一项（同 tools/esports.py）
       kept[kept.length - 1].main = x.e.main.map((m) => ({ id: `${m.platform}-${normalRoom(m.platform, m.room)}`, name: m.name,
         platform: m.platform, room: normalRoom(m.platform, m.room) }));
       // 和这场的选手是同一个直播间：Evo 看直播页会去掉这一路（按 id 认人），这里提醒一下
       for (const m of kept[kept.length - 1].main) {
         const same = players.find((p) => x.e.teams.includes(p.team) && `${p.platform}-${p.room}` === m.id);
-        if (same) notes.push(`「${x.e.name}」的主舞台「${m.name}」和选手「${same.name}」是同一个直播间：Evo 里不会多放这一路`);
+        if (same) notes.push(`${eventLabel(x.e)}的主舞台「${m.name}」和选手「${same.name}」是同一个直播间：Evo 里不会多放这一路`);
       }
     }
   }

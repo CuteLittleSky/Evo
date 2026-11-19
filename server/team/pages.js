@@ -197,6 +197,14 @@ select.input { appearance: auto; }
 .btn-small { min-height: 36px; padding: 0 12px; font-size: 14px; }
 .btn[disabled] { opacity: .6; cursor: not-allowed; }
 .tile-count { font-size: 14px; color: var(--text); }
+/* 收起来的提示：点"还有 N 条"、点标题展开 */
+details.rest > summary, details.note > summary { list-style: none; cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; font-weight: 600; }
+details.rest > summary { margin-top: 4px; }
+details.note > summary::-webkit-details-marker, details.rest > summary::-webkit-details-marker { display: none; }
+details.note > summary::before, details.rest > summary::before { content: "▸"; flex: none; }
+details.note[open] > summary::before, details.rest[open] > summary::before { content: "▾"; }
+details.note > summary .help { color: inherit; opacity: .85; }
+.team-pend li + li { margin-top: 4px; }
 @media (min-width: 720px) {
   .fold > summary { padding: 0 24px; }
   .fold > form, .fold > div { padding: 0 24px 24px; }
@@ -263,6 +271,15 @@ document.addEventListener("focusin", (event) => {
 `;
 
 // ---------- 小工具 ----------
+
+// 一串提示（发布前要改的、提醒）：前几条直接列出来，多的收起来，免得一长串把页面正文挤到下面去（2026-11-19）
+export function noteList(kind, title, items, show = 5) {
+  if (!items.length) return "";
+  const li = (t) => `<li>${escape(t)}</li>`;
+  const rest = items.slice(show);
+  return `<div class="note note-${kind}"><b>${escape(title)}</b><ul class="plain">${items.slice(0, show).map(li).join("")}</ul>
+    ${rest.length ? `<details class="rest"><summary>还有 ${rest.length} 条</summary><ul class="plain">${rest.map(li).join("")}</ul></details>` : ""}</div>`;
+}
 
 const BEIJING = 8 * 3600 * 1000;
 

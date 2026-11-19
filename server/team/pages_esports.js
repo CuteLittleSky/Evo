@@ -6,7 +6,7 @@ import { EVENT_COLUMNS, MAIN_MAX, NO_STREAM, NO_STREAM_NAME, PLATFORMS, PLAYER_C
   parseBeijing, parseIso, roomUrl, status } from "./esports.js";
 import { teamsOf } from "./data.js";
 import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
-import { ago, escape, layout, logList } from "./pages.js";
+import { ago, escape, layout, logList, noteList } from "./pages.js";
 import { PUBLIC_LOGO_URL } from "./logos.js";
 import { logoBox, logoHref } from "./pages_logos.js";
 
@@ -65,6 +65,19 @@ function importBox(action, columns, example, draft = "") {
   </form></details>`;
 }
 
+// 直播间待填的人按队列出来，默认收起（不挡发布：发布时按"不直播"算）
+function pendingRooms(items) {
+  const byTeam = new Map();
+  for (const p of items.filter((x) => !x.platform)) {
+    if (!byTeam.has(p.team)) byTeam.set(p.team, []);
+    byTeam.get(p.team).push(p.name);
+  }
+  const count = [...byTeam.values()].reduce((n, names) => n + names.length, 0);
+  if (!count) return "";
+  return `<details class="note note-info"><summary><span>${count} 位选手直播间待填<span class="help">（${byTeam.size} 支队；不补也能发布，发布时按"不直播"算）</span></span></summary>
+    <ul class="plain team-pend">${[...byTeam].map(([team, names]) => `<li><b>${escape(team)}</b>：${names.map(escape).join("、")}</li>`).join("")}</ul></details>`;
+}
+
 export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "", logos = {} }) {
   const editable = can(me, "edit");
   const teams = teamsOf(items);
@@ -102,7 +115,8 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
 <div class="stack"><h1>选手库</h1>
   <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p></div>
 ${notes({ error, ok })}
-${problems.length ? `<div class="note note-error"><b>发布前要改好：</b><ul class="plain">${problems.map((t) => `<li>${escape(t)}</li>`).join("")}</ul></div>` : ""}
+${noteList("error", `发布前要改好（${problems.length} 处）：`, problems)}
+${pendingRooms(items)}
 ${datalist}${add}
 ${sections || `<p class="muted">还没有选手。</p>`}
 ${editable ? importBox("/players/import", PLAYER_COLUMNS, "Kite\t星火电竞\t斗鱼\t520013\t", draftTable) : ""}` });
@@ -215,10 +229,9 @@ export function publishPage(me, view, last, { now, error = "", ok = "" }) {
   const result = view.built.official;
   const allowed = can(me, "publish");
   const blocked = result.errors.length > 0;
-  const check = blocked
-    ? `<div class="note note-error"><b>还不能发布，有 ${result.errors.length} 处要改：</b><ul class="plain">${result.errors.map((t) => `<li>${escape(t)}</li>`).join("")}</ul></div>`
+  const check = blocked ? noteList("error", `还不能发布，有 ${result.errors.length} 处要改：`, result.errors)
     : `<p class="note note-ok">检查过了，可以发布。</p>`;
-  const reminders = result.notes.length ? `<div class="note note-info"><b>提醒（不改也能发布）：</b><ul class="plain">${result.notes.map((t) => `<li>${escape(t)}</li>`).join("")}</ul></div>` : "";
+  const reminders = noteList("info", "提醒（不改也能发布）：", result.notes, 3);
   const target = (key) => {
     const t = TARGETS[key];
     const live = describe(view.live[key].data, now);

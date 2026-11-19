@@ -8,6 +8,7 @@
 //   test_main.mjs      主舞台（赛事表单、导入第 7 列、发布时带上）
 //   test_nostream.mjs  不直播的选手
 //   test_lpimport.mjs  从 Liquipedia 一键加进选手库
+//   test_tidy.mjs      2026-11-19 的优化：结束的赛事不挡发布、提示收起来、还没发布的提醒、改动记录写清楚
 //
 // 另外几个用法（tests/test_team_publish.py 用，和 tools/esports.py 对照）：
 //   --build 输入.json          输入 {"players", "events", "switches", "now", "teams"}，打印生成的 esports.json 和检查结果
@@ -68,5 +69,7 @@ if (args[0] === "--build") {
   await import("./test_nostream.mjs");
   console.log("\n从 Liquipedia 加进选手库");
   await import("./test_lpimport.mjs");
+  console.log("\n发布这一块的优化（11-19）");
+  await import("./test_tidy.mjs");
   process.exit(summary());
 }
