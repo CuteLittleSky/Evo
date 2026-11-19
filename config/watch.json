@@ -15,6 +15,7 @@
       "encryption_url": "https://www.douyu.com/wgapi/livenc/liveweb/websec/getEncryption?did={did}",
       "play_url": "https://www.douyu.com/lapi/live/getH5PlayV1/{room}",
       "renew_lead": 5,
+      "danmaku_url": "wss://danmuproxy.douyu.com:8506",
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
       "missing_text": "该房间目前没有开放",
       "_说明": "info_url 回一份 JSON（约 120 KB），room 里：show_status 1 = 在播，videoLoop / isLoop 1 = 轮播（不算在播），show_time = 开播时刻。房间不存在时回一个网页（missing_text）或 404。player = flv：这个平台用 Evo 自己的播放器在窗口里播（取地址 code/watch_douyu.py：encryption_url 要签名材料、play_url 取地址；视频经过本机中转 code/flv_relay.py，地址有期限时提前 renew_lead 秒换新的）"

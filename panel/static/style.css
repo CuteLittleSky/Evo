@@ -1318,6 +1318,12 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 /* Evo 自己的播放器（斗鱼；mpegts.js）：画面 + 下面一条自己的控制条。和播放器那一块一样不分主题，一直是深色的 */
 .watch-player { position: absolute; inset: 0; background: #000000; }
 .watch-video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: #000000; }
+/* 弹幕：盖在画面上的一层，不挡点击；字是白的（或平台给的颜色），带黑边，深色浅色画面上都看得清 */
+.watch-danmaku { position: absolute; inset: 0 0 48px; overflow: hidden; pointer-events: none; }
+.watch-danmaku-item { position: absolute; left: 0; white-space: nowrap; font-weight: 700; color: #FFFFFF; will-change: transform;
+  text-shadow: 0 0 2px #000000, 0 0 2px #000000, 1px 1px 2px rgb(0 0 0 / 0.9); }
+.watch-danmaku-btn { font-weight: 700; font-size: 13px; }
+.watch-danmaku-btn.off { opacity: 0.55; text-decoration: line-through; }
 .watch-wait { position: absolute; inset: 0 0 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 14px; color: #B4BAC6; pointer-events: none; }
 .watch-wait[hidden], .watch-hint[hidden], .watch-quality-menu[hidden] { display: none; }
 .watch-wait .watch-primary { pointer-events: auto; }

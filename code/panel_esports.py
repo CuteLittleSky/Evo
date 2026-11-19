@@ -38,6 +38,7 @@ from datetime import datetime
 from flask import Blueprint, Response, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 
 import bili_login
+import danmaku
 import esports_data
 import flv_relay
 import game_detect
@@ -120,7 +121,10 @@ def member(player, team, main=False):
             "room": player["room"],
             "url": live_status.room_url(player["platform"], player["room"]),
             "embed": embed.format(room=player["room"]) if embed else None,
-            "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None}
+            "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None,
+            # 弹幕（只有用 Evo 自己的播放器时才有；平台官方的嵌入播放器里本来就有它自己的弹幕）
+            "danmaku": url_for("esports.danmaku_info", player_id=player["id"])
+            if player["platform"] in PLAYERS and danmaku.supported(player["platform"]) else None}
 
 
 def roster(data, event):
@@ -310,6 +314,23 @@ def play(player_id):
     module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
     return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], kind=found.get("kind", "flv"),
                    stream=url_for("esports.stream", player_id=player_id, q=found["rate"], s=_slot(), t=current_app.config["TOKEN"]))
+
+
+@bp.get("/esports/danmaku/<player_id>")
+def danmaku_info(player_id):
+    """页面连弹幕要的东西（danmaku.py；连接是页面自己直接连平台，只看不发）：{"ok": True, "platform", "url", "room"}。
+    这个平台的弹幕没做、不能在窗口里播的选手回 404；平台那边没问到是 {"ok": False, "detail": 原因}。"""
+    player = _player(player_id)
+    if player is None or not danmaku.supported(player["platform"]):
+        return jsonify(ok=False, reason="unsupported"), 404
+    try:
+        found = danmaku.info(player["platform"], player["room"])
+    except Exception as e:  # noqa: BLE001  平台那边的各种错：页面就不显示弹幕
+        log.info("看直播：%s 房间 %s 的弹幕没问到：%s", player["platform"], player["room"], e)
+        return jsonify(ok=False, reason="upstream", detail=str(e))
+    if found is None:
+        return jsonify(ok=False, reason="unsupported"), 404
+    return jsonify(ok=True, **found)
 
 
 @bp.post("/esports/play-failed/<player_id>")

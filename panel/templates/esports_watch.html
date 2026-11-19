@@ -319,10 +319,13 @@
     }
     function stopCell(cell) {
       cell.seq++;  // 晚到的回包、事件都不算数了
+      stopDanmaku(cell);
       var player = cell.player;
       cell.player = null;
       cell.video = null;
       cell.showSound = null;
+      cell.layer = null;
+      cell.danmakuBtn = null;
       if (!player) return;
       try { player.pause(); player.unload(); player.detachMediaElement(); player.destroy(); } catch (e) {}
     }
@@ -335,6 +338,7 @@
         cell.video.muted = off || (multi() && cell.index !== st.focus);
         if (cell.showSound) cell.showSound();
       });
+      syncAllDanmaku();  // 弹幕跟着选中的那一格
     }
     function focusCell(index) {
       st.focus = index;
@@ -515,6 +519,109 @@
       renderInfo();
     }
 
+    // ---------- 弹幕（只看不发，2026-11-19 用户要的）：页面直接连平台的弹幕服务器，文字从右往左飘过画面 ----------
+    // 只有用 Evo 自己的播放器、这个平台的弹幕做了（p.danmaku）才有；多屏时只连选中的那一格。开关记在这台电脑上，默认开；
+    // 系统设置了"减少动态效果"时默认关。弹幕只当纯文字显示
+    var DOUYU_COLORS = { 1: "#FF5A5A", 2: "#58A6FF", 3: "#7AC84B", 4: "#FF9F40", 5: "#B77BFF", 6: "#FF8FC7" };
+    function danmakuOn() {
+      var calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      return saved("evo-watch-danmaku", calm ? "0" : "1") === "1";
+    }
+    // 一条弹幕飘过去：分几行，挑一行前一条已经走远了的；都占着就不显示这一条（太密了看不清）
+    function shoot(cell, text, color) {
+      var layer = cell.layer;
+      if (!layer || !text) return;
+      var width = layer.clientWidth, height = layer.clientHeight;
+      if (!width || !height) return;
+      var size = Math.max(14, Math.min(24, Math.round(width / 40))), line = Math.round(size * 1.45);
+      var rows = Math.max(1, Math.floor(height * 0.6 / line)), now = performance.now();
+      cell.rows = cell.rows || [];
+      var row = -1;
+      for (var i = 0; i < rows; i++) { if (!(cell.rows[i] > now)) { row = i; break; } }
+      if (row < 0) return;
+      var item = el("span", "watch-danmaku-item", String(text).slice(0, 60));
+      item.style.fontSize = size + "px";
+      item.style.top = (8 + row * line) + "px";
+      if (color) item.style.color = color;
+      layer.appendChild(item);
+      var own = item.offsetWidth, duration = 9000, speed = (width + own) / duration;
+      cell.rows[row] = now + (own + 24) / speed;  // 这一条的尾巴进了画面、再留一点空，这一行才能放下一条
+      var run = item.animate([{ transform: "translateX(" + width + "px)" }, { transform: "translateX(" + (-own) + "px)" }],
+                             { duration: duration, easing: "linear" });
+      run.onfinish = run.oncancel = function () { item.remove(); };
+    }
+    function douyuPacket(text) {
+      var body = new TextEncoder().encode(text), length = body.length + 9;  // 长度不算自己那 4 个字节
+      var packet = new Uint8Array(length + 4), view = new DataView(packet.buffer);
+      view.setUint32(0, length, true);
+      view.setUint32(4, length, true);
+      view.setUint16(8, 689, true);  // 客户端发的包
+      packet.set(body, 12);  // 最后一个字节是 0
+      return packet;
+    }
+    function douyuValue(text) { return text.replace(/@S/g, "/").replace(/@A/g, "@"); }
+    function douyuRead(cell, buffer) {  // 一帧里可能有几个包
+      var view = new DataView(buffer), bytes = new Uint8Array(buffer), offset = 0, decoder = new TextDecoder();
+      while (offset + 12 <= bytes.length) {
+        var length = view.getUint32(offset, true);
+        if (length < 9 || offset + 4 + length > bytes.length) break;
+        var text = decoder.decode(bytes.subarray(offset + 12, offset + 4 + length - 1));
+        offset += 4 + length;
+        if (text.indexOf("type@=chatmsg/") !== 0) continue;
+        var fields = {};
+        text.split("/").forEach(function (part) {
+          var at = part.indexOf("@=");
+          if (at > 0) fields[part.slice(0, at)] = part.slice(at + 2);
+        });
+        if (fields.txt) shoot(cell, douyuValue(fields.txt), DOUYU_COLORS[fields.col] || "");
+      }
+    }
+    function stopDanmaku(cell) {
+      var live = cell.chat;
+      cell.chat = null;
+      cell.rows = [];
+      if (cell.layer) cell.layer.replaceChildren();
+      if (!live) return;
+      clearInterval(live.beat);
+      clearTimeout(live.retry);
+      try { if (live.socket) { live.socket.onclose = null; live.socket.close(); } } catch (e) {}
+    }
+    // 这一格现在该不该连着弹幕：开关开着、是 Evo 自己的播放器在播、（多屏时）是选中的那一格
+    function syncDanmaku(cell) {
+      var p = cell.id ? byId[cell.id] : null;
+      var want = !!p && !!p.danmaku && !!cell.layer && /^play:/.test(cell.key || "") && danmakuOn() && (!multi() || cell.index === st.focus);
+      if (cell.danmakuBtn) {
+        cell.danmakuBtn.setAttribute("aria-pressed", danmakuOn() ? "true" : "false");
+        cell.danmakuBtn.title = danmakuOn() ? "关掉弹幕" : "打开弹幕";
+        cell.danmakuBtn.classList.toggle("off", !danmakuOn());
+      }
+      if (!want) { stopDanmaku(cell); return; }
+      if (cell.chat && cell.chat.id === p.id) return;
+      stopDanmaku(cell);
+      var chat = cell.chat = { id: p.id, socket: null, beat: null, retry: null, tries: 0 };
+      function connect(found) {
+        if (cell.chat !== chat) return;
+        var socket = chat.socket = new WebSocket(found.url);
+        socket.binaryType = "arraybuffer";
+        socket.onopen = function () {
+          chat.tries = 0;
+          socket.send(douyuPacket("type@=loginreq/roomid@=" + found.room + "/"));
+          socket.send(douyuPacket("type@=joingroup/rid@=" + found.room + "/gid@=-9999/"));
+          chat.beat = setInterval(function () { if (socket.readyState === 1) socket.send(douyuPacket("type@=mrkl/")); }, 45000);
+        };
+        socket.onmessage = function (e) { if (cell.chat === chat && e.data instanceof ArrayBuffer) douyuRead(cell, e.data); };
+        socket.onclose = function () {  // 断了：过一会儿再连，最多连 5 次（弹幕连不上不影响看直播，不提示）
+          clearInterval(chat.beat);
+          if (cell.chat !== chat || ++chat.tries > 5) return;
+          chat.retry = setTimeout(function () { connect(found); }, 2000 * chat.tries);
+        };
+      }
+      fetch(p.danmaku, { cache: "no-store" }).then(function (r) { return r.json(); })
+        .then(function (found) { if (found.ok && found.platform === "douyu") connect(found); })
+        .catch(function () {});
+    }
+    function syncAllDanmaku() { cells.forEach(syncDanmaku); }
+
     // ---------- Evo 自己的播放器：mpegts.js 连面板的本机中转（斗鱼），或者直接连平台的视频服务器（抖音、登录了的 B站）----------
     var ICONS = {
       play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"></path>',
@@ -590,8 +697,24 @@
       menu.hidden = true;
       quality.append(qualityBtn, menu);
       var bar = el("div", "watch-controls");
-      bar.append(playBtn, muteBtn, volume, el("span", "grow"), quality, fullBtn);
-      box.append(video, wait, hint, bar);
+      // 弹幕：一层盖在画面上（不挡点击），控制条上一个开关。这个平台的弹幕没做就没有这个按钮
+      var layer = el("div", "watch-danmaku");
+      layer.setAttribute("aria-hidden", "true");
+      cell.layer = layer;
+      var danmakuBtn = null;
+      if (p.danmaku) {
+        danmakuBtn = cell.danmakuBtn = el("button", "watch-ctl watch-danmaku-btn", "弹");
+        danmakuBtn.type = "button";
+        danmakuBtn.setAttribute("aria-label", "弹幕");
+        danmakuBtn.addEventListener("click", function () {
+          save("evo-watch-danmaku", danmakuOn() ? "0" : "1");
+          syncAllDanmaku();
+        });
+      }
+      bar.append(playBtn, muteBtn, volume, el("span", "grow"));
+      if (danmakuBtn) bar.append(danmakuBtn);
+      bar.append(quality, fullBtn);
+      box.append(video, layer, wait, hint, bar);
 
       function showSound() {
         var off = video.muted || video.volume === 0;
@@ -651,7 +774,7 @@
       document.addEventListener("click", function (e) { if (!menu.hidden && !quality.contains(e.target)) setMenu(false); });
       video.addEventListener("play", showPlay);
       video.addEventListener("pause", showPlay);
-      video.addEventListener("playing", function () { wait.hidden = true; });
+      video.addEventListener("playing", function () { wait.hidden = true; syncDanmaku(cell); });
       // 连着卡了几次：提示可以换低一档（不替玩家改清晰度）
       var stalls = [];
       video.addEventListener("waiting", function () {
