@@ -6,7 +6,9 @@
    能在窗口里播的：配置里有嵌入播放器的平台（B站，放它官方的播放器），和用 Evo 自己的播放器的平台（斗鱼：
    mpegts.js 连面板的本机中转；抖音：mpegts.js 直接连抖音的视频服务器。控制条是自己的：播放 / 暂停、音量、
    清晰度、全屏）。别的显示"去 X 看"的退路。
-   B站不登录最高 720p：选手那一行有"登录 B站看原画"，扫码登录以后 B站也改用 Evo 自己的播放器（直接连 B站，不经过中转） #}
+   B站不登录最高 720p：选手那一行有"登录 B站看原画"，扫码登录以后 B站也改用 Evo 自己的播放器（经过本机中转）。
+   主播名单也用这一页（solo，2026-11-19；panel_esports.py 的 /esports/streamers）：左边一样，右边不分队伍，只有一列主播、
+   在播的排前面；没有"同队视角"；页面上的"选手"都写成"主播"（noun） #}
 {% block wrap_class %} watch-wrap{% endblock %}
 {% block top %}{% endblock %}
 
@@ -23,7 +25,7 @@
       {# 没开始的赛事也能进来看选手赛前的直播：这里写什么时候开始，不写"进行中" #}
       {% if event.state == 'live' %}
       <span class="es-live-tag watch-mark"><span class="es-live-dot" aria-hidden="true"></span>{{ event.mark }}</span>
-      {% else %}
+      {% elif event.mark %}
       <span class="es-tag watch-mark">{{ event.mark }}</span>
       {% endif %}
     </div>
@@ -84,16 +86,38 @@
   <aside class="watch-side" aria-labelledby="h-watch-teams">
     <div class="watch-side-head">
       <div class="watch-side-title">
-        <h2 id="h-watch-teams">队伍</h2>
+        <h2 id="h-watch-teams">{{ "主播" if solo else "队伍" }}</h2>
         {# 一句完整的话，到了以后读屏软件念一次 #}
         <span class="watch-count" id="watch-count" role="status" aria-atomic="true">正在看谁在播…</span>
       </div>
+      {% if solo %}
+      <div class="watch-seg" role="group" aria-label="筛选主播">
+        <button type="button" class="on" aria-pressed="true" data-filter="all">全部 <span class="num">{{ team_count }}</span> 位</button>
+        <button type="button" aria-pressed="false" data-filter="live">在播的</button>
+      </div>
+      {% else %}
       <div class="watch-seg" role="group" aria-label="筛选队伍">
         <button type="button" class="on" aria-pressed="true" data-filter="all">全部 <span class="num">{{ team_count }}</span> 支</button>
         <button type="button" aria-pressed="false" data-filter="live">有人在播的</button>
       </div>
+      {% endif %}
     </div>
     <div class="watch-list" id="watch-list">
+      {% if solo %}
+      {# 主播名单：不分队伍，一列到底；在播的由脚本点亮、排到前面 #}
+      <div class="watch-team-box watch-solo" data-solo>
+        <div class="watch-players">
+          {% for p in members %}
+          <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
+            <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
+            <span class="watch-p-name es-ell">{{ p.name }}</span>
+            <span class="watch-p-plat"><span class="es-dot pf-{{ p.platform }}" aria-hidden="true"></span>{{ p.platform_name }}</span>
+            <span class="watch-p-time num" data-time>…</span>
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
       {% for team in teams %}
       {# 主舞台（赛程里这场赛事写了播导播视角的直播间才有）：排在最前面，默认展开，和队伍一样的一栏 #}
       <details class="watch-team-box{% if team.main %} watch-main-box{% endif %}" data-team="{{ team.key }}"{% if team.main %} data-main open{% endif %}>
@@ -129,7 +153,7 @@
         </div>
       </details>
       {% endfor %}
-      <p class="watch-empty" id="watch-none" hidden>现在没有队伍在播。</p>
+      <p class="watch-empty" id="watch-none" hidden>现在没有{{ "主播" if solo else "队伍" }}在播。</p>
     </div>
     <p class="watch-side-foot">开着这一页时每 60 秒刷新一次谁在播。</p>
   </aside>
@@ -159,6 +183,7 @@
     var byId = {};
     data.players.forEach(function (p) { byId[p.id] = p; });
     function $(id) { return document.getElementById(id); }
+    var noun = data.noun || "选手";  // 页面上怎么称呼名单里的人：赛事是"选手"，主播名单是"主播"
     // status：上次问到的 {选手 id: {state, title, avatar, since}}，还没问到是 null；sel：正在看的选手；
     // closed：点了"关闭直播"；apexOk：点了"继续看"（Apex 关掉以后重新算）
     var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
@@ -225,19 +250,35 @@
         });
         var main = box.hasAttribute("data-main");
         if (!main) liveTotal += n;
-        var tag = box.querySelector("[data-team-live]");
-        tag.textContent = "";
-        tag.classList.toggle("on", n > 0);
-        if (!st.status) tag.textContent = "…";
-        else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), main ? " 路在播" : " 人在播");
-        else tag.textContent = main ? "没在播" : "没人在播";
+        if (box.hasAttribute("data-solo")) {
+          // 主播名单：在播的排到前面（别的照名单的顺序）；"在播的"只留在播的那几位
+          var list = box.querySelector(".watch-players"), focused = document.activeElement;
+          var order = Array.prototype.slice.call(list.children).map(function (btn) {
+            if (!btn.dataset.order) btn.dataset.order = String(Array.prototype.indexOf.call(list.children, btn));
+            btn.hidden = st.filter === "live" && !!st.status && !isLive(btn.dataset.player);
+            return btn;
+          }).sort(function (a, b) {
+            return (isLive(a.dataset.player) ? 0 : 1) - (isLive(b.dataset.player) ? 0 : 1) || a.dataset.order - b.dataset.order;
+          });
+          if (order.some(function (btn, i) { return btn !== list.children[i]; })) {
+            order.forEach(function (btn) { list.appendChild(btn); });
+            if (focused && list.contains(focused)) focused.focus();
+          }
+        } else {
+          var tag = box.querySelector("[data-team-live]");
+          tag.textContent = "";
+          tag.classList.toggle("on", n > 0);
+          if (!st.status) tag.textContent = "…";
+          else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), main ? " 路在播" : " 人在播");
+          else tag.textContent = main ? "没在播" : "没人在播";
+        }
         box.hidden = st.filter === "live" && !!st.status && n === 0;
         if (!box.hidden) shown++;
       });
       $("watch-none").hidden = shown > 0;
       var count = $("watch-count");
       count.textContent = "";
-      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.filter(function (x) { return !x.main && !x.off; }).length), " 人");
+      if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.filter(function (x) { return !x.main && !x.off; }).length), data.solo ? " 位" : " 人");
       else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
     }
 
@@ -259,7 +300,7 @@
       } else if (st.closed) {
         key = "closed";
         build = function () {
-          var box = message("直播已关闭", p ? "想接着看，点下面的按钮，或者在右边换一位选手。" : "在右边选一位在播的选手可以重新看。");
+          var box = message("直播已关闭", p ? "想接着看，点下面的按钮，或者在右边换一位" + noun + "。" : "在右边选一位在播的" + noun + "可以重新看。");
           if (p && live) {
             var again = el("button", "watch-primary", "继续看 " + p.name);
             again.type = "button";
@@ -271,13 +312,13 @@
       } else if (!p) {
         key = anyLive ? "pick" : "nobody";
         build = function () {
-          return anyLive ? message("在右边选一位在播的选手") : message("现在没有选手在播", "有选手开播以后，右边的名单会亮起来，最慢 2 分钟。");
+          return anyLive ? message("在右边选一位在播的" + noun) : message("现在没有" + noun + "在播", "有" + noun + "开播以后，右边的名单会亮起来，最慢 2 分钟。");
         };
       } else if (!live) {
         key = "offline:" + p.id + ":" + (s ? s.state : "");
         build = function () {
           return message(p.name + (s && s.state === "error" ? " 的直播间没查到" : " 现在没有开播"),
-                         anyLive ? "在右边选一位在播的选手。" : "有选手开播以后，右边的名单会亮起来，最慢 2 分钟。");
+                         anyLive ? "在右边选一位在播的" + noun + "。" : "有" + noun + "开播以后，右边的名单会亮起来，最慢 2 分钟。");
         };
       } else if (!canPlay(p) && canEmbed(p)) {  // 能用 Evo 自己的播放器就不用嵌入的（B站登录了以后）
         key = "embed:" + p.id;
@@ -326,7 +367,7 @@
       }
 
       $("watch-info").hidden = !p;
-      $("watch-mates").hidden = !p;
+      $("watch-mates").hidden = !p || !!data.solo;  // 主播名单没有"同队"
       if (!p) return;
       setAvatar($("watch-avatar"), p, live ? s : null);
       $("watch-name").textContent = p.name;
@@ -688,7 +729,7 @@
       st.sel = id;
       st.closed = false;
       var box = document.querySelector('.watch-p[data-player="' + CSS.escape(id) + '"]');
-      if (box) box.closest("details").open = true;
+      if (box && box.closest("details")) box.closest("details").open = true;
       try { history.replaceState(null, "", "?p=" + encodeURIComponent(id)); } catch (e) {}
       render();
     }
@@ -705,7 +746,7 @@
       st.lastTry = Date.now();
       fetch(data.status_url, { cache: "no-store" })
         .then(function (r) {
-          if (r.status === 404) { location.reload(); throw new Error("gone"); }  // 这场赛事从赛程里拿掉了：回赛事页
+          if (r.status === 404) { location.reload(); throw new Error("gone"); }  // 这场赛事（主播名单）从赛程里拿掉了：回电竞页
           return r.json();
         })
         .then(function (r) {
@@ -764,7 +805,7 @@
     window.addEventListener("pagehide", stopPlayer);  // 离开这一页：播放器停下，中转那头跟着断开
     if (st.sel) {
       var first = document.querySelector('.watch-p[data-player="' + CSS.escape(st.sel) + '"]');
-      if (first) first.closest("details").open = true;
+      if (first && first.closest("details")) first.closest("details").open = true;
     }
     render();
     refresh();

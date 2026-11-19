@@ -35,7 +35,12 @@ NOW = datetime.now().astimezone().replace(microsecond=0)
 TEAMS = ("甲队", "<b>乙队</b>", "丙队")
 
 
-def serve(folder, platforms=None, teams=None, main=None, off=False):
+STREAMERS = [{"id": "douyu-901", "name": "大主播", "platform": "douyu", "room": "901"},
+             {"id": "huya-902", "name": "<i>二主播</i>", "platform": "huya", "room": "902"},
+             {"id": "bilibili-903", "name": "三主播", "platform": "bilibili", "room": "903"}]
+
+
+def serve(folder, platforms=None, teams=None, main=None, off=False, streamers=None):
     players = []
     for team, platform in zip(TEAMS, ("douyu", "bilibili", "douyin")):
         players += [{"id": f"{platform}-{n}", "name": f"{team[:1]}{n}号" if n > 1 else "kite</script>", "team": team,
@@ -52,7 +57,8 @@ def serve(folder, platforms=None, teams=None, main=None, off=False):
         players[2].update(id="none-0123456789ab", platform="none", room="")
     path = Path(folder) / "esports.json"
     path.write_text(json.dumps({"version": 1, "updated": NOW.isoformat(), "players": players, "events": events,
-                                "platforms": platforms or {}, **({"teams": teams} if teams else {})}), encoding="utf-8")
+                                "platforms": platforms or {}, **({"teams": teams} if teams else {}),
+                                **({"streamers": streamers} if streamers else {})}), encoding="utf-8")
     esports_data.URL = str(path)
     esports_data.CACHE_PATH.unlink(missing_ok=True)
     panel_esports._status.update(at=0.0, found={})
@@ -240,6 +246,52 @@ def main():
     out["不开直播的选手不去查开播状态，\"几位选手在播\"不数他，也问不到播放地址"] = (
         "none-0123456789ab" not in asked_ids and len(asked_ids) == 8 and len(got["players"]) == 8
         and count["events"]["live"]["total"] == 8 and gone == 404)
+    # ---- 主播的看直播页（2026-11-19）----
+    serve(folder)
+    none = client.get("/esports/streamers")
+    out["没有主播名单：主播的看直播页回电竞页并说明，状态接口回 404"] = (
+        none.status_code == 302 and none.headers["Location"].endswith("/esports")
+        and "现在没有主播名单" in client.get("/esports").get_data(as_text=True)
+        and client.get("/esports/streamers/status").status_code == 404)
+    serve(folder, streamers=STREAMERS)
+    solo = client.get("/esports/streamers?p=huya-902").get_data(as_text=True)
+    side = solo[solo.find('<aside class="watch-side"'):solo.find("</aside>")]
+    rows = re.findall(r'<button type="button" class="watch-p".*?</button>', side, re.S)
+    info = page_data(solo)
+    out["主播的看直播页：和赛事的是同一个页面，标题写\"主播\"、能回电竞页；右边不分队伍，一位一行、写着平台，先都不能点"] = (
+        "<title>主播 · Evo</title>" in solo and 'href="/esports"' in solo and "watch-mark" not in solo[:solo.find("<aside")]
+        and "<details" not in side and 'data-solo' in side and len(rows) == 3 and all(" disabled" in row for row in rows)
+        and [text(row).split()[-2] for row in rows] == ["斗鱼", "虎牙", "B站"] and "<i>二主播</i>" not in side
+        and text(side).startswith("主播 正在看谁在播… 全部 3 位 在播的") and "现在没有主播在播。" in side)
+    out["给脚本的数据：是主播名单（solo）、页面上称呼\"主播\"、问状态的地址是主播的；网址里的 p 是名单里的主播才选中；能播的平台带着问播放地址的接口"] = (
+        info.get("solo") is True and info.get("noun") == "主播" and info.get("status_url") == "/esports/streamers/status"
+        and info.get("selected") == "huya-902" and [p["id"] for p in info["players"]] == [s["id"] for s in STREAMERS]
+        and all(p["team"] == "" and not p["main"] and not p["off"] for p in info["players"])
+        and info["players"][0]["play"] == "/esports/play/douyu-901" and info["players"][1]["play"] is None
+        and info["players"][1]["url"] == "https://www.huya.com/902"
+        and page_data(client.get("/esports/streamers?p=douyu-101").get_data(as_text=True)).get("selected") is None)
+    event_page = page_data(client.get("/esports/live/watch").get_data(as_text=True))
+    out["赛事的看直播页照旧：不是 solo，称呼\"选手\"，右边还是队伍"] = (
+        event_page.get("solo") is False and event_page.get("noun") == "选手" and event_page.get("status_url") == "/esports/live/status")
+    asked_ids = []
+
+    def streamer_query(players):
+        asked_ids.extend(p["id"] for p in players)
+        return {p["id"]: live_status.result("live" if p["id"] == "douyu-901" else "offline", title="今晚上分") for p in players}
+
+    real_query, live_status.query = live_status.query, streamer_query
+    try:
+        got = client.get("/esports/streamers/status").get_json()
+    finally:
+        live_status.query = real_query
+        panel_esports._status.update(at=0.0, found={})
+    out["主播的状态接口：只查主播名单里的房间，格式和赛事的一样"] = (
+        sorted(asked_ids) == sorted(s["id"] for s in STREAMERS) and set(got) == {"checked", "platforms", "players"}
+        and got["players"]["douyu-901"]["state"] == "live" and got["players"]["douyu-901"]["title"] == "今晚上分"
+        and got["players"]["huya-902"]["state"] == "offline")
+    out["主播的直播间也能问播放地址（按 id 找得到）：能在窗口里播的平台不回 404，虎牙、名单外的回 404"] = (
+        panel_esports._player("douyu-901") == STREAMERS[0] and client.get("/esports/play/huya-902").status_code == 404
+        and client.get("/esports/play/douyu-999").status_code == 404)
     serve(folder)
     home = client.get("/esports").get_data(as_text=True)
     out["别的页面照旧有侧边栏（导航和主题按钮）"] = '<nav class="nav"' in home and 'id="theme-toggle"' in home and 'id="side"' in home

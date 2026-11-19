@@ -11,7 +11,8 @@ esports.json 由 tools/esports.py 从两张 CSV 表生成、上传：
                   "liquipedia": ""}],
      "events": [{"id": "20261117-1900-league", "name": "亚太北区职业联赛 第 3 周", "type": "联赛", "stage": "B 组对 C 组",
                  "start": "2026-11-17T19:00:00+08:00", "end": "2026-11-17T23:00:00+08:00", "teams": ["星火电竞", …]}],
-     "teams": {"星火电竞": {"logo": "3fa9c1d2e4b5a6f7.webp"}}}
+     "teams": {"星火电竞": {"logo": "3fa9c1d2e4b5a6f7.webp"}},
+     "streamers": [{"id": "douyu-123456", "name": "某主播", "platform": "douyu", "room": "123456"}]}
 - platforms：远程开关。某个平台是 false，Evo 就不在窗口里播它，改成"去 X 看"。没写的平台当作 true
 - players：id 只有字母、数字、- 和 _；platform 是 config/watch.json 里的四个之一；room 只能是数字，
   **不开直播的选手**（2026-11-18 用户定的：也录进名单，页面上照样列在队里、标"不直播"）：platform 写 "none"、room 是空的，
@@ -24,6 +25,11 @@ esports.json 由 tools/esports.py 从两张 CSV 表生成、上传：
 - teams（可以没有）：队徽。键是队名，logo 是公开存储桶 esports/logos/ 下的文件名（小写字母和数字 + .png / .webp，
   协作网页上传时起的）。**只写文件名、不写网址**：Evo 自己拼成 config/watch.json 里 logo_url 那个地址（logo_url()）。
   没有队徽的队不写；名单里没有的队、文件名写得不对的那一条去掉
+- streamers（可以没有；2026-11-19 用户要的：电竞页除了比赛，也列知名主播的日常直播）：**主播名单**，和赛事、队伍无关，
+  照写的顺序（页面上在播的排前面）。每位和主舞台的一路一样写：id、name、platform（四个平台之一，不能是 "none"）、room。
+  最多 40 位，其中抖音最多 10 位（抖音没开播的房间每查一次要开约 1 MB 的网页），多出来的去掉。
+  主播可以同时是 players 里的选手（同一个平台和房间）；id 和某位选手、某路主舞台一样，房间却不一样的那一位去掉
+  （播放时按 id 找直播间，find_stream()）。0.6.0、0.6.1 不认识这一项，会忽略
 - "进行中 / 即将开始 / 已结束"按 start、end 和电脑上的时间算（status()），不用手动改
 格式不对的那一条去掉，不影响别的；整个文件不对（不是 JSON、version 不认识）当作没读到。
 存储桶的密钥就算泄露，别人也只能改赛程上的字和房间号（只会去问这四个平台的直播间），不能让 Evo 打开别的网站。
@@ -62,6 +68,8 @@ NO_STREAM = "none"     # 选手的 platform 写这个：这位选手不开直播
 NO_STREAM_NAME = "不直播"
 MAIN_MAX = 8           # 一场赛事的主舞台最多几路
 MAIN_TEAM = "主舞台"   # 主舞台的直播间在页面上"算哪支队"
+STREAMERS_MAX = 40     # 主播名单最多几位
+STREAMERS_DOUYIN_MAX = 10  # 其中抖音最多几位（没开播的抖音房间每查一次约 1 MB）
 LOGO_RE = re.compile(r"[a-z0-9]{8,40}\.(png|webp)")  # 队徽的文件名：拼不出别的文件夹、别的网站
 LIVE, UPCOMING, ENDED = "live", "upcoming", "ended"
 
@@ -166,6 +174,24 @@ def _unique(items, check):
     return out
 
 
+def clean_streamers(raw, taken):
+    """esports.json 的 streamers → [{"id", "name", "platform", "room"}, ...]，照写的顺序。
+    taken：{id: (平台, 房间号)}，选手和主舞台已经用了的 id；同一个 id 房间却不一样的去掉。
+    最多 STREAMERS_MAX 位，其中抖音最多 STREAMERS_DOUYIN_MAX 位。"""
+    out, douyin = [], 0
+    for streamer in _unique(raw[:200] if isinstance(raw, list) else [], clean_stream):
+        if taken.get(streamer["id"], (streamer["platform"], streamer["room"])) != (streamer["platform"], streamer["room"]):
+            continue
+        if streamer["platform"] == "douyin":
+            douyin += 1
+            if douyin > STREAMERS_DOUYIN_MAX:
+                continue
+        out.append(streamer)
+        if len(out) == STREAMERS_MAX:
+            break
+    return out
+
+
 def clean(data):
     """检查整个文件，返回清理过的内容；整个不对抛 EsportsError。"""
     if not isinstance(data, dict) or data.get("version") != VERSION:
@@ -175,9 +201,12 @@ def clean(data):
     switches = data.get("platforms") if isinstance(data.get("platforms"), dict) else {}
     players, events = _unique(data["players"][:2000], clean_player), _unique(data["events"][:200], clean_event)
     known = {player["team"] for player in players} | {team for event in events for team in event["teams"]}
+    taken = {item["id"]: (item["platform"], item["room"])
+             for item in players + [stream for event in events for stream in event.get("main") or []]}
     return {"version": VERSION, "updated": data["updated"] if parse_time(data.get("updated")) else None,
             "platforms": {key: switches.get(key) is not False for key in live_status.PLATFORMS},
-            "players": players, "events": events, "teams": clean_teams(data.get("teams"), known)}
+            "players": players, "events": events, "teams": clean_teams(data.get("teams"), known),
+            "streamers": clean_streamers(data.get("streamers"), taken)}
 
 
 def _address(url):
@@ -303,11 +332,18 @@ def event_main(data, event):
     return [stream for stream in event.get("main") or [] if stream["id"] not in taken]
 
 
+def streamers(data):
+    """主播名单（照赛程文件里写的顺序）；没有、存下的是老版本下载的（没有这一项）返回 []。"""
+    return (data.get("streamers") or []) if data else []
+
+
 def find_stream(data, stream_id):
-    """按 id 找一个直播间：名单里的选手，或者某场赛事主舞台的一路；没有返回 None。"""
+    """按 id 找一个直播间：名单里的选手，某场赛事主舞台的一路，或者主播名单里的一位；没有返回 None。"""
     found = next((player for player in data["players"] if player["id"] == stream_id), None)
     if found is None:
         found = next((stream for event in data["events"] for stream in event.get("main") or [] if stream["id"] == stream_id), None)
+    if found is None:
+        found = next((streamer for streamer in streamers(data) if streamer["id"] == stream_id), None)
     return found
 
 

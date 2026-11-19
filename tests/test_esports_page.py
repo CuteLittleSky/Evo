@@ -41,11 +41,11 @@ def roster():
     return out
 
 
-def serve(folder, events, players=None):
+def serve(folder, events, players=None, streamers=None):
     """把赛事文件写到临时文件夹，让 Evo 读它；清掉上次存下的和查过的开播状态。"""
     path = Path(folder) / "esports.json"
     path.write_text(json.dumps({"version": 1, "updated": NOW.isoformat(), "players": roster() if players is None else players,
-                                "events": events}), encoding="utf-8")
+                                "events": events, **({"streamers": streamers} if streamers is not None else {})}), encoding="utf-8")
     esports_data.URL = str(path)
     esports_data.CACHE_PATH.unlink(missing_ok=True)
     panel_esports._status.update(at=0.0, found={})
@@ -121,7 +121,8 @@ def main():
         counts = client.get("/esports/live").get_json()
         again = client.get("/esports/live").get_json()
         out["几位选手在播：只查正在进行的赛事名单里的选手（同一个人只查一次），没查到的单独数"] = (
-            counts == {"events": {"live1": {"live": 3, "total": 6, "unknown": 1}, "live2": {"live": 1, "total": 3, "unknown": 1}}}
+            counts["events"] == {"live1": {"live": 3, "total": 6, "unknown": 1}, "live2": {"live": 1, "total": 3, "unknown": 1}}
+            and counts["streamers"] == {}
             and len(asked) == 1 and sorted(asked[0]) == sorted(f"{p}-{n}" for p in ("douyu", "bilibili") for n in (1, 2, 3)))
         out["60 秒内再问不重查"] = again == counts and len(asked) == 1
         panel_esports._status["at"] -= 61
@@ -147,6 +148,51 @@ def main():
         f"现在没有正在进行的赛事，下一场 {panel_esports.day_text(soon, NOW)} {soon:%H:%M} 开始。" in text(quiet)
         and section(quiet, "即将开始") and not section(quiet, "最近结束") and "/esports/live" not in quiet)
 
+    # ---- 主播名单（2026-11-19）----
+    out["赛程文件里没有主播名单：没有\"主播\"这一块，最下面的小字也照旧"] = (
+        "h-es-streamers" not in raw and "es-st-grid" not in quiet and "主播名单" not in text(raw))
+    streamers = [{"id": "douyu-901", "name": "大主播", "platform": "douyu", "room": "901"},
+                 {"id": "huya-902", "name": "<i>二主播</i>", "platform": "huya", "room": "902"},
+                 {"id": "bilibili-1", "name": "也是选手", "platform": "bilibili", "room": "1"},
+                 {"id": "douyin-abc", "name": "四主播", "platform": "douyin", "room": "abc"}]
+    serve(folder, [event("live1", NOW - timedelta(hours=1), name="职业联赛 第 3 周")], streamers=streamers)
+    with_list = client.get("/esports").get_data(as_text=True)
+    block = re.search(r'<section class="es-section" aria-labelledby="h-es-streamers">.*?</section>', with_list, re.S)
+    block = block.group(0) if block else ""
+    cards = re.findall(r'<a class="card es-st".*?</a>', block, re.S)
+    out["有主播名单：\"正在进行\"下面多一块\"主播\"，照名单的顺序一位一格，写着名字和平台；名字只当纯文字"] = (
+        0 < with_list.find('id="h-es-live"') < with_list.find('id="h-es-streamers"') < with_list.find("</main>")
+        and len(cards) == 4 and [re.search(r'data-streamer="([^"]+)"', c).group(1) for c in cards] == [s["id"] for s in streamers]
+        and all(name in text(card) for card, name in zip(cards, ("大主播 斗鱼", "&lt;/i&gt; 虎牙", "也是选手 B站", "四主播 抖音")))
+        and "<i>二主播</i>" not in block and "&lt;i&gt;二主播&lt;/i&gt;" in block
+        and "赛事、队伍、主播名单和每个直播间由 Evo 统一维护。" in text(with_list))
+    out["每一格带着两个去处：在 Evo 里看（主播的看直播页）和他在平台上的直播间；先写\"正在看谁在播…\"，有\"刷新\"按钮，由脚本问 /esports/live"] = (
+        'data-watch="/esports/streamers?p=douyu-901"' in cards[0] and 'data-room="https://www.douyu.com/901"' in cards[0]
+        and 'data-room="https://live.douyin.com/abc"' in cards[3] and 'id="es-st-count"' in block and "正在看谁在播…" in text(block)
+        and 'id="es-st-refresh"' in block and with_list.count('fetch("/esports/live"') == 2) if len(cards) == 4 else False
+    asked.clear()
+
+    def streamer_query(players):
+        asked.append([p["id"] for p in players])
+        states = {"douyu-901": "live", "huya-902": "error", "bilibili-1": "live"}
+        return {p["id"]: live_status.result(states.get(p["id"], "offline"), title="今晚上分" if p["id"] == "douyu-901" else "",
+                                            avatar="http://example.com/a.jpg" if p["id"] == "douyu-901" else "javascript:x") for p in players}
+
+    live_status.query = streamer_query
+    try:
+        got = client.get("/esports/live").get_json()
+        client.get("/esports/live")
+    finally:
+        live_status.query = real_query
+    out["/esports/live 也回每位主播在不在播（标题、头像只要 https 的）；和赛事的选手一起只查一次，同一个房间不重复查；60 秒内不重查"] = (
+        {key: value["state"] for key, value in got["streamers"].items()}
+        == {"douyu-901": "live", "huya-902": "error", "bilibili-1": "live", "douyin-abc": "offline"}
+        and got["streamers"]["douyu-901"]["title"] == "今晚上分" and got["streamers"]["douyu-901"]["avatar"] == "https://example.com/a.jpg"
+        and got["streamers"]["huya-902"]["avatar"] == "" and len(asked) == 1 and len(asked[0]) == len(set(asked[0])) == 9
+        and got["events"]["live1"]["total"] == 6 and isinstance(got["checked"], float))
+    serve(folder, [event("soon", NOW + timedelta(hours=3))])  # 换回没有主播的赛程，下面接着看"没连上"
+    client.get("/esports")
+
     esports_data.URL = str(Path(folder) / "没有这个文件.json")
     stale = text(client.get("/esports").get_data(as_text=True))  # 60 秒内：还用刚才存下的，不算没连上
     cache = json.loads(esports_data.CACHE_PATH.read_text(encoding="utf-8"))
@@ -159,7 +205,7 @@ def main():
     nothing = text(client.get("/esports").get_data(as_text=True))
     out["一次都没读到过：写\"赛事信息没有读到\"和\"再试一次\"，不显示三块"] = (
         "赛事信息没有读到" in nothing and "再试一次" in nothing and "正在进行" not in nothing
-        and client.get("/esports/live").get_json() == {"events": {}})
+        and [client.get("/esports/live").get_json().get(key) for key in ("events", "streamers")] == [{}, {}])
     return report(out)
 
 

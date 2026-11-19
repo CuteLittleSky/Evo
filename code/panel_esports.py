@@ -107,22 +107,24 @@ def safe_image(url):
     return url if url.startswith("https://") and not any(c in url for c in '"<> \\') else ""
 
 
+def member(player, team, main=False):
+    """看直播页上的一位（选手、主舞台的一路、主播）：id、名字、队名、平台、房间号、直播间地址、main、off（不开直播的选手）；
+    embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时问清晰度和播放地址的接口（都没有就是不能在窗口里播）。"""
+    embed = EMBED.get(player["platform"])
+    off = player["platform"] == esports_data.NO_STREAM  # 不开直播的选手：照样列在队里，标"不直播"，点不开
+    return {"id": player["id"], "name": player["name"], "initial": player["name"][:1].upper(),
+            "team": team, "main": main, "off": off, "platform": player["platform"],
+            "platform_name": esports_data.NO_STREAM_NAME if off else live_status.NAMES[player["platform"]],
+            "room": player["room"],
+            "url": live_status.room_url(player["platform"], player["room"]),
+            "embed": embed.format(room=player["room"]) if embed else None,
+            "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None}
+
+
 def roster(data, event):
     """看直播页要的名单：[{"name": 队名, "initial": 第一个字, "logo": 队徽地址或 None, "main": 是不是主舞台,
     "players": [选手, ...]}, ...]。这场赛事有主舞台（播导播视角的直播间）时它排在最前面，"选手"是那几路直播间。
-    选手：id、名字、队名、平台、房间号、直播间地址、main、off（不开直播的选手）；embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时
-    问清晰度和播放地址的接口（都没有就是不能在窗口里播）。"""
-    def member(player, team, main=False):
-        embed = EMBED.get(player["platform"])
-        off = player["platform"] == esports_data.NO_STREAM  # 不开直播的选手：照样列在队里，标"不直播"，点不开
-        return {"id": player["id"], "name": player["name"], "initial": player["name"][:1].upper(),
-                "team": team, "main": main, "off": off, "platform": player["platform"],
-                "platform_name": esports_data.NO_STREAM_NAME if off else live_status.NAMES[player["platform"]],
-                "room": player["room"],
-                "url": live_status.room_url(player["platform"], player["room"]),
-                "embed": embed.format(room=player["room"]) if embed else None,
-                "play": url_for("esports.play", player_id=player["id"]) if player["platform"] in PLAYERS else None}
-
+    选手是 member() 那样的。"""
     teams = []
     main = esports_data.event_main(data, event)
     if main:
@@ -146,24 +148,77 @@ def page():
         "esports.html", loaded=data is not None, stale=data is not None and not got["ok"],
         read_at=f"{day_text(read_at, now)} {read_at:%H:%M}" if read_at else None,
         live=[view(e, now) for e in found["live"]], upcoming=[view(e, now) for e in found["upcoming"]],
-        recent=[view(e, now) for e in found["recent"]])
+        recent=[view(e, now) for e in found["recent"]],
+        # 主播名单（赛程文件里有才有这一块）：先照名单的顺序画出来，谁在播由页面里的脚本问 /esports/live
+        streamers=[{**member(s, ""), "watch": url_for("esports.streamers", p=s["id"])} for s in esports_data.streamers(data)])
 
 
 @bp.get("/esports/live")
 def live():
-    """正在进行的每场赛事有几位选手在播：{"events": {赛事 id: {"live": 在播, "total": 名单里几位, "unknown": 没查到的}}}。"""
+    """正在进行的每场赛事有几位选手在播，和主播名单里每一位在不在播：
+    {"events": {赛事 id: {"live": 在播, "total": 名单里几位, "unknown": 没查到的}},
+     "streamers": {主播 id: {"state", "loop", "title", "avatar", "since"}}, "checked": 查的时间}。"""
     data = esports_data.cached()
     data = data["data"] if data else None
     events = esports_data.groups(data)["live"] if data else []
     rosters = {event["id"]: esports_data.streaming(esports_data.event_players(data, event)) for event in events}  # 不开直播的不数
-    everyone = list({p["id"]: p for players in rosters.values() for p in players}.values())
+    streamers = esports_data.streamers(data)
+    everyone = list({p["id"]: p for players in [*rosters.values(), streamers] for p in players}.values())
     found = players_status(everyone) if everyone else {}
     out = {}
     for event_id, players in rosters.items():
         states = [found[p["id"]]["state"] for p in players]
         out[event_id] = {"live": states.count(live_status.LIVE), "total": len(players),
                          "unknown": states.count(live_status.ERROR)}
-    return jsonify(events=out)
+    # checked：这些状态是什么时候查的（60 秒内再问用的是上次的，时间也是上次的）
+    return jsonify(events=out, checked=_status["at"] if everyone else time.time(), streamers={s["id"]: status_view(found[s["id"]]) for s in streamers})
+
+
+def status_view(got):
+    """一个直播间的开播状态里给页面的那几项（头像只要 https 的）。"""
+    return {"state": got["state"], "loop": got["loop"], "title": got["title"], "since": got["since"],
+            "avatar": safe_image(got["avatar"])}
+
+
+def watch_page_data(data, members, selected, status_url):
+    """看直播页里的脚本要的东西（赛事的和主播的一样）。"""
+    return {"players": members, "platforms": data["platforms"], "selected": selected,
+            "status_url": status_url, "game_url": url_for("esports.game"),
+            "mpegts_url": url_for("static", filename="vendor/mpegts.js"), "token": current_app.config["TOKEN"],
+            "failed_url": url_for("esports.play_failed", player_id="_").rsplit("/", 1)[0] + "/",  # 后面接选手 id
+            # 要登录才能看高画质的平台：现在登录着没有（打开页面时隔 6 小时向平台核对一次）、登录用的三个接口
+            "accounts": {key: module.account(check=True) for key, module in LOGINS.items()},
+            "login": {key: {step: url_for(f"esports.login_{step}", platform=key) for step in ("start", "poll", "logout")}
+                      for key in LOGINS}}
+
+
+@bp.route("/esports/streamers")
+def streamers():
+    """主播的看直播页：和赛事的看直播页是同一个页面，右边不分队伍，只有一列主播（在播的排前面）。"""
+    data = esports_data.get()["data"]
+    members = [member(s, "") for s in esports_data.streamers(data)]
+    if not members:
+        flash("现在没有主播名单。", "error")
+        return redirect(url_for("esports.page"))
+    ids = {m["id"] for m in members}
+    wanted = request.args.get("p")
+    selected = wanted if wanted in ids else None
+    return render_template(
+        "esports_watch.html", solo=True, noun="主播", teams=[], team_count=len(members), total=len(members), selected=selected,
+        event={"name": "主播", "stage": "", "state": None, "mark": None}, members=members,
+        page_data={**watch_page_data(data, members, selected, url_for("esports.streamers_status")), "solo": True, "noun": "主播"})
+
+
+@bp.get("/esports/streamers/status")
+def streamers_status():
+    """主播名单里每一位现在在不在播（和 /esports/<赛事>/status 一样的格式）。名单没有了回 404。"""
+    data = esports_data.get(fresh=WATCH_DATA_SECONDS)["data"]
+    streamers = esports_data.streamers(data)
+    if not streamers:
+        return jsonify(error="gone"), 404
+    found = players_status(streamers, WATCH_STATUS_SECONDS)
+    return jsonify(checked=time.time(), platforms=data["platforms"],
+                   players={pid: status_view(got) for pid, got in found.items()})
 
 
 @bp.route("/esports/<event_id>/watch")
@@ -176,19 +231,13 @@ def watch(event_id):
     teams = roster(data, event)
     ids = {player["id"] for team in teams for player in team["players"] if not player["off"]}  # 能选来看的人
     wanted = request.args.get("p")
+    selected = wanted if wanted in ids else None
     return render_template(
-        "esports_watch.html", event=view(event, datetime.now().astimezone()), teams=teams,
+        "esports_watch.html", solo=False, noun="选手", event=view(event, datetime.now().astimezone()), teams=teams,
         team_count=sum(not team["main"] for team in teams),  # "全部 N 支"只数队伍，不数主舞台
-        total=len(ids), selected=wanted if wanted in ids else None,
-        page_data={"players": [player for team in teams for player in team["players"]],
-                   "platforms": data["platforms"], "selected": wanted if wanted in ids else None,
-                   "status_url": url_for("esports.status", event_id=event["id"]), "game_url": url_for("esports.game"),
-                   "mpegts_url": url_for("static", filename="vendor/mpegts.js"), "token": current_app.config["TOKEN"],
-                   "failed_url": url_for("esports.play_failed", player_id="_").rsplit("/", 1)[0] + "/",  # 后面接选手 id
-                   # 要登录才能看高画质的平台：现在登录着没有（打开页面时隔 6 小时向平台核对一次）、登录用的三个接口
-                   "accounts": {key: module.account(check=True) for key, module in LOGINS.items()},
-                   "login": {key: {step: url_for(f"esports.login_{step}", platform=key) for step in ("start", "poll", "logout")}
-                             for key in LOGINS}})
+        total=len(ids), selected=selected,
+        page_data={**watch_page_data(data, [player for team in teams for player in team["players"]], selected,
+                                     url_for("esports.status", event_id=event["id"])), "solo": False, "noun": "选手"})
 
 
 @bp.get("/esports/<event_id>/status")
@@ -202,9 +251,8 @@ def status(event_id):
     # 主舞台的直播间也查；不开直播的选手不查
     players = esports_data.event_main(data, event) + esports_data.streaming(esports_data.event_players(data, event))
     found = players_status(players, WATCH_STATUS_SECONDS) if players else {}
-    return jsonify(checked=time.time(), platforms=data["platforms"], players={
-        pid: {"state": got["state"], "loop": got["loop"], "title": got["title"], "since": got["since"],
-              "avatar": safe_image(got["avatar"])} for pid, got in found.items()})
+    return jsonify(checked=time.time(), platforms=data["platforms"],
+                   players={pid: status_view(got) for pid, got in found.items()})
 
 
 @bp.get("/esports/game")

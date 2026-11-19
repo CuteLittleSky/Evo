@@ -503,6 +503,70 @@ def tool_checks(out):
         and empty.returncode == 1 and "找不到" in empty.stdout)
 
 
+def streamer_checks(out):
+    """主播名单（esports.json 的 streamers）：Evo 怎么读、发布脚本怎么生成。"""
+    def one(platform, room, name=None):
+        return {"id": f"{platform}-{room}", "name": name or f"主播{room}", "platform": platform, "room": str(room)}
+
+    good = [one("douyu", 9001), one("huya", 9002), one("bilibili", 9003), one("douyin", "abc_1"), one("douyu", 1, "也是选手")]
+    bad = [one("none", ""), {**one("douyu", 9004), "room": "x9"}, {**one("douyu", 9005), "name": ""}, one("kuaishou", 9006),
+           one("douyu", 9001, "重复的"), {**one("douyu", 9007), "id": "有 空格"}, "不是一条",
+           {"id": "douyu-1x", "name": "占了别人 id 的", "platform": "douyu", "room": "9008"}]
+    players = [player(), player("douyu-1x", "另一位", room="77")]
+    read = esports_data.clean(file(players, [event()], streamers=good + bad))
+    out["主播名单：照写的顺序读进来；不直播、房间号不对、没名字、不认识的平台、重复的去掉；没有这一项就是空的"] = (
+        read["streamers"] == good and esports_data.streamers(read) == good
+        and esports_data.clean(file())["streamers"] == [] and esports_data.clean(file(streamers="乱写"))["streamers"] == []
+        and esports_data.streamers(None) == [] and esports_data.streamers({"players": []}) == [])
+    out["主播可以同时是选手（同一个房间）；id 和某位选手一样、房间却不一样的那一位去掉"] = (
+        good[4] in read["streamers"] and all(s["name"] != "占了别人 id 的" for s in read["streamers"]))
+    many = [one("douyu", 10000 + n) for n in range(60)]
+    douyin = [one("douyin", 20000 + n) for n in range(14)] + [one("huya", 30000)]
+    capped = esports_data.clean(file(streamers=douyin))["streamers"]
+    out["主播最多 40 位，其中抖音最多 10 位（多出来的去掉，后面别的平台的照样留着）"] = (
+        esports_data.clean(file(streamers=many))["streamers"] == many[:40]
+        and [s["platform"] for s in capped] == ["douyin"] * 10 + ["huya"])
+    out["按 id 找直播间：选手、主舞台、主播名单里的都找得到"] = (
+        esports_data.find_stream(read, "huya-9002") == good[1] and esports_data.find_stream(read, "douyu-1")["name"] == "示例选手"
+        and esports_data.find_stream(read, "nobody") is None)
+
+    sys.path.insert(0, str(TOOL.parent))
+    import esports as tool  # tools/esports.py
+    today = datetime.now(live_status.BEIJING)
+    roster = ["阿一,星火电竞,斗鱼,101,", "阿二,星火电竞,虎牙,102,", "阿三,星火电竞,B站,103,"]
+    schedule = [f"职业联赛,联赛,,{today:%Y-%m-%d} 19:00,{today:%Y-%m-%d} 23:00,星火电竞"]
+
+    def with_streamers(rows, header="主播,平台,房间号"):
+        with tempfile.TemporaryDirectory() as folder:
+            if rows is not None:
+                (Path(folder) / "主播.csv").write_bytes((header + "\r\n" + "\r\n".join(rows) + "\r\n").encode("utf-8-sig"))
+            return run_tool(folder, roster, schedule)
+
+    code, text, data = with_streamers(["大主播,斗鱼,9001", "二主播,抖音,XxFps", "也是选手,斗鱼,101", ",,"])
+    plain = with_streamers(None)
+    out["发布脚本：有 主播.csv 就生成主播名单（id 是平台-房间号，抖音转小写，照表里的顺序），预览里写着几位；没有这张表就不写这一项"] = (
+        code == 0 and data is not None and data["streamers"] == [
+            {"id": "douyu-9001", "name": "大主播", "platform": "douyu", "room": "9001"},
+            {"id": "douyin-xxfps", "name": "二主播", "platform": "douyin", "room": "xxfps"},
+            {"id": "douyu-101", "name": "也是选手", "platform": "douyu", "room": "101"}]
+        and esports_data.clean(data)["streamers"] == data["streamers"] and "主播 3 位" in text
+        and plain[0] == 0 and "streamers" not in plain[2])
+    code, text, data = with_streamers(["甲,快手,1", "乙,不直播,", "丙,斗鱼,abc", "丁,斗鱼,9001", "戊,斗鱼,9001", "丁,斗鱼,9002", ",斗鱼,9003",
+                                       *[f"抖{n},抖音,{50000 + n}" for n in range(11)], *[f"多{n},虎牙,{60000 + n}" for n in range(30)]])
+    out["主播.csv 写错了（平台、房间号、重复的房间和名字、没名字、超过 40 位、抖音超过 10 位）都指出来，不生成文件"] = (
+        code == 1 and data is None and all(word in text for word in (
+            "主播.csv 第 2 行：平台「快手」不认识", "主播.csv 第 3 行：平台「不直播」不认识", "主播.csv 第 4 行", "主播.csv 第 6 行：斗鱼 房间 9001 和第 5 行重复了",
+            "主播.csv 第 7 行：主播「丁」和第 5 行重复了", "主播.csv 第 8 行：主播的名字是空的", "主播最多 40 位（现在 42 位）", "抖音的主播最多 10 位（现在 11 位")))
+    members = [{"line": n, "name": f"选手{n}", "team": "甲队", "platform": "douyu", "room": str(n), "liquipedia": ""} for n in (1, 2, 3)]
+    matches = [{"line": 2, "name": "联赛", "type": "联赛", "stage": "", "teams": ["甲队"],
+                "start": today + timedelta(hours=1), "end": today + timedelta(hours=4)}]
+    kept = tool.build(members, matches, {}, [], streamers=read["streamers"][:2])  # 线上现在的名单照原样带上
+    out["发布脚本带着线上现在的主播名单生成时内容不变；没有主播、名单是空的都不写这一项（和以前的文件一模一样）"] = (
+        kept["streamers"] == good[:2] and "streamers" not in tool.build(members, matches, {}, [])
+        and "streamers" not in tool.build(members, matches, {}, [], streamers=[])
+        and {**kept, "streamers": None, "updated": ""} == {**tool.build(members, matches, {}, []), "streamers": None, "updated": ""})
+
+
 def main():
     print("赛事数据（赛事文件的格式和下载、查开播状态、抖音签名、发赛事数据的脚本）")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -516,6 +580,7 @@ def main():
         query_checks(out)
         sign_checks(out)
         tool_checks(out)
+        streamer_checks(out)
     finally:
         server.shutdown()
     return report(out)
