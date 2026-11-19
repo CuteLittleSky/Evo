@@ -78,7 +78,7 @@ function pendingRooms(items) {
     <ul class="plain team-pend">${[...byTeam].map(([team, names]) => `<li><b>${escape(team)}</b>：${names.map(escape).join("、")}</li>`).join("")}</ul></details>`;
 }
 
-export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "", logos = {} }) {
+export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "", logos = {}, banner = "" }) {
   const editable = can(me, "edit");
   const teams = teamsOf(items);
   const problems = checkPlayers(items).errors;
@@ -111,7 +111,7 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
     return `<section class="card"><div class="title-row team-head">${badge}<h2>${escape(team)}</h2>${size}<span class="grow"></span>${rename}</div>
       <ul class="list">${rows}</ul></section>`;
   }).join("");
-  return layout({ title: "选手库", me, current: "players", body: `
+  return layout({ title: "选手库", me, current: "players", banner, body: `
 <div class="stack"><h1>选手库</h1>
   <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p></div>
 ${notes({ error, ok })}
@@ -169,7 +169,7 @@ function eventForm(action, e, teams, submit) {
   </form>`;
 }
 
-export function eventsPage(me, items, playerItems, { now, error = "", ok = "", draft = null, draftTable = "" }) {
+export function eventsPage(me, items, playerItems, { now, error = "", ok = "", draft = null, draftTable = "", banner = "" }) {
   const editable = can(me, "edit");
   const teams = teamsOf(playerItems);
   const groups = { live: [], upcoming: [], ended: [] };
@@ -200,7 +200,7 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
                           main: (draft.main ?? []).filter((m) => m.platform || m.room || m.name).slice(0, MAIN_MAX) } : blank;
   const add = editable ? `<details class="card fold"${!items.length || draft ? " open" : ""}><summary class="fold-head"><span>添加赛事</span><span class="muted small">联赛、训练赛、杯赛</span></summary>
     ${eventForm("/events/add", kept, teams, "添加")}</details>` : "";
-  return layout({ title: "赛程", me, current: "events", body: `
+  return layout({ title: "赛程", me, current: "events", banner, body: `
 <div class="stack"><h1>赛程</h1>
   <p class="muted">时间都是北京时间。进行中、即将开始的会出现在 Evo 的赛事页；结束超过 7 天的不会发布。</p></div>
 ${notes({ error, ok })}
@@ -225,7 +225,7 @@ function eventList(info) {
     <div class="row-meta"><span>${escape(e.when)}</span><span>${e.teams} 支队、${e.players} 人</span></div></div></li>`).join("")}</ul>`;
 }
 
-export function publishPage(me, view, last, { now, error = "", ok = "" }) {
+export function publishPage(me, view, last, { now, error = "", ok = "", banner = "" }) {
   const result = view.built.official;
   const allowed = can(me, "publish");
   const blocked = result.errors.length > 0;
@@ -259,7 +259,7 @@ export function publishPage(me, view, last, { now, error = "", ok = "" }) {
     </section>`;
   };
   const coming = describe(result.data, now);
-  return layout({ title: "发布", me, current: "publish", body: `
+  return layout({ title: "发布", me, current: "publish", banner, body: `
 <div class="stack"><h1>发布到 Evo</h1>
   <p class="muted">把选手库和赛程生成 Evo 赛事页读的文件（放在 dl.evotracker.cn 上）。先发测试文件，核对没问题再发正式文件。</p></div>
 ${notes({ error, ok })}

@@ -8,9 +8,11 @@
 // 和队徽（logos.js，只写 esports/logos/<内容哈希>.png|webp），别的一律不碰。
 
 import { Refuse } from "./store.js";
-import { PLATFORMS, STATUS_WORDS, beijingText, build, clean, parseIso, platformName, status } from "./esports.js";
-import { events, players, recordPublish, writeLog } from "./data.js";
+import { PLATFORMS, RECENT_DAYS, STATUS_WORDS, beijingText, build, clean, parseIso, platformName, status } from "./esports.js";
+import { events, players, published, recentLog, recordPublish, writeLog } from "./data.js";
 import { teamLogos } from "./logos.js";
+
+const DAY = 24 * 3600 * 1000;
 
 export const TARGETS = {
   test: { file: "esports_test.json", name: "测试文件" },
@@ -62,6 +64,27 @@ export async function publish(env, by, target, now) {
   await recordPublish(env.DATA, target, { at: now, by: by.name, ...c, bytes });
   await writeLog(env.DATA, by, now, `发布${TARGETS[target].name}：${c.events} 场赛事、${c.teams} 支队、${c.players} 位选手`);
   return c;
+}
+
+// ---------- 有改动还没发布（2026-11-19 用户同意：页面顶上提醒）----------
+// 按现在的选手库、赛程生成一份，和线上的正式文件比（不管 updated、平台开关）。线上那份先照 build 的规矩
+// 去掉结束超过 7 天的赛事和用不到的人、队徽：只是日子过去了、旧赛事该下架了，不算"有改动"。
+function comparable(data, now) {
+  const evs = (data.events ?? []).filter((e) => !(parseIso(e.end) !== null && now - parseIso(e.end) > RECENT_DAYS * DAY));
+  const used = new Set(evs.flatMap((e) => e.teams));
+  return JSON.stringify({ players: (data.players ?? []).filter((p) => used.has(p.team)), events: evs,
+                          teams: Object.fromEntries(Object.entries(data.teams ?? {}).filter(([t]) => used.has(t))) });
+}
+
+// 没有要发布的 → null；有 → {last: 上次发布的记录, who: 之后改过的人, errors: 现在还有几处要改}
+export async function unpublished(env, now) {
+  const [live, playerItems, eventItems, logos, last, log] = await Promise.all([liveFile(env.PUBLIC, "official"), players(env.DATA),
+    events(env.DATA), teamLogos(env.DATA), published(env.DATA), recentLog(env.DATA)]);
+  const built = build(playerItems, eventItems, live.data?.platforms, now, logos);
+  if (live.raw ? comparable(built.data, now) === comparable(live.raw, now) : !built.data.events.length) return null;
+  const since = last.official?.at ?? 0;
+  const who = [...new Set(log.filter((x) => x.at > since && x.by !== "Liquipedia 同步" && !x.text.startsWith("发布")).map((x) => x.by))];
+  return { last: last.official ?? null, who, errors: built.errors.length };
 }
 
 // 平台开关：只改线上文件里的 platforms 和 updated，别的原样不动（同 tools/esports.py --off / --on）

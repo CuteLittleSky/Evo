@@ -87,3 +87,34 @@ check("选手库：待填的人按队列出来、默认收起", r.text.includes(
   && r.text.includes("<b>ARAM</b>：Chisu、SongYou") && /<details class="note note-info"><summary>/.test(r.text));
 check("待填的不算发布前要改的", !r.text.includes("发布前要改好"));
 await env.DATA.put(PLAYERS, JSON.stringify(saved));
+
+// ---------- 页面顶上"有改动还没发布" ----------
+r = await editor.get("/players");
+check("改的都发出去了 → 不提醒", !r.text.includes("有改动还没发布"));
+const kite = env.DATA.json(PLAYERS).items.find((p) => p.name === "Kite");
+now += HOUR;
+await editor.post(`/players/${kite.id}/save`, { name: "Kite", team: "星火", platform: "douyu", room: "520014", rev: String(kite.rev) });
+r = await editor.get("/players");
+check("改了直播间 → 选手库顶上提醒、写着谁改过、上次谁发的", r.text.includes("有改动还没发布到 Evo") && r.text.includes("之后 毛毛 改过")
+  && r.text.includes("玩家现在看到的是 黄指导 1 小时前发的"));
+check("不能发布的编辑：请管理员发布，没有去发布按钮", r.text.includes("请管理员（或者能发布的人）发布") && !r.text.includes('href="/publish">去发布'));
+r = await admin.get("/events");
+check("管理员在赛程页也看到，有去发布", r.text.includes("有改动还没发布到 Evo") && r.text.includes('href="/publish">去发布'));
+r = await viewer.get("/");
+check("只读的在首页也看到", r.text.includes("有改动还没发布到 Evo"));
+r = await admin.get("/publish");
+check("发布页上也提醒，但不再放去发布", r.text.includes("有改动还没发布到 Evo") && !r.text.includes('href="/publish">去发布'));
+await editor.post(`/players/${kite.id}/save`, { name: "Kite", team: "星火", platform: "douyu", room: "520013", rev: String(kite.rev + 1) });
+r = await editor.get("/players");
+check("改回去了（和线上一样）→ 不提醒", !r.text.includes("有改动还没发布"));
+await editor.post(`/players/${kite.id}/save`, { name: "Kite", team: "星火", platform: "douyu", room: "520014", rev: String(kite.rev + 2) });
+await env.DATA.put(EVENTS, JSON.stringify({ version: 1, items: eventList().map((e) => (e.stage === "A组" ? { ...e, teams: [...e.teams, "HAB"] } : e)) }));
+r = await editor.get("/players");
+check("发不了的时候写着还有几处要改", r.text.includes("现在还发不了：有 1 处要改"));
+await env.DATA.put(EVENTS, JSON.stringify({ version: 1, items: eventList().map((e) => (e.stage === "A组" ? { ...e, teams: e.teams.filter((t) => t !== "HAB") } : e)) }));
+await admin.post("/publish/official");
+r = await editor.get("/players");
+check("发布以后不再提醒", !r.text.includes("有改动还没发布"));
+now += 8 * 24 * HOUR;
+r = await editor.get("/players");
+check("过了 8 天，赛事都该下架了（只是日子过去了）→ 不算有改动", !r.text.includes("有改动还没发布"));

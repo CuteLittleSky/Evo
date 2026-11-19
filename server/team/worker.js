@@ -21,14 +21,14 @@ import {
   Refuse, acceptInvite, can, cancelInvite, clearCookie, createInvite, findInvite, load, logout, removeMember,
   sessionCookie, setRole, validId, whoami,
 } from "./auth.js";
-import { APP_JS, homePage, invitePage, layout, loginPage, membersPage, messagePage } from "./pages.js";
+import { APP_JS, homePage, invitePage, layout, loginPage, membersPage, messagePage, publishBanner } from "./pages.js";
 import { eventsPage, logPage, playersPage, publishPage } from "./pages_esports.js";
 import { importEvents, importPlayers } from "./esports.js";
 import {
   addEvent, addPlayer, deleteEvent, deletePlayer, events, importEventRows, importPlayerRows, players, published, recentLog,
   renameTeam, saveEvent, savePlayer, teamsOf,
 } from "./data.js";
-import { preview, publish, setPlatform } from "./publish.js";
+import { preview, publish, setPlatform, unpublished } from "./publish.js";
 import { liquipediaPage } from "./pages_lp.js";
 import { addFromLiquipedia, eventEntries, teamEntries } from "./lpimport.js";
 import { logoHref, logoPage } from "./pages_logos.js";
@@ -177,7 +177,7 @@ export async function handle(request, env, now = Date.now()) {
     const [playerItems, eventItems, recent, last, idx, no, ov] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
       published(bucket), index(bucket), rejects(bucket), overrides(bucket)]);
     const pend = pending(playerItems, idx, no, ov);
-    return respond(homePage(me, { now, recent, stats: { players: playerItems.length, teams: teamsOf(playerItems).size,
+    return respond(homePage(me, { now, recent, banner: publishBanner(me, await unpublished(env, now), now), stats: { players: playerItems.length, teams: teamsOf(playerItems).size,
       events: eventItems.length, published: last, lpPlayers: Object.values(idx.players).filter((x) => !x.missing).length,
       pending: pendingCount(pend) } }));
   }
@@ -228,8 +228,8 @@ export async function handle(request, env, now = Date.now()) {
   // ---------- 选手库 ----------
   if (path === "/players" || path.startsWith("/players/") || path === "/teams/rename") {
     const show = async (options = {}, status = 200) => {
-      const [items, logos] = await Promise.all([players(bucket), teamLogos(bucket)]);
-      return respond(playersPage(me, items, { now, logos, ...options }), { status });
+      const [items, logos, changed] = await Promise.all([players(bucket), teamLogos(bucket), unpublished(env, now)]);
+      return respond(playersPage(me, items, { now, logos, banner: publishBanner(me, changed, now), ...options }), { status });
     };
     if (method === "GET") return path === "/players" ? show({ ok: okText(url.searchParams) }) : notFound();
     if (!can(me, "edit")) return readOnly();
@@ -266,8 +266,8 @@ export async function handle(request, env, now = Date.now()) {
   // ---------- 赛程 ----------
   if (path === "/events" || path.startsWith("/events/")) {
     const show = async (options = {}, status = 200) => {
-      const [eventItems, playerItems] = await Promise.all([events(bucket), players(bucket)]);
-      return respond(eventsPage(me, eventItems, playerItems, { now, ...options }), { status });
+      const [eventItems, playerItems, changed] = await Promise.all([events(bucket), players(bucket), unpublished(env, now)]);
+      return respond(eventsPage(me, eventItems, playerItems, { now, banner: publishBanner(me, changed, now), ...options }), { status });
     };
     if (method === "GET") return path === "/events" ? show({ ok: okText(url.searchParams) }) : notFound();
     if (!can(me, "edit")) return readOnly();
@@ -431,8 +431,8 @@ export async function handle(request, env, now = Date.now()) {
   // ---------- 发布 ----------
   if (path === "/publish" || path.startsWith("/publish/")) {
     const show = async (options = {}, status = 200) => {
-      const [view, last] = await Promise.all([preview(env, now), published(bucket)]);
-      return respond(publishPage(me, view, last, { now, ...options }), { status });
+      const [view, last, changed] = await Promise.all([preview(env, now), published(bucket), unpublished(env, now)]);
+      return respond(publishPage(me, view, last, { now, banner: publishBanner(me, changed, now, true), ...options }), { status });
     };
     if (method === "GET") return path === "/publish" ? show({ ok: okText(url.searchParams) }) : notFound();
     try {

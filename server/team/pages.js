@@ -1,7 +1,7 @@
 // 协作网页的页面（服务器直接拼好 HTML，不用框架）。颜色、字号照 Evo 窗口（panel/static/style.css）：
 // 深色是默认，系统是浅色时换浅色。手机（包括微信里打开）和电脑都能用：按钮至少 44 像素高，输入框 16 像素字（iPhone 不会自动放大）。
 
-import { ROLES, INVITE_DAYS, SESSION_DAYS } from "./auth.js";
+import { ROLES, INVITE_DAYS, SESSION_DAYS, can } from "./auth.js";
 
 export function escape(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -205,6 +205,8 @@ details.note > summary::before, details.rest > summary::before { content: "▸";
 details.note[open] > summary::before, details.rest[open] > summary::before { content: "▾"; }
 details.note > summary .help { color: inherit; opacity: .85; }
 .team-pend li + li { margin-top: 4px; }
+.banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.banner-text { flex: 1 1 240px; min-width: 0; }
 @media (min-width: 720px) {
   .fold > summary { padding: 0 24px; }
   .fold > form, .fold > div { padding: 0 24px 24px; }
@@ -315,9 +317,20 @@ export function abilities(member) {
   return "只能看，不能改";
 }
 
+// 页面顶上的"有改动还没发布"（publish.js 的 unpublished；首页、选手库、赛程、发布页上显示）。onPublish：就在发布页上，不放"去发布"
+export function publishBanner(me, info, now, onPublish = false) {
+  if (!info || !me) return "";
+  const last = info.last ? `玩家现在看到的是 ${info.last.by} ${ago(info.last.at, now)}发的。` : "正式文件还没从这个网页发过。";
+  const who = info.who.length ? `之后 ${info.who.join("、")} 改过。` : "";
+  const action = onPublish ? "" : can(me, "publish") ? `<a class="btn btn-primary" href="/publish">去发布</a>`
+    : `<span class="small">请管理员（或者能发布的人）发布。</span>`;
+  return `<div class="note note-error banner" role="status"><div class="banner-text"><b>有改动还没发布到 Evo</b>${info.errors ? `<span>（现在还发不了：有 ${info.errors} 处要改）</span>` : ""}
+    <p class="small">${escape(last)}${escape(who)}</p></div>${action}</div>`;
+}
+
 // ---------- 外框 ----------
 
-export function layout({ title, me = null, current = "", body, narrow = false }) {
+export function layout({ title, me = null, current = "", body, narrow = false, banner = "" }) {
   const link = (href, key, text) => `<a href="${href}"${current === key ? ' aria-current="page"' : ""}>${text}</a>`;
   const nav = me ? `<nav class="nav" aria-label="主导航">
       ${link("/", "home", "首页")}${link("/players", "players", "选手库")}${link("/events", "events", "赛程")}${link("/publish", "publish", "发布")}${link("/pros", "pros", "资料")}
@@ -341,7 +354,7 @@ export function layout({ title, me = null, current = "", body, narrow = false })
   ${nav}
 </div></header>
 <main class="wrap${narrow ? " narrow" : ""}">
-${body}
+${banner}${body}
 </main>
 <script src="/app.js" defer></script>
 </body>
@@ -392,7 +405,7 @@ export function logList(items, now) {
 }
 
 // stats：{players, teams, events, published}，recent：最近几条改动
-export function homePage(me, { stats, recent, now }) {
+export function homePage(me, { stats, recent, now, banner = "" }) {
   const tile = (href, name, text, count) => `<a class="tile" href="${href}">
       <div class="tile-head">${escape(name)}<span aria-hidden="true">›</span></div><p>${escape(text)}</p>${count ? `<p class="tile-count">${escape(count)}</p>` : ""}</a>`;
   const last = stats.published?.official;
@@ -406,7 +419,7 @@ export function homePage(me, { stats, recent, now }) {
     ...SOON.map(([name, text]) => `<div class="tile" aria-disabled="true">
       <div class="tile-head">${escape(name)}<span class="badge badge-soon">还没上线</span></div><p>${escape(text)}</p></div>`),
   ].join("");
-  return layout({ title: "首页", me, current: "home", body: `
+  return layout({ title: "首页", me, current: "home", banner, body: `
 <section class="stack">
   <div class="title-row"><h1>你好，${escape(me.name)}</h1>${roleBadge(me.role)}</div>
   <p class="muted">你能做的：${escape(abilities(me))}。</p>
