@@ -2,7 +2,7 @@
 // 只读的人能看，看不到改的按钮；编辑能改；能发布的人（管理员、开了发布的编辑）才有发布按钮；平台开关只有管理员。
 
 import { can } from "./auth.js";
-import { EVENT_COLUMNS, MAIN_MAX, NO_STREAM, NO_STREAM_NAME, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TYPES, beijingText, checkPlayers, isoBeijing,
+import { EVENT_COLUMNS, MAIN_MAX, NO_STREAM, NO_STREAM_NAME, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TYPES, beijingText, checkPlayers, eventLabel, isoBeijing,
   parseBeijing, parseIso, roomUrl, status } from "./esports.js";
 import { teamsOf } from "./data.js";
 import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
@@ -169,7 +169,8 @@ function eventForm(action, e, teams, submit) {
   </form>`;
 }
 
-export function eventsPage(me, items, playerItems, { now, error = "", ok = "", draft = null, draftTable = "", banner = "" }) {
+// copy：点了某一场的"复制"（2026-11-19 用户要的：A 组、B 组，每天的训练赛，队伍和主舞台不用再录一遍），添加表单照它填好
+export function eventsPage(me, items, playerItems, { now, error = "", ok = "", draft = null, draftTable = "", banner = "", copy = null }) {
   const editable = can(me, "edit");
   const teams = teamsOf(playerItems);
   const groups = { live: [], upcoming: [], ended: [] };
@@ -189,6 +190,7 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
     </div>
     ${editable ? `<div class="row-actions">
       <details class="act"><summary class="btn">改</summary><div class="panel panel-wide">${eventForm(`/events/${e.id}/save`, e, teams, "保存")}</div></details>
+      <a class="btn" href="/events?copy=${e.id}#add" title="照这一场填好添加表单（队伍、主舞台都带上）">复制</a>
       ${confirmDelete(`/events/${e.id}/delete`, e.name)}</div>` : ""}
   </li>`;
   };
@@ -197,9 +199,12 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
   const blank = { name: "", type: "联赛", stage: "", start: "", end: "", teams: [] };
   // 添加出错时留着填的内容（时间是网页上的 2026-11-17T19:00，换成文件里的写法再显示）
   const kept = draft ? { ...blank, ...draft, rev: undefined, start: asIso(draft.start), end: asIso(draft.end),
-                          main: (draft.main ?? []).filter((m) => m.platform || m.room || m.name).slice(0, MAIN_MAX) } : blank;
-  const add = editable ? `<details class="card fold"${!items.length || draft ? " open" : ""}><summary class="fold-head"><span>添加赛事</span><span class="muted small">联赛、训练赛、杯赛</span></summary>
-    ${eventForm("/events/add", kept, teams, "添加")}</details>` : "";
+                          main: (draft.main ?? []).filter((m) => m.platform || m.room || m.name).slice(0, MAIN_MAX) }
+    : copy ? { name: copy.name, type: copy.type, stage: copy.stage, start: copy.start, end: copy.end, teams: [...copy.teams], main: [...(copy.main ?? [])] }
+      : blank;
+  const copied = copy && !draft ? `<p class="note note-info">照${escape(eventLabel(copy))}填好了（队伍、主舞台都带上了）：改一下阶段、时间，再点下面的"添加"。</p>` : "";
+  const add = editable ? `<details class="card fold" id="add"${!items.length || draft || copy ? " open" : ""}><summary class="fold-head"><span>添加赛事</span><span class="muted small">联赛、训练赛、杯赛</span></summary>
+    <div class="stack">${copied}${eventForm("/events/add", kept, teams, "添加")}</div></details>` : "";
   return layout({ title: "赛程", me, current: "events", banner, body: `
 <div class="stack"><h1>赛程</h1>
   <p class="muted">时间都是北京时间。进行中、即将开始的会出现在 Evo 的赛事页；结束超过 7 天的不会发布。</p></div>

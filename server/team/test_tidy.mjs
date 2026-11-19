@@ -134,3 +134,20 @@ check("改动记录：只换了顺序", logTexts()[0] === "修改赛事「LCQ胜
 const before = logTexts().length;
 await saveA(["星火"], [["douyin", "11235066", "解说 贝克"], ["bilibili", "768756", "快乐滋崩在这里"]]);
 check("什么都没改 → 不记", logTexts().length === before);
+
+// ---------- 赛程：复制这一场 ----------
+r = await viewer.get("/events");
+check("只读的没有复制", !r.text.includes("?copy="));
+r = await editor.get("/events");
+check("每一场都有复制", (r.text.match(/href="\/events\?copy=[0-9a-f]{8}#add"/g) ?? []).length === eventList().length);
+r = await editor.get(`/events?copy=${groupA().id}`);
+check("点复制 → 添加表单打开、照这一场填好（名称、阶段、时间、队伍、主舞台）", r.text.includes('id="add" open')
+  && r.text.includes("照「LCQ胜者组第1轮 · A组」填好了") && r.text.includes('value="2026-11-20T17:00"')
+  && r.text.split('action="/events/add"')[1].split("</form>")[0].includes('value="11235066"')
+  && /action="\/events\/add"[\s\S]*?value="星火" checked[\s\S]*?<\/form>/.test(r.text));
+const count = eventList().length;
+r = await editor.post("/events/add", eventForm("LCQ胜者组第1轮", "B组", "2026-11-20T17:00", "2026-11-20T20:00", ["星火"],
+  [["douyin", "11235066", "解说 贝克"], ["bilibili", "768756", "快乐滋崩在这里"]]));
+check("改了阶段再添加 → 多一场", r.location === "/events?ok=added" && eventList().length === count + 1);
+r = await editor.get("/events?copy=ffffffff");
+check("要复制的那场没了 → 提示", r.text.includes("要复制的那一场找不到了") && !r.text.includes('id="add" open'));

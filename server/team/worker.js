@@ -269,7 +269,12 @@ export async function handle(request, env, now = Date.now()) {
       const [eventItems, playerItems, changed] = await Promise.all([events(bucket), players(bucket), unpublished(env, now)]);
       return respond(eventsPage(me, eventItems, playerItems, { now, banner: publishBanner(me, changed, now), ...options }), { status });
     };
-    if (method === "GET") return path === "/events" ? show({ ok: okText(url.searchParams) }) : notFound();
+    if (method === "GET") {
+      if (path !== "/events") return notFound();
+      const copyId = url.searchParams.get("copy");  // 点了某一场的"复制"：添加表单照它填好
+      const copy = copyId && can(me, "edit") ? (await events(bucket)).find((e) => e.id === copyId) ?? null : null;
+      return show({ ok: okText(url.searchParams), copy, error: copyId && !copy ? "要复制的那一场找不到了（可能刚被删了）" : "" });
+    }
     if (!can(me, "edit")) return readOnly();
     let form = {};
     try {
