@@ -29,7 +29,7 @@
 - [ ] **国内备用线路**（2026-11-19：有的国内网络按域名拦了 evotracker.cn，公告、赛程、地图轮换、全体玩家取不到；用户定经派圈助手的云环境取，代码、测试做完了，见 docs/底座.md"有的国内网络连不上 evotracker.cn"）。还要：
   - [ ] 用户：告诉合作者要用他的云环境（`evo_pc` 加了 `public`，只有直连失败的玩家走，公告 3 小时一次、赛程 15 分钟内不重下）；派圈仓库 d6da2e9、8dc53b7 还没推送
   - [ ] 用户：部署派圈的 `evo_pc`（先部署，再发 Evo）；部署完在本机 `python code/cloud_relay.py notice` 试通
-  - [ ] 隐私政策（`PRIVACY.md` 第一、三节，英文那段，官网 `site/privacy.html`）：原文给用户看过、点头再改
+  - [ ] 隐私政策 11-19 改好了（`PRIVACY.md`、官网 `site/privacy.html`，写的"0.6.2 起"）：官网随下一版上传；下一版不是 0.6.2 的话两处一起改版本号
   - [ ] 发版后：请那位校园网的玩家更新，看日志里"公告：现在有 … 条（evotracker.cn 连不上，经国内备用线路读的）"
 - [ ] **腾讯云 COS 被封（2026-10-31 发现）**：存储桶 `evo-dl-1312774356` 的所有 GET（含签名、含不存在的文件）都回 451 `UnavailableForLegalReasons`（"content illegal"），HEAD 还是 200。0.4.3、0.5.0 的一键更新会自动换 dl.evotracker.cn（看过 `updater._fetch`、`update_check.fetch_latest`）；官网国内下载已改成弹提示框（见 docs/底座.md）。
   - [ ] 用户（10-31 说晚点看）：腾讯云国内站主账号看站内信 / 安全管控中心的处置记录（封了哪个文件、什么原因），再定申诉还是换别家
