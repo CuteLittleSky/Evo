@@ -3,7 +3,7 @@
 // - 选手名用 Liquipedia 上的 ID（手动修正过的用修正的），战队名用 Liquipedia 上的队名（想用中文名，在选手库"改队名"），
 //   Liquipedia 页面名填好（资料页和选手库就连上了）
 // - 直播间：Liquipedia 资料 links 里有斗鱼、虎牙、B站直播间、抖音直播间地址的，自动填上（别人已经在用的房间不填）；
-//   没有的平台空着，标"直播间待填"——发布前要补上或者改成"不直播"（esports.js 的 checkPlayers 拦着）
+//   没有的平台空着，标"直播间待填"——不挡发布，发布时按"不直播"写进去、提醒一句（esports.js 的 build）
 // - 选手库里已经有的（同一个 Liquipedia 页面名，或者同一个名字）跳过，不加重复
 
 import { Refuse, randomHex, readDoc, updateDoc } from "./store.js";

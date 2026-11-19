@@ -290,7 +290,6 @@ export function checkPlayers(players) {
     if (names.has(p.name)) errors.push(`选手「${p.name}」写了两次（一个选手只能在一支队）`);
     names.set(p.name, p);
     const key = `${p.platform}-${p.room}`;
-    if (!p.platform) errors.push(`「${p.name}」的直播间还没填（在选手库里补上，或者平台选"不直播"）`);
     if (p.platform && p.platform !== NO_STREAM) {  // 不直播的没有房间、待填的还没有房间，都不查重复
       if (rooms.has(key)) errors.push(`${platformName(p.platform)} 房间 ${p.room} 写了两次（「${rooms.get(key).name}」和「${p.name}」）`);
       rooms.set(key, p);
@@ -322,9 +321,16 @@ export function checkEvents(events, knownTeams) {
 // players、events 是网页存的样子（按添加的顺序）；switches 是线上现在的平台开关；now 毫秒；
 // teams 是 {队名: {"logo": 文件名, ...}}（logos.js 的 manual/teams.json），只放这次用到、文件名对的队，一个都没有就不写这一项
 export function build(players, events, switches, now, teams = {}) {
-  players = players.map((p) => ({ ...p, room: normalRoom(p.platform, p.room) }));
+  // 直播间待填的（平台空着，比如从 Liquipedia 一键加进来的外国选手）不挡发布，这次按"不直播"发，提醒一句
+  // （2026-11-18 用户在线上先这样改的，11-19 拿回 git）
+  const pending = players.filter((p) => !p.platform).map((p) => p.name);
+  players = players.map((p) => (p.platform ? { ...p, room: normalRoom(p.platform, p.room) } : { ...p, platform: NO_STREAM, room: "" }));
   const errors = [];
   const notes = [];
+  if (pending.length) {
+    notes.push(`${pending.length} 位选手直播间还没填，这次按"不直播"发布（补上以后再发一次就行）：`
+      + pending.slice(0, 10).map((n) => `「${n}」`).join("、") + (pending.length > 10 ? " 等" : ""));
+  }
   const roster = checkPlayers(players);
   errors.push(...roster.errors);
   const schedule = checkEvents(events, roster.teams);

@@ -49,7 +49,7 @@ function trackedCard(me, tracked, idx, now) {
       <div class="row-meta">${lpLink(t.page, t.page)}${state}<span>${escape(t.addedBy)} 加的</span></div></div>
       ${editable ? `<div class="row-actions">${info.rosterAt && info.rosterPlayers ? `<details class="act"><summary class="btn">加进选手库</summary><div class="panel">
         <p class="small">把这场名单里的 ${info.rosterTeams} 支队、${info.rosterPlayers} 人加进选手库：选手名、队名、Liquipedia 页面名自动填好；
-          Liquipedia 上有斗鱼、虎牙、B站、抖音直播间的，直播间也填好，没有的标"直播间待填"（发布前要补上，或者改成"不直播"）。选手库里已经有的跳过。</p>
+          Liquipedia 上有斗鱼、虎牙、B站、抖音直播间的，直播间也填好，没有的标"直播间待填"（不补也能发布，发布时按"不直播"算）。选手库里已经有的跳过。</p>
         <form method="post" action="/liquipedia/to-roster"><input type="hidden" name="page" value="${escape(t.page)}">
           <button class="btn btn-primary btn-wide" type="submit">加进选手库</button></form></div></details>` : ""}
         <details class="act"><summary class="btn btn-danger">删除</summary><div class="panel">

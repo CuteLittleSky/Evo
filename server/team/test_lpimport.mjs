@@ -1,7 +1,7 @@
 // 从 Liquipedia 一键加进选手库的测试（2026-11-18）。由 test.mjs 运行。
 // 走一遍：选手资料里认出直播间（斗鱼、虎牙、B站直播间、抖音直播间；个人主页、短链、Twitch 不算）、收录的比赛上的按钮和权限、
 // 加进来的名字（手动修正过的用修正的）、队名、页面名、直播间自动填（别人用着的房间不填）、没有的标"直播间待填"、已经有的跳过、
-// 待填的拦着发布、补上直播间、战队页加现役选手、名单还没抓到时提示。
+// 待填的不挡发布（按"不直播"发、提醒一句）、补上直播间、战队页加现役选手、名单还没抓到时提示。
 
 import { hash, newToken, update } from "./auth.js";
 import { PLAYERS } from "./data.js";
@@ -81,18 +81,22 @@ check("直播间：B站直播间、抖音直播间自动填", find("YY_new").pla
 check("没有直播间的标待填（平台、房间号空着）", find("Chisu").platform === "" && find("Chisu").room === "" && find("Third").platform === "");
 check("选手库里已经连上的跳过", !players().some((x) => x.name === "Old"));
 r = await editor.get(r.location);
-check("选手库上提示加了几位、标着直播间待填", r.text.includes("从 Liquipedia 加进来 5 位（2 位直播间待填") && r.text.includes("直播间待填</span>")
-  && r.text.includes("「Chisu」的直播间还没填"));
+check("选手库上提示加了几位、标着直播间待填", r.text.includes("从 Liquipedia 加进来 5 位（2 位直播间待填") && r.text.includes("直播间待填</span>"));
 r = await editor.post("/liquipedia/to-roster", { page: EVENT });
 check("再点一次：都跳过", r.location === "/players?ok=fromlp&added=0&pending=0&skipped=6");
 r = await editor.post("/liquipedia/to-roster", { page: "No/Roster" });
 check("名单还没抓到 → 提示", r.status === 400 && r.text.includes("名单还没抓到"));
 
-// ---------- 待填的拦着发布、补上 ----------
+// ---------- 待填的不挡发布（按"不直播"发、提醒一句），补上 ----------
 await editor.post("/events/add", [["name", "LCQ"], ["type", "杯赛"], ["stage", ""], ["start", "2026-11-18T19:00"], ["end", "2026-11-18T22:00"],
   ["teams", "Wolves"], ["teams", "Team Falcons"]]);
 r = await admin.get("/publish");
-check("有直播间待填的 → 不能发布", r.text.includes("还不能发布") && r.text.includes("「Third」的直播间还没填"));
+check("有直播间待填的 → 照样能发布，提醒这次按不直播发", !r.text.includes("还不能发布") && r.text.includes("2 位选手直播间还没填，这次按&quot;不直播&quot;发布")
+  && r.text.includes("「Third」"));
+r = await admin.post("/publish/test");
+const sent = env.PUBLIC.json("esports_test.json");
+check("发出去的文件里待填的人写成不直播", r.location === "/publish?ok=test"
+  && sent.players.find((x) => x.name === "Third")?.platform === "none" && sent.players.find((x) => x.name === "Third").room === "");
 r = await editor.get("/players");
 check("待填的人编辑时平台先是请选平台", r.text.includes('<option value="" selected>请选平台</option>'));
 r = await editor.post(`/players/${find("Chisu").id}/save`, { name: "Chisu", team: "Wolves", platform: "", room: "" });
