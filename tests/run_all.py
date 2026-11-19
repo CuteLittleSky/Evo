@@ -45,6 +45,7 @@ import test_season_ranges
 import test_season_stats
 import test_seasons_page
 import test_share
+import test_side
 import test_simplified_pubs
 import test_sounds
 import test_source_run
@@ -95,7 +96,8 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "HLS 中转（看直播页播 B站：播放列表和 TS 接成一条流）": test_hls_relay,
          "最常用武器（认武器、计时、记进数据库、数据页）": test_weapons,
          "匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、Evo 的占用、连不上、面板）": test_telemetry,
-         "Evo 占用（读进程、现在的、对局中最近 10 局、右上角）": test_usage,
+         "Evo 占用（读进程、现在的、对局中最近 10 局、侧边栏）": test_usage,
+         "侧边栏（导航、展开 / 收起、主题、切换账号、内容区按自己的宽度排）": test_side,
          "测试工具（截屏、找 Evo、诊断信息、打包、看压缩包）": test_tester,
          "截屏（dxcam 建不起来时：双显卡的笔记本设成节能、改用 mss）": test_capture,
          "按赛季看（本赛季 / 上赛季：总览页、数据页、战绩页）": test_season_ranges,

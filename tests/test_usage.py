@@ -1,4 +1,4 @@
-"""Evo 占用（evo_usage.py、process_info.py 的 snapshot、右上角的「Evo 占用」，2026-11-15 用户要求）。不用截图，不开浏览器。
+"""Evo 占用（evo_usage.py、process_info.py 的 snapshot、侧边栏下面的「Evo 占用」，2026-11-15 用户要求）。不用截图，不开浏览器。
 
 - 读所有进程（不打开进程）：找得到自己，父进程、内存、CPU 时间对得上；子进程、孙进程都算，父进程号被别的进程用过的不算
 - 算法和任务管理器一样：CPU = 用过的 CPU 时间 ÷（经过的时间 × 逻辑处理器个数）；内存是专用工作集
@@ -6,7 +6,7 @@
   托盘程序记下的记录、窗口子进程（和它们下面的进程）分开算；真的开一个子进程，看得到它的内存和 CPU
 - 对局中的（MatchMeter）：一段之后记下了一局才算（靶场里的不算），不到 1 分钟不算；下一局开局时才存下上一局也算上一局；
   中途打开的窗口从 0 算；停止记录时补上；只留最近 10 局；写日志；量的时候出错不影响记录（不抛出去，这次不再量）
-- 右上角（2026-11-15 先做成总览页的卡片，当天用户要求改放到顶部那一行、原来派圈助手按钮的位置）：每一页都有，
+- 侧边栏下面（2026-11-15 先做成总览页的卡片，当天改放到顶部那一行；2026-11-19 改成侧边栏以后在导航下面）：每一页都有，
   按钮上是现在的 CPU、内存；点了展开两格（现在、最近 N 局对局中），没有局时写"打完一局以后显示"；
   /usage 回现在的数字，脚本每 2 秒问一次；没有 aria-live；总览页不再有那张卡片
 
@@ -223,16 +223,16 @@ def panel_checks(folder):
     client = panel_app.app.test_client()
 
     def top(url):
-        """这一页顶部那一行里的「Evo 占用」（按钮和展开的那一块）。"""
+        """这一页侧边栏里的「Evo 占用」（按钮和展开的那一块）。"""
         page = client.get(url).get_data(as_text=True)
         header = page.split("</header>")[0]
         return header[header.find('id="usage-top"'):] if 'id="usage-top"' in header else "", page
 
     box, html = top("/")
-    out["右上角有「Evo 占用」按钮：现在的 CPU、内存"] = (
+    out["侧边栏里有「Evo 占用」按钮：现在的 CPU、内存"] = (
         'id="usage-open"' in box and "Evo 占用" in box and 'data-usage="cpu"' in box and 'data-usage="memory"' in box)
-    out["按钮在导航后面、演示数据和主题按钮前面（原来派圈助手的位置）"] = (
-        html.find('class="nav"') < html.find('id="usage-top"') < html.find('id="theme-toggle"'))
+    out["按钮在导航下面、展开 / 收起按钮上面（2026-11-19 改成侧边栏）"] = (
+        html.find('class="nav"') < html.find('id="usage-top"') < html.find('id="side-toggle"'))
     out["展开的那一块：平时收着，按钮写着控制它、没展开"] = (
         'aria-expanded="false"' in box and 'aria-controls="usage-panel"' in box and 'id="usage-panel"' in box
         and re.search(r'id="usage-panel"[^>]*hidden', box) is not None)
@@ -265,7 +265,7 @@ def panel_checks(folder):
 
 
 def main():
-    print("Evo 占用（读进程、现在的、对局中最近 10 局、右上角）")
+    print("Evo 占用（读进程、现在的、对局中最近 10 局、侧边栏）")
     folder = storage.DB_PATH.parent / "usage-test"
     folder.mkdir(parents=True, exist_ok=True)
     checks = {**snapshot_checks(), **live_checks(), **meter_checks(folder), **panel_checks(folder)}

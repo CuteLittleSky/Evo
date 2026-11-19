@@ -408,7 +408,8 @@ def name_question():
 
 def page_switch():
     """这次是不是从另一个页面切过来的（看浏览器带来的"上一页"地址）。是的话播放切换动效：
-    内容从下往上淡入（enter），选中标签的底色从上一页的标签滑过来（shift = 从右边第几格过来，负数是左边）。
+    内容从下往上淡入（enter），侧边栏里选中那一项的底色从上一页的那一项滑过来（shift = 从下面第几项过来，负数是上面；
+    滑多远由 _side.html 里的脚本按实际位置量）。
     同一页里的操作（展开某一局、筛选、保存……）不播放。"""
     came_from = urlparse(request.referrer or "").path
     if came_from == request.path:

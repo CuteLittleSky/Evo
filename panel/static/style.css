@@ -19,6 +19,9 @@
   --select-bg: #151820;
   --nav-on-bg: #1B1F29;
   --nav-on-text: #FFFFFF;
+  --side-bg: #0A0C10;  /* 侧边栏：比页面底色深一点（--muted 字在上面 8.1:1） */
+  --side-on-bg: #1B1F29;  /* 侧边栏里选中那一项、按钮悬停的底色 */
+  --side-hover-bg: #12151B;  /* 侧边栏里没选中的那几项悬停 */
   --accent: #FF5A5A;
   --good: #7CE8B8;
   --bad: #FF8A8A;
@@ -61,6 +64,9 @@
   --select-bg: #FFFFFF;
   --nav-on-bg: #E7E7E2;
   --nav-on-text: #17191E;
+  --side-bg: #EFEFEB;  /* --muted 字在上面 5.1:1 */
+  --side-on-bg: #FFFFFF;
+  --side-hover-bg: #E7E7E2;
   --accent: #D93636;
   --good: #1E7A52;
   --bad: #B42828;
@@ -106,7 +112,9 @@ a { color: inherit; text-decoration: none; }
 .push-right { margin-left: auto; }
 
 .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 40px 48px; display: flex; flex-direction: column; gap: 20px; }
-.page { display: flex; flex-direction: column; gap: 20px; min-width: 0; }  /* 顶部导航以下的内容 */
+/* 侧边栏右边的内容。container：内容区窄了就变成一列这类规则按内容区自己的宽度算（@container page），
+   不按整个窗口算：侧边栏展开、收起，内容区的宽度不一样（2026-11-19 改成侧边栏时从 @media 换过来，数字 = 原来的窗口宽度 - 两边留白 80） */
+.page { display: flex; flex-direction: column; gap: 20px; min-width: 0; container: page / inline-size; }
 
 /* ---------- Evo 窗口：自定义标题栏和改大小的细条（只在 Evo 窗口里显示，见 app_window.py）---------- */
 .in-app { overflow: hidden; }
@@ -136,24 +144,68 @@ a { color: inherit; text-decoration: none; }
 .win-maximized .resize-edge, .win-maximized .window-frame { display: none; }
 .window-frame { position: fixed; inset: 0; border: 1px solid var(--border); pointer-events: none; z-index: 1002; }
 
-/* ---------- 顶部 ---------- */
-.top { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--accent); }
+/* ---------- 侧边栏（_side.html，2026-11-19 用户要求，代替原来顶部那一行）----------
+   固定在左边、不跟着内容滚动；body 留出它的宽度，内容在剩下的地方居中（最宽还是 1200）。
+   展开 216 像素：图标和文字一行；收起 96 像素（html 上的 side-collapsed）：图标在上、文字在下。
+   太矮放不下时侧边栏自己滚动（窗口最矮 640，收起、又有切换账号时才会） */
+:root { --side-w: 216px; --side-pad: 12px; }
+.side-collapsed { --side-w: 96px; --side-pad: 10px; }
+.side { position: fixed; top: 0; bottom: 0; left: 0; z-index: 20; width: var(--side-w); display: flex; flex-direction: column; gap: 12px;
+  padding: 14px var(--side-pad) 12px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none;
+  background: var(--side-bg); border-right: 1px solid var(--border); }
+.in-app .side { top: 34px; }
+body:has(.side) { padding-left: var(--side-w); }
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; padding: 0 2px 0 6px; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--accent); }
+.brand img { flex: none; }
 .brand-name { color: var(--text); font-weight: 700; font-size: 22px; letter-spacing: 3px; }
-.nav { display: flex; gap: 4px; flex-wrap: wrap; }
-.nav a { position: relative; isolation: isolate; padding: 8px 16px; border-radius: 4px; color: var(--muted); }
+/* 侧边栏里的小按钮（主题、人像、展开 / 收起）：没有边框，悬停时垫一块底色 */
+.side-btn { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 36px; min-height: 36px; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.side-btn:hover { background: var(--side-on-bg); color: var(--text); }
+.side-btn:focus-visible, .nav a:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: -2px; }
+.side-theme-bottom, .side-account { display: none; }
+.side .pill { align-self: flex-start; margin: 0 0 0 6px; padding: 4px 10px; font-size: 12px; }
+/* 切换账号（有 2 个以上账号时才有） */
+.account-switch { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0 2px 0 6px; }
+.account-label { color: var(--muted); font-size: 13px; }
+.account-switch select { flex: 1; min-width: 0; min-height: 36px; padding: 6px 10px; text-overflow: ellipsis; }
+/* 导航：一个 nav，"设置"被推到最下面 */
+.nav { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.nav a { position: relative; isolation: isolate; display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 12px;
+  border-radius: 6px; color: var(--muted); font-size: 15px; }
 .nav a:hover { color: var(--text); }
+.nav a:hover:not(.active) { background: var(--side-hover-bg); }
 .nav a.active { color: var(--nav-on-text); font-weight: 500; }
-/* 选中标签的底色：单独一块垫在文字下面，切换页面时滑到新标签（见下面的"动效"） */
-.nav-pill { position: absolute; inset: 0; z-index: -1; border-radius: 4px; background: var(--nav-on-bg); }
-.pill { margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 13px; }
+.nav a.nav-end { margin-top: auto; }
+.nav-icon { flex: none; }
+.nav-label { white-space: nowrap; }
+/* 选中那一项的底色：单独一块垫在文字下面，切换页面时滑到新的那一项（见下面的"动效"）；左边贴着窗口边的红色竖条也在它上面 */
+.nav-pill { position: absolute; inset: 0; z-index: -1; border-radius: 6px; background: var(--side-on-bg); }
+.nav-pill::before { content: ""; position: absolute; top: 9px; bottom: 9px; left: calc(-1 * var(--side-pad)); width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent); }
+[data-theme="light"] .nav-pill { box-shadow: 0 0 0 1px var(--border); }  /* 白色那块在浅灰的侧边栏上淡，加一圈细边 */
+.side-foot { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.side-toggle { justify-content: flex-start; padding: 0 12px; font-size: 14px; }
+.pill { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 13px; }
 .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .pill-warn { border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-text); }
 .icon-btn { margin-left: auto; width: 36px; height: 36px; border-radius: 4px; border: 1px solid var(--border); background: var(--card); color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.pill ~ .icon-btn { margin-left: 0; }  /* 有"演示数据"标签时，由标签负责把右边的东西推到最右 */
-/* 切换账号（有 2 个以上账号时才有）：和主题按钮一起靠右 */
-.account-switch { margin-left: auto; display: flex; align-items: center; gap: 8px; margin-top: 0; margin-bottom: 0; }
-.pill ~ .account-switch, .account-switch ~ .icon-btn { margin-left: 0; }
+
+/* 收起：只留图标，文字小一号放在图标下面；主题按钮挪到最下面，切换账号变成人像按钮 */
+.side-collapsed .side { gap: 10px; }
+.side-collapsed .side-head { justify-content: center; padding: 0; }
+.side-collapsed .brand-name, .side-collapsed .side-theme-top, .side-collapsed .account-switch, .side-collapsed .side-label { display: none; }
+.side-collapsed .side-theme-bottom, .side-collapsed .side-account { display: flex; }
+.side-collapsed .side-btn { width: 100%; }
+.side-collapsed .side .pill { align-self: center; margin: 0; padding: 4px 8px; }
+/* 一项 50 像素高：窗口最矮（640）、又有切换账号时，侧边栏还是一屏放得下 */
+.side-collapsed .nav { gap: 2px; }
+.side-collapsed .nav a { flex-direction: column; justify-content: center; gap: 2px; min-height: 50px; padding: 4px 2px; font-size: 12px; line-height: 1.4; }
+.side-collapsed .side-foot { gap: 6px; padding-top: 10px; }
+.side-collapsed .side-toggle { justify-content: center; padding: 0; }
+.side-collapsed .side-toggle svg { transform: scaleX(-1); }  /* « 变成 » */
+
 /* 派圈助手（2026-10-28 起在右上角，2026-11-15 挪到总览页"关注我"那一栏，按钮样子和那里的另外三个一样，见 .follow-partner）。
    .partner-btn 是设置页鸣谢卡片里那个描边的圆角按钮。窗口窄时只留"派圈助手"。弹窗里的小程序码总是白底（扫码要），深色主题也一样 */
 .partner-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px;
@@ -172,9 +224,7 @@ a { color: inherit; text-decoration: none; }
 .partner-qr { width: 232px; height: 232px; margin: 8px 0 4px; padding: 6px; border-radius: 12px; background: #FFFFFF; box-shadow: 0 0 0 1px var(--border); }
 .partner-qr img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .partner-body .dialog-actions { align-self: stretch; margin-top: 8px; }
-@media (max-width: 760px) { .partner-label { display: none; } }
-.account-label { color: var(--muted); font-size: 13px; }
-.account-switch select { max-width: 220px; min-height: 36px; padding: 6px 10px; text-overflow: ellipsis; }
+@container page (max-width: 680px) { .partner-label { display: none; } }
 [data-theme="dark"] .icon-moon, [data-theme="light"] .icon-sun { display: none; }
 
 /* ---------- 提示 ---------- */
@@ -806,17 +856,27 @@ table.stats-table { width: 100%; border-collapse: collapse; }
    动画都在 0.3 秒左右，不让你等。
    Windows 设置里关了"动画效果"时，全部不播放（最下面）。 */
 
-/* 1. 切换总览 / 战绩 / 数据 / 设置：选中标签的底色从上一页的标签滑过来，下面的内容从下往上淡入。
+/* 1. 切换总览 / 战绩 / 数据 / 设置：选中那一项的底色从上一页的那一项滑过来，右边的内容从下往上淡入。
       是不是"从另一页切过来"由服务器判断（panel_app.py 的 page_switch），同一页里的操作不播放。
+      滑多远由 _side.html 里的脚本量出来（--from）："设置"和上面几项隔着一段空白，不能按格数算。
       没用浏览器自带的跨页面过渡（View Transitions）：实测它让每次切换先多等约 0.3 秒，反而显得慢 */
 .page-enter { animation: evo-rise 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .nav-pill.slide { animation: evo-slide 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-@keyframes evo-slide { from { transform: translateX(calc(var(--shift) * (100% + 4px))); } }  /* 4px = 标签之间的间距 */
+@keyframes evo-slide { from { transform: translateY(var(--from, 0)); } }
+/* 侧边栏展开 / 收起（base.html 的 startViewTransition）：只在这时给侧边栏和内容起名字。
+   两张图都不缩放、贴着左上角（object-fit: none），外框的宽度和位置过渡、超出的部分裁掉：
+   侧边栏像拉开 / 合上，内容跟着左右挪，新旧两版淡入淡出 */
+.side-moving .side { view-transition-name: evo-side; }
+.side-moving .page { view-transition-name: evo-page; }
+::view-transition-group(evo-side), ::view-transition-group(evo-page) {
+  overflow: clip; animation-duration: 240ms; animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+::view-transition-old(evo-side), ::view-transition-new(evo-side), ::view-transition-old(evo-page), ::view-transition-new(evo-page) {
+  height: 100%; object-fit: none; object-position: left top; animation-duration: 240ms; }
 /* 切换主题：整页从旧颜色淡到新颜色（base.html 里的 startViewTransition），这期间单个元素不再各自变色 */
 .theme-fade * { transition: none !important; }
 
 /* 2. 鼠标悬停、按下 */
-.nav a, .seg a, .seg label, .btn, .icon-btn, .win-btn, .banner-warn, .source-link {
+.nav a, .side-btn, .seg a, .seg label, .btn, .icon-btn, .win-btn, .banner-warn, .source-link {
   transition: color 0.15s, background-color 0.15s, border-color 0.15s;
 }
 .matches tr.row { transition: background-color 0.12s; }
@@ -860,10 +920,10 @@ table.stats-table { width: 100%; border-collapse: collapse; }
   .progress-busy .progress-bar { left: 32%; }  /* 解压的横条不来回走，停在中间 */
 }
 
-@media (max-width: 1099px) {
+@container page (max-width: 1019px) {
   .stats-grid { grid-template-columns: 1fr; }  /* 数据页的卡片：两列放不下"你"那一列时变回一列 */
 }
-@media (max-width: 900px) {
+@container page (max-width: 820px) {
   .settings-layout { grid-template-columns: 1fr; }
   .ov-top, .ov-bottom { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -871,6 +931,8 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 }
 @media (max-width: 560px) {
   .wrap { padding: 16px 16px 40px; }
+}
+@container page (max-width: 528px) {
   .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .recent-row { grid-template-columns: auto 1fr auto auto; gap: 12px; }
   .recent-row .recent-kda { display: none; }
@@ -933,7 +995,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .radar-lock-panel .btn-primary { min-height: 40px; }
 .radar-lock-panel .btn-primary:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
 .radar-small .radar-lock-panel { margin: 8px; padding: 18px 16px; }
-@media (max-width: 760px) {
+@container page (max-width: 680px) {
   .radar-body { grid-template-columns: 1fr; }
 }
 
@@ -960,29 +1022,36 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .maps-ask-actions .btn { min-height: 36px; }
 .maps-ask-actions .btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
 .maps-ask-foot { margin-left: 6px; color: var(--muted); font-size: 12px; }
-@media (max-width: 760px) {
+@container page (max-width: 680px) {
   .maps-row { grid-template-columns: 1fr; }
 }
 
-/* ---------- 右上角：Evo 占用（_usage.html，2026-11-15 用户要求）----------
-   顶部那一行、原来派圈助手按钮的位置，每一页都有：描边的圆角按钮（和原来派圈助手的一样），把右边的东西推到最右；
-   窗口窄时不写"Evo 占用"。点了在按钮下面展开一块（右边和按钮对齐），两格：现在、最近 N 局对局中的平均，样子照"当前地图"的格子 */
-.usage-top { position: relative; margin-left: auto; }
-.usage-top ~ .pill, .usage-top ~ .account-switch, .usage-top ~ .icon-btn { margin-left: 0; }
-.usage-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 14px;
-  border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--text); font: inherit; font-size: 13px;
-  cursor: pointer; transition: border-color 0.15s; }
+/* ---------- 侧边栏下面：Evo 占用（_usage.html，2026-11-15 用户要求；2026-11-19 从顶部那一行挪到侧边栏）----------
+   一张小卡片：上面"Evo 占用"，下面现在的 CPU、内存；侧边栏收起时只剩图标和上下两个数字。
+   点了在侧边栏右边展开一块（下边和窗口底对齐），两格：现在、最近 N 局对局中的平均，样子照"当前地图"的格子。
+   展开的那一块用 fixed：侧边栏自己会滚动（overflow），absolute 会被它裁掉 */
+.usage-top { position: relative; }
+.usage-btn { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 100%; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); font: inherit; font-size: 13px;
+  text-align: left; cursor: pointer; transition: border-color 0.15s; }
 .usage-btn:hover, .usage-btn[aria-expanded="true"] { border-color: var(--muted); }
 .usage-btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
-.usage-btn-icon { flex: none; margin-left: -2px; color: var(--muted); }
-.usage-btn-label { margin-right: 4px; color: var(--muted); }
+.usage-btn-head { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.usage-btn-icon { flex: none; }
+.usage-btn-nums { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.usage-btn-pair { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
 .usage-btn-key { color: var(--muted); }
-/* 每 2 秒变：等宽数字，留出"10.0%""1234 MB"的宽度，按钮不跟着变宽变窄 */
+/* 每 2 秒变：等宽数字，留出"10.0%""1234 MB"的宽度，卡片不跟着数字变宽变窄 */
 .usage-btn-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.usage-btn-value[data-usage="cpu"] { min-width: 3.3em; margin-right: 4px; }
-.usage-btn-value[data-usage="memory"] { min-width: 4.3em; }
-.usage-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; display: flex; flex-direction: column; gap: 10px;
-  width: min(360px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border); border-radius: 8px;
+.usage-btn-value[data-usage="cpu"] { min-width: 3.3em; }
+/* 收起：图标在上，两个数字上下排，居中；"Evo 占用""CPU""内存"只留给读屏软件 */
+.side-collapsed .usage-btn { align-items: center; gap: 2px; padding: 8px 4px; line-height: 1.3; text-align: center; }
+.side-collapsed .usage-btn-nums { flex-direction: column; align-items: center; gap: 0; }
+.side-collapsed .usage-btn-value[data-usage="cpu"] { min-width: 0; }
+.side-collapsed .usage-btn-label, .side-collapsed .usage-btn-key {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.usage-panel { position: fixed; left: calc(var(--side-w) + 8px); bottom: 12px; z-index: 30; display: flex; flex-direction: column; gap: 10px;
+  width: min(360px, calc(100vw - var(--side-w) - 24px)); padding: 16px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--card); box-shadow: 0 16px 48px rgb(0 0 0 / 0.45); }
 [data-theme="light"] .usage-panel { box-shadow: 0 16px 40px rgb(0 0 0 / 0.12); }
 .usage-panel[hidden] { display: none; }
@@ -998,9 +1067,6 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .usage-value[data-usage="cpu"] { min-width: 4.2em; }
 .usage-value[data-usage="memory"] { min-width: 4.6em; }
 .usage-foot { margin-top: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-@media (max-width: 760px) {
-  .usage-btn-label { display: none; }
-}
 
 /* ---------- 赛季页：录入历史赛季数据（panel_seasons.py、seasons.html、_season_import.html） ---------- */
 .season-mode { padding: 8px 24px; }
@@ -1013,7 +1079,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .season-section > .card-head { margin-bottom: 0; }
 .season-help { margin: 0; }
 .season-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-@media (max-width: 1100px) { .season-cards { grid-template-columns: minmax(0, 1fr); } }
+@container page (max-width: 1020px) { .season-cards { grid-template-columns: minmax(0, 1fr); } }
 .season-card { padding: 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .season-card.has-issues { border-color: var(--warn-border); }
 .season-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -1028,7 +1094,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .season-detail .edit { flex: 1 1 100%; }
 .season-empty { margin: 0; color: var(--muted); }
 .season-players { margin: 12px 0 0; }
-@media (max-width: 760px) { .season-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container page (max-width: 680px) { .season-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
 /* 和队友一起的 RP 走势（数据页"常一起玩的队友"，2026-11-01；_curves.html、panel_app.add_sparks / curve_chart）：
    每行后面的小曲线（各自的比例，只看起伏）+ 完整表格页上面的大图。线 2px（小曲线 1.5px），终点圆点外面一圈卡片底色；颜色跟着人走（--series-0…4），
@@ -1092,7 +1158,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .es-section > h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .es-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .es-live-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-@media (max-width: 900px) { .es-live-grid { grid-template-columns: minmax(0, 1fr); } }
+@container page (max-width: 820px) { .es-live-grid { grid-template-columns: minmax(0, 1fr); } }
 .es-card { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .es-card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .es-live-tag { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 600;
@@ -1125,7 +1191,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .es-row-btn { padding: 6px 12px; font-size: 13px; }  /* 即将开始的"看名单和直播"：描边按钮，比红色的"看直播"低一级 */
 .es-row-btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
 .es-ended { color: var(--muted); }  /* 最近结束：整行灰色（--muted 在卡片上深色 7:1、浅色 5.9:1） */
-@media (max-width: 760px) {
+@container page (max-width: 680px) {
   .es-row { grid-template-columns: 96px minmax(0, 1fr); }
   .es-row-teams, .es-row-note { grid-column: 2; text-align: left; }
 }

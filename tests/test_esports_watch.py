@@ -1,7 +1,7 @@
 """Evo 窗口的看直播页（panel_esports.py、esports_watch.html）。不联网：赛事文件是临时文件夹里的一个文件，
 查开播状态、Apex 在不在运行都换成假的。页面上的脚本（点亮在播的、切换选手、放播放器）在浏览器里看，这里测服务器给的东西。
 
-- 页面：占满窗口、没有顶部导航，有"← 赛事"；赛事名、阶段；正在进行的写"进行中"，没开始的写什么时候开始；
+- 页面：占满窗口、没有侧边栏，有"← 赛事"；赛事名、阶段；正在进行的写"进行中"，没开始的写什么时候开始；
   三个去平台的按钮、同队视角、延迟的说明、Apex 提示条（先藏着）；没有"上一位 / 下一位"
 - 右边：每支队一栏（按赛程里的顺序，队标的位置是队名第一个字），每位选手一行，写着平台，先都不能点；
   "全部 N 支 / 有人在播的"；最下面写每 60 秒刷新
@@ -10,7 +10,7 @@
 - 开播状态接口：只查这场赛事名单里的人；50 秒内再问不重查；带上平台开关；头像只要 https 的；
   没有这场赛事回 404（页面据此回赛事页）
 - Apex 在不在运行的接口
-- 别的页面照旧有顶部导航和主题按钮
+- 别的页面照旧有侧边栏（导航和主题按钮）
 
 运行：python tests/test_esports_watch.py
 """
@@ -81,8 +81,9 @@ def main():
     raw = client.get("/esports/live/watch").get_data(as_text=True)
     words = text(raw)
     head = re.findall(r'<div class="watch-head">.*?</div>', raw, re.S)[0]
-    out["占满窗口、没有顶部导航和主题按钮，有\"← 赛事\"能回去；写着赛事名、阶段和\"进行中\""] = (
-        '<nav class="nav"' not in raw and 'id="theme-toggle"' not in raw and 'class="wrap watch-wrap"' in raw
+    out["占满窗口、没有侧边栏（导航、主题按钮），有\"← 赛事\"能回去；写着赛事名、阶段和\"进行中\""] = (
+        '<nav class="nav"' not in raw and 'id="theme-toggle"' not in raw and 'id="side"' not in raw
+        and 'class="wrap watch-wrap"' in raw
         and 'href="/esports"' in head and text(head).split() == ["赛事", "职业联赛", "第", "3", "周", "B", "组对", "C", "组", "进行中"]
         and "es-live-tag" in head)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)
@@ -241,7 +242,7 @@ def main():
         and count["events"]["live"]["total"] == 8 and gone == 404)
     serve(folder)
     home = client.get("/esports").get_data(as_text=True)
-    out["别的页面照旧有顶部导航和主题按钮"] = '<nav class="nav"' in home and 'id="theme-toggle"' in home
+    out["别的页面照旧有侧边栏（导航和主题按钮）"] = '<nav class="nav"' in home and 'id="theme-toggle"' in home and 'id="side"' in home
     return report(out)
 
 

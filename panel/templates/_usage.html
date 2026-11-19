@@ -1,8 +1,8 @@
-{# 右上角的「Evo 占用」（evo_usage.py）：Evo 自己占多少 CPU、内存，算法和任务管理器一样（CPU 按整台电脑算，内存是专用工作集）。
-   2026-11-15 用户要求：先做成总览页的一张卡片，当天改放到顶部那一行、原来派圈助手按钮的位置，每一页都有。
-   - 按钮：现在的 CPU、内存（Evo 全部进程合计）。页面开着时每 2 秒问一次 /usage 换上新的数字（base.html 的脚本；
-     窗口最小化时不问）。第一次打开时 CPU 要等一秒才有，先写"—"
-   - 点了在按钮下面展开一块（不是弹窗，不挡页面；再点、点外面、Esc 收起）：
+{# 侧边栏下面的「Evo 占用」（evo_usage.py）：Evo 自己占多少 CPU、内存，算法和任务管理器一样（CPU 按整台电脑算，内存是专用工作集）。
+   2026-11-15 用户要求：先做成总览页的一张卡片，当天改放到顶部那一行、原来派圈助手按钮的位置；2026-11-19 改成侧边栏以后放在侧边栏下面（_side.html），每一页都有。
+   - 按钮：一张小卡片，上面"Evo 占用"，下面现在的 CPU、内存（Evo 全部进程合计）；侧边栏收起时只剩图标和两个数字（文字留给读屏软件）。
+     页面开着时每 2 秒问一次 /usage 换上新的数字（base.html 的脚本；窗口最小化时不问）。第一次打开时 CPU 要等一秒才有，先写"—"
+   - 点了在侧边栏右边展开一块（不是弹窗，不挡导航；再点、点外面、Esc 收起）：
      现在：合计，下面分开写托盘、窗口（含 WebView2）、记录；
      最近 N 局对局中：每局从认出自己的界面到这一局结束，Evo 平均占多少（最多 10 局，记录子进程记的），
      下面写这几局里内存最高到多少（原来还写着"同时整台电脑 CPU 58%"，11-15 用户觉得看不懂，删掉了）
@@ -11,10 +11,14 @@
 {% set usage = usage_card() %}
 <div class="usage-top" id="usage-top">
   <button type="button" class="usage-btn" id="usage-open" aria-expanded="false" aria-controls="usage-panel">
-    <svg class="usage-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg>
-    <span class="usage-btn-label">Evo 占用</span>
-    <span class="usage-btn-key">CPU</span><span class="usage-btn-value num" data-usage="cpu">{{ usage.now.cpu }}</span>
-    <span class="usage-btn-key">内存</span><span class="usage-btn-value num" data-usage="memory">{{ usage.now.memory }}</span>
+    <span class="usage-btn-head">
+      <svg class="usage-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg>
+      <span class="usage-btn-label">Evo 占用</span>
+    </span>
+    <span class="usage-btn-nums">
+      <span class="usage-btn-pair"><span class="usage-btn-key">CPU</span><span class="usage-btn-value num" data-usage="cpu">{{ usage.now.cpu }}</span></span>
+      <span class="usage-btn-pair"><span class="usage-btn-key">内存</span><span class="usage-btn-value num" data-usage="memory">{{ usage.now.memory }}</span></span>
+    </span>
   </button>
   <div class="usage-panel" id="usage-panel" role="region" aria-labelledby="h-usage" hidden>
     <div class="usage-panel-head">
