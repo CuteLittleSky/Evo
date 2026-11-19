@@ -84,7 +84,7 @@ def main():
     out["占满窗口、没有侧边栏（导航、主题按钮），有\"← 赛事\"能回去；写着赛事名、阶段和\"进行中\""] = (
         '<nav class="nav"' not in raw and 'id="theme-toggle"' not in raw and 'id="side"' not in raw
         and 'class="wrap watch-wrap"' in raw
-        and 'href="/esports"' in head and text(head).split() == ["赛事", "职业联赛", "第", "3", "周", "B", "组对", "C", "组", "进行中"]
+        and 'href="/esports"' in head and text(head).split() == ["电竞", "职业联赛", "第", "3", "周", "B", "组对", "C", "组", "进行中"]
         and "es-live-tag" in head)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)
     start = NOW + timedelta(days=1)

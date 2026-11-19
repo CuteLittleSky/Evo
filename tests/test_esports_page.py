@@ -1,6 +1,6 @@
 """Evo 窗口的"赛事"页面（panel_esports.py、esports.html）。不联网：赛事文件是临时文件夹里的一个文件，查开播状态换成假的。
 
-- 导航里有"赛事"，在"赛季"和"设置"之间；这一页打开时"赛事"是选中的
+- 导航里有"电竞"（这一页的名字），在"赛季"和"设置"之间；这一页打开时"电竞"是选中的
 - 三块：正在进行（卡片：进行中、类型、开始时间、名称、阶段和队伍数、"看直播"按钮）、即将开始（先开始的在前，
   每行有"看名单和直播"按钮：没开始也能点进去）、最近结束（"已结束"，不能点，超过 7 天的不显示）；最下面一行小字
 - 没有正在进行的：写下一场什么时候开始；即将开始、最近结束没有就不显示那一块
@@ -80,7 +80,7 @@ def main():
     raw = client.get("/esports").get_data(as_text=True)
     nav = re.findall(r'<nav class="nav".*?</nav>', raw, re.S)[0]
     out["导航里有\"赛事\"，在\"赛季\"和\"设置\"之间，这一页打开时是选中的"] = (
-        text(nav).split() == ["总览", "战绩", "数据", "赛季", "赛事", "设置"]
+        text(nav).split() == ["总览", "战绩", "数据", "赛季", "电竞", "设置"]
         and 'class="active"' in re.findall(r'<a href="/esports"[^>]*>', nav)[0])
     live, upcoming, recent = (section(raw, h) for h in ("正在进行", "即将开始", "最近结束"))
     cards = re.findall(r"<article.*?</article>", live, re.S)

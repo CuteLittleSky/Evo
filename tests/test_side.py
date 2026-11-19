@@ -24,7 +24,7 @@ import storage
 
 ROOT = Path(__file__).resolve().parent.parent
 FOLDER = Path(tempfile.mkdtemp(prefix="evo-side-", dir=storage.DB_PATH.parent.parent))
-PAGES = {"/": "总览", "/matches": "战绩", "/stats": "数据", "/seasons": "赛季", "/esports": "赛事", "/settings": "设置"}
+PAGES = {"/": "总览", "/matches": "战绩", "/stats": "数据", "/seasons": "赛季", "/esports": "电竞", "/settings": "设置"}
 
 
 def side_of(html):
