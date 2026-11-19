@@ -220,7 +220,15 @@ details.note > summary .help { color: inherit; opacity: .85; }
 }
 .bulk-bar { position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 16px;
   background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 -6px 18px rgba(0,0,0,.18); }
+/* 一键配队徽：勾选、队名、猜的那张、换一张 */
+.match-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 0; border-top: 1px solid var(--row-border); }
+.match-row:first-child { border-top: 0; padding-top: 0; }
+.match-pick { display: flex; align-items: center; gap: 10px; min-height: 44px; flex: 1 1 180px; min-width: 0; cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.match-pick input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--accent); }
+.match-logo { display: flex; align-items: center; gap: 10px; flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.match-row > a { min-height: 44px; display: inline-flex; align-items: center; }
 .banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.links { display: flex; flex-wrap: wrap; gap: 4px 20px; }
 .banner-text { flex: 1 1 240px; min-width: 0; }
 @media (min-width: 720px) {
   .fold > summary { padding: 0 24px; }

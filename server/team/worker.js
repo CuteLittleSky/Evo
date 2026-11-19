@@ -31,8 +31,8 @@ import {
 import { preview, publish, setPlatform, unpublished } from "./publish.js";
 import { liquipediaPage } from "./pages_lp.js";
 import { addFromLiquipedia, eventEntries, teamEntries } from "./lpimport.js";
-import { logoHref, logoPage } from "./pages_logos.js";
-import { LOGO_FILE, library, libraryKey, pickLogo, removeLogo, search, suggest, teamLogos, uploadLogo } from "./logos.js";
+import { logoHref, logoPage, logosPage } from "./pages_logos.js";
+import { LOGO_FILE, autoMatches, library, libraryKey, pickLogo, pickMany, removeLogo, search, suggest, teamLogos, uploadLogo } from "./logos.js";
 import { proHref, proPage, prosPage, teamProfilePage } from "./pages_pros.js";
 import { merged, overrides, removeOverride, resolveConflict, setOverride } from "./overrides.js";
 import {
@@ -118,6 +118,10 @@ function okText(params) {
     return `从 Liquipedia 加进来 ${count("added")} 位${count("pending") ? `（${count("pending")} 位直播间待填：在下面补上，或者平台选"不直播"）` : ""}`
       + `${count("skipped") ? `，跳过 ${count("skipped")} 位（选手库里已经有了）` : ""}`;
   }
+  if (params.get("ok") === "logos") {
+    return `配好了 ${count("n")} 支队的队徽：下次发布 Evo 就能看到`
+      + `${count("skipped") ? `（${count("skipped")} 支在你打开页面以后别人已经配了，没盖掉）` : ""}`;
+  }
   if (params.get("ok") === "rooms") {
     const n = count("n");
     return n ? `保存好了：改了 ${n} 位的直播间` : "没有改动（和原来一样，没存）";
@@ -190,6 +194,29 @@ export async function handle(request, env, now = Date.now()) {
   if (path === "/log" && method === "GET") return respond(logPage(me, await recentLog(bucket), now));
   const notFound = () => respond(messagePage("没有这个页面", "地址可能写错了。", me), { status: 404 });
   const readOnly = () => respond(messagePage("不能改", "只读的身份只能看，要改请找管理员。", me), { status: 403 });
+
+  // ---------- 一键配队徽（11-19） ----------
+  if (path === "/logos" || path === "/logos/bulk") {
+    const show = async (options = {}, status = 200) => {
+      const [items, logos, playerItems, changed] = await Promise.all([library(bucket), teamLogos(bucket), players(bucket), unpublished(env, now)]);
+      return respond(logosPage(me, { found: autoMatches([...teamsOf(playerItems).keys()], logos, items), libraryCount: items.length,
+        banner: publishBanner(me, changed, now), ...options }), { status });
+    };
+    if (method === "GET") return path === "/logos" ? show({ ok: okText(url.searchParams) }) : notFound();
+    if (path !== "/logos/bulk") return notFound();
+    if (!can(me, "edit")) return readOnly();
+    try {
+      const form = await readFields(request);
+      const picks = Object.keys(form).filter((k) => /^use_\d+$/.test(k) && form[k] === "1")
+        .map((k) => ({ team: form[`team_${k.slice(4)}`] ?? "", file: form[`file_${k.slice(4)}`] ?? "" }));
+      if (!picks.length) throw new Refuse("一支都没勾：勾上要用的，再点\"用勾上的这些\"");
+      const result = await pickMany(env, me, picks, now);
+      return redirect(`/logos?ok=logos&n=${result.done}&skipped=${result.skipped}`);
+    } catch (error) {
+      if (!(error instanceof Refuse)) throw error;
+      return show({ error: error.message }, 400);
+    }
+  }
 
   // ---------- 队徽 ----------
   if (path.startsWith("/logo-library/")) {  // 队标库里的图（不公开的存储桶，登录了才看得到）

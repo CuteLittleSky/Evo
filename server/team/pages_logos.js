@@ -26,6 +26,37 @@ function grid(me, team, items) {
   </li>`).join("")}</ul>`;
 }
 
+// ---------- 一键配队徽（2026-11-19）----------
+// found：logos.js 的 autoMatches（matches 猜到的、none 没猜到的、done 已经有队徽的）
+export function logosPage(me, { found, libraryCount, error = "", ok = "", banner = "" }) {
+  const editable = can(me, "edit");
+  const row = (m, i) => `<li class="match-row">
+    <label class="match-pick"><input type="checkbox" name="use_${i}" value="1"${m.exact ? " checked" : ""}${editable ? "" : " disabled"}>
+      <span class="match-team">${escape(m.team)}</span></label>
+    <input type="hidden" name="team_${i}" value="${escape(m.team)}"><input type="hidden" name="file_${i}" value="${escape(m.item.file)}">
+    <span class="match-logo">${logoBox(`/logo-library/${m.item.file}`, m.item.name)}
+      <span class="small">${escape(m.item.name)}<br>${m.exact ? '<span class="badge badge-live">名字一样</span>' : '<span class="badge badge-warn">名字有点像，看一眼</span>'}</span></span>
+    <a class="small" href="${logoHref(m.team)}">换一张</a>
+  </li>`;
+  const exact = found.matches.filter((m) => m.exact).length;
+  return layout({ title: "一键配队徽", me, current: "players", banner, body: `
+<p class="small"><a href="/players">‹ 选手库</a></p>
+<div class="stack"><h1>一键配队徽</h1>
+  <p class="muted">按队名从派圈的队标库（${libraryCount} 支队）里，给还没有队徽的队各猜一张。名字一样的已经勾上；名字只是有点像的没勾，看一眼对了再勾。
+    点"用勾上的这些"一次配好，下次发布 Evo 就能看到。猜错了点"换一张"自己挑，或者上传。</p></div>
+${notes({ error, ok })}
+${found.matches.length ? `<form class="card stack" method="post" action="/logos/bulk">
+  <h2>猜到的（${found.matches.length} 支，${exact} 支名字一样）</h2>
+  <ul class="list match-list">${found.matches.map(row).join("")}</ul>
+  ${editable ? `<div class="bulk-bar"><button class="btn btn-primary" type="submit">用勾上的这些</button></div>` : ""}
+</form>` : `<p class="muted">${libraryCount ? "没有猜得到的了。" : "队标库还没传上来。"}</p>`}
+${found.none.length ? `<section class="card stack"><h2>队标库里没猜到的（${found.none.length} 支）</h2>
+  <p class="small muted">点进去搜队标库（英文队名），或者自己上传。</p>
+  <ul class="plain">${found.none.map((t) => `<li><a href="${logoHref(t)}">${escape(t)}</a></li>`).join("")}</ul></section>` : ""}
+${found.done.length ? `<details class="card fold"><summary class="fold-head"><span>已经有队徽的（${found.done.length} 支）</span></summary>
+  <div><ul class="plain">${found.done.map((t) => `<li><a href="${logoHref(t)}">${escape(t)}</a></li>`).join("")}</ul></div></details>` : ""}` });
+}
+
 export function logoPage(me, { team, current, suggestions, results, q, libraryCount, now, error = "", ok = "" }) {
   const editable = can(me, "edit");
   const now_ = current ? `<div class="title-row">${logoBox(PUBLIC_LOGO_URL + current.logo, team, "big")}

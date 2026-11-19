@@ -174,7 +174,7 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
   return layout({ title: "选手库", me, current: "players", banner, body: `
 <div class="stack"><h1>选手库</h1>
   <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p>
-  ${editable && items.length ? '<p><a href="/players/rooms">在一张表里批量填直播间 ›</a></p>' : ""}</div>
+  ${editable && items.length ? '<p class="links"><a href="/players/rooms">在一张表里批量填直播间 ›</a><a href="/logos">一键配队徽 ›</a></p>' : ""}</div>
 ${notes({ error, ok })}
 ${noteList("error", `发布前要改好（${problems.length} 处）：`, problems)}
 ${pendingRooms(items)}

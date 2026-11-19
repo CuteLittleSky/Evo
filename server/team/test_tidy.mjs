@@ -242,3 +242,48 @@ r = await editor.post("/players/rooms", { p_b0000001: "", r_b0000001: "", v_b000
 check("已经填了的人不能改回待填", r.status === 400 && r.text.includes("「Chisu」：选一个平台"));
 r = await editor.post("/players/rooms", { all: "1" });
 check("什么都没改 → 说没有改动", r.location === "/players/rooms?ok=rooms&n=0&all=1");
+
+// ---------- 一键配队徽 ----------
+{
+  const png = (w, h) => {
+    const b = new Uint8Array(64);
+    b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+    new DataView(b.buffer).setUint32(16, w);
+    new DataView(b.buffer).setUint32(20, h);
+    return b;
+  };
+  const lib = [{ page: "HABNW", name: "HABNW", file: "1111111111111111.png", w: 64, h: 64 },
+               { page: "Spark_Esports", name: "星火 Esports", file: "2222222222222222.png", w: 64, h: 64 },
+               { page: "ARAM", name: "ARAM", file: "3333333333333333.png", w: 64, h: 64 }];
+  await env.DATA.put("logo-library/index.json", JSON.stringify({ version: 1, items: lib }));
+  for (const x of lib) await env.DATA.put(`logo-library/${x.file}`, png(64, 64));
+  await env.DATA.put("manual/teams.json", JSON.stringify({ items: {} }));
+}
+r = await editor.get("/players");
+check("选手库上有一键配队徽的链接", r.text.includes('href="/logos"'));
+r = await editor.get("/logos");
+check("一键配队徽：名字一样的先勾上，有点像的不勾，没猜到的列出来", r.status === 200
+  && /name="use_\d+" value="1" checked>\s*<span class="match-team">HABNW/.test(r.text)
+  && /name="use_\d+" value="1">\s*<span class="match-team">星火/.test(r.text) && r.text.includes("名字有点像，看一眼")
+  && r.text.includes("队标库里没猜到的（") && r.text.includes(">ASC3NT</a>"));
+r = await viewer.get("/logos");
+check("只读的能看、不能勾", r.text.includes(" disabled") && !r.text.includes(`type="submit">用勾上的这些`));
+r = await viewer.post("/logos/bulk", { use_0: "1", team_0: "HABNW", file_0: "1111111111111111.png" });
+check("只读的不能配", r.status === 403);
+r = await editor.post("/logos/bulk", { team_0: "HABNW", file_0: "1111111111111111.png" });
+check("一支都没勾 → 提示", r.status === 400 && r.text.includes("一支都没勾"));
+r = await editor.post("/logos/bulk", { use_0: "1", team_0: "HABNW", file_0: "1111111111111111.png", use_1: "1", team_1: "没有的队", file_1: "3333333333333333.png" });
+check("有一支不对 → 整批不配", r.status === 400 && r.text.includes("选手库里没有叫「没有的队」的队") && !env.DATA.json("manual/teams.json").items.HABNW);
+await env.DATA.put("manual/teams.json", JSON.stringify({ items: { ARAM: { logo: "9999999999999999.png", source: "上传的", by: "黄指导", at: now } } }));
+r = await editor.post("/logos/bulk", { use_0: "1", team_0: "HABNW", file_0: "1111111111111111.png", use_1: "1", team_1: "星火", file_1: "2222222222222222.png",
+  use_2: "1", team_2: "ARAM", file_2: "3333333333333333.png", team_3: "ASC3NT", file_3: "3333333333333333.png" });
+const logosNow = env.DATA.json("manual/teams.json").items;
+check("配好勾上的两支；别人刚配了的不盖掉；没勾的不配", r.location === "/logos?ok=logos&n=2&skipped=1"
+  && logosNow.HABNW?.logo === "1111111111111111.png" && logosNow.星火?.source === "派圈的队标库：星火 Esports"
+  && logosNow.ARAM.logo === "9999999999999999.png" && !logosNow.ASC3NT);
+check("图复制到公开存储桶（永久缓存）", env.PUBLIC.objects.has("esports/logos/1111111111111111.png")
+  && env.PUBLIC.objects.get("esports/logos/2222222222222222.png").options.httpMetadata.cacheControl.includes("immutable"));
+check("改动记录一条写完", logTexts()[0] === "一键配队徽（2 支，派圈的队标库）：HABNW、星火");
+r = await editor.get(r.location);
+check("回来：说配了几支、跳过几支，配好的挪到已经有队徽的", r.text.includes("配好了 2 支队的队徽") && r.text.includes("1 支在你打开页面以后别人已经配了")
+  && r.text.includes("已经有队徽的（3 支）"));

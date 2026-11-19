@@ -135,6 +135,57 @@ export function suggest(team, items, limit = 6) {
   return [...exact, ...near].slice(0, limit);
 }
 
+// ---------- 一键配队徽（2026-11-19 用户同意：40 支队只有 7 支有队徽，每支都要点进去挑）----------
+
+// 还没有队徽的队，各猜一张：名字一样（不管大小写、空格、符号）的算"准"，页面上先勾上；只是有点像的不勾
+export function autoMatches(teamNames, logos, items) {
+  const out = { matches: [], none: [], done: [] };
+  for (const team of teamNames) {
+    if (logos[team]?.logo) {
+      out.done.push(team);
+      continue;
+    }
+    const [best] = suggest(team, items, 1);
+    if (!best) out.none.push(team);
+    else out.matches.push({ team, item: best, exact: nameKey(best.name) === nameKey(team) || nameKey(best.page) === nameKey(team) });
+  }
+  return out;
+}
+
+// 一次配好勾上的几支：picks 是 [{team, file}]。队名、图都先核对，有一个不对整批不配；
+// 打开页面以后别人已经给它配了的跳过（不盖掉）。R2 的读写算"内部请求"（免费版一次 1000 个），一支队 4 个，40 支也够
+export async function pickMany(env, by, picks, now) {
+  const [items, roster, current] = await Promise.all([library(env.DATA), players(env.DATA), teamLogos(env.DATA)]);
+  const known = teamsOf(roster);
+  const errors = [];
+  const todo = [];
+  for (const pick of picks) {
+    const team = squash(pick.team);
+    const item = items.find((x) => x.file === pick.file);
+    if (!known.has(team)) errors.push(`选手库里没有叫「${team}」的队（可能刚改了名）`);
+    else if (!item) errors.push(`「${team}」：队标库里没有这张图`);
+    else if (!current[team]?.logo && !todo.some((x) => x.team === team)) todo.push({ team, item });
+  }
+  if (errors.length) throw new Refuse(`没有配，有 ${errors.length} 处不对：\n${errors.join("\n")}`);
+  for (const { item } of todo) {
+    const object = await env.DATA.get(libraryKey(item.file));
+    if (!object) throw new Refuse(`队标库里的「${item.name}」找不到了，请告诉管理员`);
+    const bytes = await object.arrayBuffer();
+    await putPublic(env, item.file, bytes, checkImage(bytes).type);
+  }
+  const done = await updateDoc(env.DATA, TEAMS, emptyTeams, (data) => {
+    const set = [];
+    for (const { team, item } of todo) {
+      if (data.items[team]?.logo) continue;
+      data.items[team] = { logo: item.file, source: `派圈的队标库：${item.name}`, by: by.name, at: now };
+      set.push(team);
+    }
+    return set;
+  });
+  if (done.length) await writeLog(env.DATA, by, now, `一键配队徽（${done.length} 支，派圈的队标库）：${done.join("、")}`);
+  return { done: done.length, skipped: picks.length - done.length };
+}
+
 export function search(q, items, limit = 60) {
   const key = nameKey(q);
   return key ? items.filter((x) => nameKey(x.name).includes(key) || nameKey(x.page).includes(key)).slice(0, limit) : [];
