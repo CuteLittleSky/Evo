@@ -1281,7 +1281,22 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 /* 播放器：16:9；窗口很大时不让它高过窗口（否则要滚动才看得到下面的按钮） */
 .watch-stage-box { position: relative; flex: none; width: 100%; max-width: max(480px, calc((100vh - 300px) * 16 / 9)); aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
   background: #161A22; color: #ECEEF2; --pf-douyu: #FF7A2F; --pf-huya: #F2B705; --pf-bilibili: #FB7299; --pf-douyin: #25D9E8; }
-.watch-screen { position: absolute; inset: 0; }
+.watch-screen { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; background: #000000; }
+/* 多屏同看：2 格并排（整块变成 32:9，每格还是 16:9），4 格是 2×2。选中的那一格有一圈红边、有声音 */
+.watch-stage-box.n2, .watch-stage-box.n4 { max-width: none; }
+.watch-stage-box.n2 { aspect-ratio: 32 / 9; }
+.watch-stage-box.n2 .watch-screen, .watch-stage-box.n4 .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.watch-cell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #0E1016; color: #ECEEF2; }
+.watch-cell-screen { position: absolute; inset: 0; }
+.watch-stage-box.multi .watch-cell.focus::after { content: ""; position: absolute; inset: 0; border: 2px solid #FF5A5A; pointer-events: none; z-index: 2; }
+.watch-cell-tools { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; gap: 4px; }
+.watch-cell-btn { background: rgb(8 9 12 / 0.72); }
+.watch-cell-btn[hidden] { display: none; }
+.watch-stage-box.multi .watch-msg-title { font-size: 14px; }
+.watch-stage-box.multi .watch-msg { padding: 12px; gap: 8px; }
+.watch-layout { flex: none; margin-left: auto; padding: 2px; }
+.watch-mark + .watch-layout { margin-left: 0; }
+.watch-layout button { flex: none; height: 26px; padding: 0 10px; font-size: 12px; }
 .watch-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
 .watch-chips { position: absolute; top: 12px; left: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; pointer-events: none; }
 .watch-chip-live, .watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; }
@@ -1330,10 +1345,12 @@ table.stats-table { width: 100%; border-collapse: collapse; }
    - 播放器缩成居中的 16:9 一块，控制条和标记都压在画面上，不放在黑边里
    - 黑边不用纯黑（#050506，看起来一样）、视频不完全不透明（0.999）：都是为了不让它走"直接交给显卡"那条路 */
 .watch-stage-box:fullscreen { max-width: none; width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; background: #050506; }
-.watch-stage-box:fullscreen .watch-screen { display: flex; align-items: center; justify-content: center; }
-.watch-stage-box:fullscreen .watch-player { position: relative; inset: auto; flex: none; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); }
+.watch-stage-box.n1:fullscreen .watch-cell-screen { display: flex; align-items: center; justify-content: center; }
+.watch-stage-box.n1:fullscreen .watch-player { position: relative; inset: auto; flex: none; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); }
 .watch-stage-box:fullscreen .watch-video { opacity: 0.999; }
-.watch-stage-box:fullscreen .watch-chips { top: calc((100vh - min(100vh, 100vw * 9 / 16)) / 2 + 12px); left: calc((100vw - min(100vw, 100vh * 16 / 9)) / 2 + 12px); }
+.watch-stage-box.n1:fullscreen .watch-chips { top: calc((100vh - min(100vh, 100vw * 9 / 16)) / 2 + 12px); left: calc((100vw - min(100vw, 100vh * 16 / 9)) / 2 + 12px); }
+/* 多屏全屏：格子铺满屏幕（2 格左右各半、4 格 2×2），画面在各自的格子里按 16:9 居中（video 自己留黑边） */
+.watch-stage-box.n4:fullscreen .watch-screen { grid-template-rows: repeat(2, minmax(0, 1fr)); }
 
 .watch-info { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .watch-avatar { width: 44px; height: 44px; font-size: 17px; }

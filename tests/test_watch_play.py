@@ -530,7 +530,7 @@ def panel_checks(out):
         info = client.get("/esports/play/douyu-520013").get_json()
         out["问清晰度：回有哪些档、实际给的是哪一档（没指定时要最好的），和带口令、带实际那一档的播放地址"] = (
             info["ok"] and [q["name"] for q in info["qualities"]] == ["原画1080P60", "蓝光4M", "超清"] and info["applied"] == "4"
-            and info["stream"] == f"/esports/stream/douyu-520013?q=4&t={token}"
+            and info["stream"] == f"/esports/stream/douyu-520013?q=4&s=0&t={token}"
             and fake.asked == [("resolve", "520013", None), ("remember", "520013", "4")])
         chosen = client.get("/esports/play/douyu-520013?q=3").get_json()
         junk = client.get("/esports/play/douyu-520013?q=3;drop").get_json()
@@ -555,12 +555,20 @@ def panel_checks(out):
         opened = list(fake.asked)
         out["中转：回的是 FLV，第一次连用刚取过的地址"] = (
             one.status_code == 200 and one.mimetype == "video/x-flv" and opened == [("open", "520013", "4", True)])
-        relay_one = panel_esports._playing["relay"]
+        relay_one = panel_esports._playing["0"]
+        fake.bodies = [Body(data_two)]
+        side = client.get(f"/esports/stream/douyu-520014?q=4&s=1&t={token}", buffered=False)  # 多屏同看的第二格
+        relay_side = panel_esports._playing["1"]
+        out["多屏同看：别的格子开一路，不停第一格的；格子写得不对当作第一格；问播放地址时带着格子"] = (
+            side.status_code == 200 and relay_side is not relay_one and not relay_one.closed
+            and "s=1" in client.get("/esports/play/douyu-520013?s=1").get_json()["stream"]
+            and "s=0" in client.get("/esports/play/douyu-520013?s=9").get_json()["stream"])
+        side.close()
         fake.bodies = [Body(data_two)]
         two = client.get(f"/esports/stream/douyu-520014?q=4&t={token}", buffered=False)
-        relay_two = panel_esports._playing["relay"]
+        relay_two = panel_esports._playing["0"]
         got_two = b"".join(two.response)
-        out["一次只播一路：开新的一路，上一路就停"] = (
+        out["每一格一次只播一路：这一格开新的一路，它上一路就停"] = (
             relay_one is not relay_two and relay_one.closed and got_two == data_two)
         one.close()
 
@@ -573,7 +581,7 @@ def panel_checks(out):
 
         stage = client.get("/esports/play/douyu-777").get_json()
         out["主舞台的直播间（不在选手名单里）也能问到播放地址"] = (
-            stage["ok"] and stage["stream"] == f"/esports/stream/douyu-777?q=4&t={token}" and ("resolve", "777", None) in fake.asked)
+            stage["ok"] and stage["stream"] == f"/esports/stream/douyu-777?q=4&s=0&t={token}" and ("resolve", "777", None) in fake.asked)
         direct = client.get("/esports/play/douyin-800").get_json()
         named = client.get("/esports/play/douyin-800?q=hd").get_json()
         shouted = client.get("/esports/play/douyin-800?q=HD!").get_json()
@@ -596,7 +604,7 @@ def panel_checks(out):
             and client.get(f"/esports/stream/douyu-520013?q=4&t={token}").status_code == 404 and len(fake.bodies) == 1)
     finally:
         panel_esports.PLAYERS = real
-        panel_esports._playing["relay"] = None
+        panel_esports._playing.clear()
 
 
 def main():

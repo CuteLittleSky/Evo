@@ -28,6 +28,12 @@
       {% elif event.mark %}
       <span class="es-tag watch-mark">{{ event.mark }}</span>
       {% endif %}
+      {# 多屏同看（2026-11-19 用户要的）：播放器那一块分成 1 / 2 / 4 格，每格一路；选中的那一格有声音，右边点人就放进选中的那一格 #}
+      <div class="watch-seg watch-layout" role="group" aria-label="同时看几路直播">
+        <button type="button" class="on" aria-pressed="true" data-layout="1">单屏</button>
+        <button type="button" aria-pressed="false" data-layout="2">双屏</button>
+        <button type="button" aria-pressed="false" data-layout="4">四屏</button>
+      </div>
     </div>
 
     {# Apex 在运行、这里又正在播的时候才显示（脚本每 10 秒问一次 /esports/game） #}
@@ -46,15 +52,9 @@
       <button type="button" class="btn" id="watch-failed-retry">再试一次</button>
     </div>
 
-    <div class="watch-stage-box">
-      {# 画面左上角一直标着平台和房间号（用户定的底线：不藏平台） #}
-      <div class="watch-chips" id="watch-chips" hidden>
-        <span class="watch-chip-live"><span class="watch-chip-live-dot" aria-hidden="true"></span>直播中</span>
-        <span class="watch-chip"><span class="es-dot" id="watch-chip-dot" aria-hidden="true"></span><span id="watch-chip-text"></span></span>
-      </div>
-      <div class="watch-screen" id="watch-screen">
-        <div class="watch-msg"><p class="watch-msg-title">正在看谁在播…</p></div>
-      </div>
+    {# 里面的格子由脚本画（makeCell）：每格左上角一直标着平台和房间号（用户定的底线：不藏平台） #}
+    <div class="watch-stage-box n1">
+      <div class="watch-screen" id="watch-screen"></div>
     </div>
 
     <div class="watch-info" id="watch-info" hidden>
@@ -189,8 +189,9 @@
     // status：上次问到的 {选手 id: {state, title, avatar, since}}，还没问到是 null；sel：正在看的选手；
     // closed：点了"关闭直播"；apexOk：点了"继续看"（Apex 关掉以后重新算）
     var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
-              apex: false, apexOk: false, stageKey: null, lastTry: 0,
-              player: null, playSeq: 0, playFailed: {},  // Evo 自己的播放器：现在的那个、第几次开播、哪些人没播成
+              apex: false, apexOk: false, lastTry: 0,
+              layout: 1, focus: 0,  // 多屏同看：几格、选中的是第几格（播放器在各自的格子里，见 makeCell）
+              playFailed: {},  // Evo 自己的播放器：哪些人没播成
               accounts: data.accounts || {}};  // 要登录才能看高画质的平台：{平台: {logged_in, name}}
     function saved(key, fallback) { try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; } }
     function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
@@ -284,6 +285,91 @@
       else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
     }
 
+    // ---------- 播放器那一块：1 / 2 / 4 格（多屏同看，2026-11-19 用户要的），每格一路 ----------
+    // 格子：{index, id: 这一格放的是谁, key: 现在显示的是什么, player, seq, video, showSound, node, body, chips, dot, text, pick, close}
+    // 选中的那一格（st.focus）有声音，别的格子静音；右边点一位在播的，就放进选中的那一格。st.sel 一直是选中那一格里的人
+    var stageBox = document.querySelector(".watch-stage-box"), screen = $("watch-screen");
+    var cells = [];
+    function multi() { return st.layout > 1; }
+    function makeCell(index) {
+      var cell = { index: index, id: null, key: null, player: null, seq: 0, video: null, showSound: null };
+      cell.node = el("div", "watch-cell");
+      cell.chips = el("div", "watch-chips");  // 画面左上角一直标着平台和房间号（用户定的底线：不藏平台）
+      cell.chips.hidden = true;
+      var liveChip = el("span", "watch-chip-live");
+      liveChip.append(el("span", "watch-chip-live-dot"), "直播中");
+      var chip = el("span", "watch-chip");
+      cell.dot = el("span", "es-dot");
+      cell.text = el("span");
+      chip.append(cell.dot, cell.text);
+      cell.chips.append(liveChip, chip);
+      cell.body = el("div", "watch-cell-screen");
+      // 多屏时每格右上角两个小按钮：选中这一格（官方嵌入播放器的画面点不到，靠它）、清空这一格
+      cell.pick = control("选中这一格（声音跟着这一格）", "target");
+      cell.pick.classList.add("watch-cell-btn");
+      cell.pick.addEventListener("click", function (e) { e.stopPropagation(); focusCell(cell.index); });
+      cell.close = control("清空这一格", "close");
+      cell.close.classList.add("watch-cell-btn");
+      cell.close.addEventListener("click", function (e) { e.stopPropagation(); clearCell(cell); });
+      var tools = el("div", "watch-cell-tools");
+      tools.append(cell.pick, cell.close);
+      cell.node.append(cell.body, cell.chips, tools);
+      cell.node.addEventListener("click", function () { if (multi() && st.focus !== cell.index) focusCell(cell.index); });
+      return cell;
+    }
+    function stopCell(cell) {
+      cell.seq++;  // 晚到的回包、事件都不算数了
+      var player = cell.player;
+      cell.player = null;
+      cell.video = null;
+      cell.showSound = null;
+      if (!player) return;
+      try { player.pause(); player.unload(); player.detachMediaElement(); player.destroy(); } catch (e) {}
+    }
+    function stopAll() { cells.forEach(stopCell); }
+    // 声音：玩家没点静音时，只有选中的那一格出声
+    function applyAudio() {
+      var off = saved("evo-watch-muted", "0") === "1";
+      cells.forEach(function (cell) {
+        if (!cell.video) return;
+        cell.video.muted = off || (multi() && cell.index !== st.focus);
+        if (cell.showSound) cell.showSound();
+      });
+    }
+    function focusCell(index) {
+      st.focus = index;
+      st.sel = cells[index].id;
+      try { history.replaceState(null, "", st.sel ? "?p=" + encodeURIComponent(st.sel) : location.pathname); } catch (e) {}
+      render();
+      applyAudio();
+    }
+    function clearCell(cell) {
+      cell.id = null;
+      if (cell.index === st.focus) st.sel = null;
+      render();
+    }
+    function setLayout(count) {
+      while (cells.length < count) {
+        var cell = makeCell(cells.length);
+        cells.push(cell);
+        screen.appendChild(cell.node);
+      }
+      while (cells.length > count) {
+        var gone = cells.pop();
+        stopCell(gone);
+        gone.node.remove();
+      }
+      st.layout = count;
+      if (st.focus >= count) { st.focus = 0; st.sel = cells[0].id; }
+      document.querySelectorAll("[data-layout]").forEach(function (btn) {
+        var on = btn.dataset.layout === String(count);
+        btn.classList.toggle("on", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      render();
+      applyAudio();
+    }
+
     function message(title, text) {
       var box = el("div", "watch-msg");
       box.append(el("p", "watch-msg-title", title));
@@ -291,16 +377,17 @@
       return box;
     }
 
-    // 播放器那一块。只在"该显示什么"变了的时候重画：每分钟刷新状态时不能把正在播的画面重新加载一遍
-    function renderStage() {
-      var p = st.sel ? byId[st.sel] : null, s = p ? info(p.id) : null, live = !!p && isLive(p.id);
+    // 一格里显示什么。只在"该显示什么"变了的时候重画：每分钟刷新状态时不能把正在播的画面重新加载一遍
+    function renderCell(cell) {
+      var p = cell.id ? byId[cell.id] : null, s = p ? info(p.id) : null, live = !!p && isLive(p.id);
+      var focused = cell.index === st.focus;
       var anyLive = data.players.some(function (x) { return isLive(x.id); });
       var key, build;
       if (!st.status) {
         key = st.failed ? "failed" : "loading";
         build = function () { return st.failed ? message("没查到谁在播", "可能是网络连不上，一分钟后会再试。") : message("正在看谁在播…"); };
       } else if (st.closed) {
-        key = "closed";
+        key = "closed:" + (p ? p.id : "") + ":" + live;
         build = function () {
           var box = message("直播已关闭", p ? "想接着看，点下面的按钮，或者在右边换一位" + noun + "。" : "在右边选一位在播的" + noun + "可以重新看。");
           if (p && live) {
@@ -309,6 +396,18 @@
             again.addEventListener("click", function () { st.closed = false; render(); });
             box.append(again);
           }
+          return box;
+        };
+      } else if (!p && multi()) {
+        // 多屏时空着的格子：选中的那一格等着右边点人，别的格子给一个"选这一格"的按钮
+        key = "empty:" + focused + ":" + anyLive;
+        build = function () {
+          if (focused) return message("这一格是空的", anyLive ? "在右边点一位在播的" + noun + "，就放进这一格。" : "现在没有" + noun + "在播。");
+          var box = message("这一格是空的");
+          var pick = el("button", "watch-secondary", "选这一格");
+          pick.type = "button";
+          pick.addEventListener("click", function (e) { e.stopPropagation(); focusCell(cell.index); });
+          box.append(pick);
           return box;
         };
       } else if (!p) {
@@ -335,7 +434,7 @@
       } else if (canPlay(p)) {
         // 清晰度是玩家自己选的（记在这台电脑上，每个平台记一个）；换了清晰度要重新开播
         key = "play:" + p.id + ":" + saved("evo-watch-q-" + p.platform, "");
-        build = function () { return buildPlayer(p); };
+        build = function () { return buildPlayer(p, cell); };
       } else {
         // 退路：平台开关关了、这个平台还不能在窗口里播，或者刚才没播成。按钮用玩家自己的默认浏览器打开直播间（2026-11-17 用户定的）
         key = "fallback:" + p.id + ":" + (st.playFailed[p.id] ? "failed" : "");
@@ -355,19 +454,24 @@
           return box;
         };
       }
-      if (key !== st.stageKey) {
-        st.stageKey = key;
-        stopPlayer();
-        $("watch-screen").replaceChildren(build());
+      if (key !== cell.key) {
+        cell.key = key;
+        stopCell(cell);
+        cell.body.replaceChildren(build());
       }
-
-      var chips = $("watch-chips");
-      chips.hidden = !(live && !st.closed);
-      if (!chips.hidden) {
-        $("watch-chip-dot").className = "es-dot pf-" + p.platform;
-        $("watch-chip-text").textContent = canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
+      cell.node.classList.toggle("focus", multi() && focused);
+      cell.chips.hidden = !(live && !st.closed);
+      if (!cell.chips.hidden) {
+        cell.dot.className = "es-dot pf-" + p.platform;
+        cell.text.textContent = canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
       }
+      cell.pick.hidden = !multi() || focused;
+      cell.close.hidden = !multi() || !cell.id;
+    }
 
+    // 播放器下面那一行（名字、登录、三个去平台的按钮）和同队视角：跟着选中的那一格
+    function renderInfo() {
+      var p = st.sel ? byId[st.sel] : null, s = p ? info(p.id) : null, live = !!p && isLive(p.id);
       $("watch-info").hidden = !p;
       $("watch-mates").hidden = !p || !!data.solo;  // 主播名单没有"同队"
       if (!p) return;
@@ -405,13 +509,21 @@
       $("watch-mates-list").replaceChildren.apply($("watch-mates-list"), mates);
     }
 
+    function renderStage() {
+      stageBox.className = "watch-stage-box n" + st.layout + (multi() ? " multi" : "");
+      cells.forEach(renderCell);
+      renderInfo();
+    }
+
     // ---------- Evo 自己的播放器：mpegts.js 连面板的本机中转（斗鱼），或者直接连平台的视频服务器（抖音、登录了的 B站）----------
     var ICONS = {
       play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"></path>',
       pause: '<path d="M9 6v12M15 6v12"></path>',
       sound: '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"></path><path d="M16 9a4 4 0 0 1 0 6"></path>',
       muted: '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
-      full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>'
+      full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>',
+      close: '<path d="M6 6l12 12M18 6L6 18"></path>',
+      target: '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"></circle>'
     };
     function icon(name) {
       var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -448,20 +560,12 @@
       }
       return mpegtsLoading;
     }
-    function stopPlayer() {
-      st.playSeq++;  // 晚到的回包、事件都不算数了
-      var player = st.player;
-      st.player = null;
-      if (!player) return;
-      try { player.pause(); player.unload(); player.detachMediaElement(); player.destroy(); } catch (e) {}
-    }
-
-    function buildPlayer(p) {
+    function buildPlayer(p, cell) {
       var box = el("div", "watch-player");
       var video = el("video", "watch-video");
       video.playsInline = true;
       video.volume = Math.min(1, Math.max(0, parseInt(saved("evo-watch-volume", "70"), 10) / 100 || 0));
-      video.muted = saved("evo-watch-muted", "0") === "1";
+      video.muted = saved("evo-watch-muted", "0") === "1" || (multi() && cell.index !== st.focus);  // 多屏：没选中的格子静音
       var wait = el("div", "watch-wait", "正在连接" + p.platform_name + "…");
       wait.setAttribute("role", "status");
       var hint = el("button", "watch-hint");  // 一句提示：自动播放没有声音、有点卡
@@ -539,9 +643,8 @@
         showSound();
       });
       fullBtn.addEventListener("click", function () {
-        var stage = document.querySelector(".watch-stage-box");
         if (document.fullscreenElement) document.exitFullscreen();
-        else if (stage.requestFullscreen) stage.requestFullscreen();
+        else if (stageBox.requestFullscreen) stageBox.requestFullscreen();  // 多屏时几格一起全屏
       });
       qualityBtn.addEventListener("click", function () { setMenu(menu.hidden); });
       box.addEventListener("keydown", function (e) { if (e.key === "Escape" && !menu.hidden) { setMenu(false); qualityBtn.focus(); } });
@@ -565,9 +668,11 @@
       showSound();
       showPlay();
 
-      var seq = st.playSeq;  // 这次开播的编号：换了人、换了清晰度以后，晚到的回包和事件都不算数
+      cell.video = video;
+      cell.showSound = showSound;
+      var seq = cell.seq;  // 这一格这次开播的编号：换了人、换了清晰度以后，晚到的回包和事件都不算数
       function failed(detail) {
-        if (seq !== st.playSeq) return;
+        if (seq !== cell.seq) return;
         st.playFailed[p.id] = failText(detail);
         // 告诉后台一声，写进运行记录（玩家反馈"播不了"时好查）
         post(data.failed_url + encodeURIComponent(p.id), { reason: String(detail || "") }).catch(function () {});
@@ -602,24 +707,25 @@
       loadMpegts().then(function () {
         if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) throw new Error("这个窗口放不了这种视频");
         var wanted = saved("evo-watch-q-" + p.platform, "");
-        return fetch(p.play + (wanted ? "?q=" + encodeURIComponent(wanted) : ""), { cache: "no-store" }).then(function (r) { return r.json(); });
+        // s：第几格（后台每格一路中转，这一格开新的一路才停它上一路）
+        return fetch(p.play + "?s=" + cell.index + (wanted ? "&q=" + encodeURIComponent(wanted) : ""), { cache: "no-store" }).then(function (r) { return r.json(); });
       }).then(function (info) {
-        if (seq !== st.playSeq) return;
+        if (seq !== cell.seq) return;
         if (!info.ok) throw new Error(info.detail || "没取到播放地址");
         fillMenu(info);
         // 斗鱼、抖音是 FLV；B站经本机中转来的是接好的 TS 流（info.kind 是 "mpegts"）
         var player = mpegts.createPlayer({ type: info.kind === "mpegts" ? "mpegts" : "flv", isLive: true, url: info.stream },
           { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: false, autoCleanupSourceBuffer: true, stashInitialSize: 128 });
-        st.player = player;
+        cell.player = player;
         player.on(mpegts.Events.ERROR, function (type, detail) { failed(detail || type); });
         // 视频那头结束了（中转接不上了、平台断开了，或者主播下播）：不自动重连，写明白，给一个按钮
         player.on(mpegts.Events.LOADING_COMPLETE, function () {
-          if (seq !== st.playSeq) return;
+          if (seq !== cell.seq) return;
           wait.hidden = false;
           wait.textContent = "直播断了。";
           var again = el("button", "watch-primary", "重新连接");
           again.type = "button";
-          again.addEventListener("click", function () { st.stageKey = null; render(); });
+          again.addEventListener("click", function () { cell.key = null; render(); });
           wait.append(again);
         });
         player.attachMediaElement(video);
@@ -715,25 +821,29 @@
     // 登录了、却退回了官方播放器：在播放器上面说明
     function renderFailed() {
       var p = st.sel ? byId[st.sel] : null;
-      var show = !!p && /^embed:/.test(st.stageKey || "") && !!st.playFailed[p.id] && !!data.login[p.platform] && loggedIn(p.platform);
+      var show = !!p && /^embed:/.test(cells[st.focus].key || "") && !!st.playFailed[p.id] && !!data.login[p.platform] && loggedIn(p.platform);
       $("watch-failed").hidden = !show;
       if (show) $("watch-failed-text").textContent = p.platform_name + "原画没播成（" + st.playFailed[p.id] + "），现在用的是" + p.platform_name + "官方播放器，最高 720p。";
     }
 
     function renderApex() {
-      var playing = /^(embed|play):/.test(st.stageKey || "");
+      var playing = cells.some(function (cell) { return /^(embed|play):/.test(cell.key || ""); });
       $("watch-apex").hidden = !(st.apex && !st.apexOk && playing);
     }
 
     function render() { renderList(); renderStage(); renderApex(); renderFailed(); }
 
     function select(id) {
+      var shown = cells.findIndex(function (cell) { return cell.id === id; });
+      if (shown >= 0) st.focus = shown;  // 已经在别的格子里放着：选中那一格，不放两遍
+      else cells[st.focus].id = id;
       st.sel = id;
       st.closed = false;
       var box = document.querySelector('.watch-p[data-player="' + CSS.escape(id) + '"]');
       if (box && box.closest("details")) box.closest("details").open = true;
       try { history.replaceState(null, "", "?p=" + encodeURIComponent(id)); } catch (e) {}
       render();
+      applyAudio();
     }
 
     // 还没选人（也没点"关闭直播"）：自动选第一位在播的，先挑能在窗口里播的
@@ -790,10 +900,13 @@
       img.addEventListener("error", fallback);
       if (img.complete && img.naturalWidth === 0) fallback();
     });
-    document.querySelectorAll(".watch-seg button").forEach(function (btn) {
+    document.querySelectorAll("[data-layout]").forEach(function (btn) {
+      btn.addEventListener("click", function () { setLayout(parseInt(btn.dataset.layout, 10)); });
+    });
+    document.querySelectorAll("[data-filter]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         st.filter = btn.dataset.filter;
-        document.querySelectorAll(".watch-seg button").forEach(function (other) {
+        document.querySelectorAll("[data-filter]").forEach(function (other) {
           other.classList.toggle("on", other === btn);
           other.setAttribute("aria-pressed", other === btn ? "true" : "false");
         });
@@ -804,7 +917,10 @@
     $("watch-apex-keep").addEventListener("click", function () { st.apexOk = true; renderApex(); });
     $("watch-apex-close").addEventListener("click", function () { st.closed = true; render(); });
     document.addEventListener("visibilitychange", tick);
-    window.addEventListener("pagehide", stopPlayer);  // 离开这一页：播放器停下，中转那头跟着断开
+    window.addEventListener("pagehide", stopAll);  // 离开这一页：播放器停下，中转那头跟着断开
+    cells.push(makeCell(0));
+    screen.appendChild(cells[0].node);
+    cells[0].id = st.sel;
     if (st.sel) {
       var first = document.querySelector('.watch-p[data-player="' + CSS.escape(st.sel) + '"]');
       if (first && first.closest("details")) first.closest("details").open = true;

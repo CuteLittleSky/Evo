@@ -94,8 +94,12 @@ def main():
     out["占满窗口、没有侧边栏（导航、主题按钮），有\"← 赛事\"能回去；写着赛事名、阶段和\"进行中\""] = (
         '<nav class="nav"' not in raw and 'id="theme-toggle"' not in raw and 'id="side"' not in raw
         and 'class="wrap watch-wrap"' in raw
-        and 'href="/esports"' in head and text(head).split() == ["电竞", "职业联赛", "第", "3", "周", "B", "组对", "C", "组", "进行中"]
+        and 'href="/esports"' in head and text(head).split() == ["电竞", "职业联赛", "第", "3", "周", "B", "组对", "C", "组", "进行中", "单屏", "双屏", "四屏"]
         and "es-live-tag" in head)
+    out["多屏同看：顶上有\"单屏 / 双屏 / 四屏\"（默认单屏）；播放器那一块的格子由脚本画，每格问播放地址时带着是第几格"] = (
+        [(m, on) for m, on in re.findall(r'aria-pressed="(true|false)" data-layout="(\d)"', head)] == [("true", "1"), ("false", "2"), ("false", "4")]
+        and '<div class="watch-stage-box n1">' in raw and 'id="watch-screen"></div>' in raw and "function makeCell(index)" in raw
+        and 'p.play + "?s=" + cell.index' in raw and 'data-filter="all"' in raw and '"[data-filter]"' in raw)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)
     start = NOW + timedelta(days=1)
     soon_head = re.findall(r'<div class="watch-head">.*?</div>', soon, re.S)[0]

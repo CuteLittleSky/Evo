@@ -61,7 +61,8 @@ PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFOR
 # 要玩家登录了才用 Evo 自己的播放器的平台 → 管登录的模块（没登录的用平台官方的嵌入播放器）
 LOGINS = {"bilibili": bili_login}
 RATE_RE = re.compile(r"-?\d{1,5}|[a-z]{1,12}")  # 清晰度：斗鱼、B站是编号，抖音是档名（origin、uhd、hd……）
-_playing = {"relay": None}  # 正在中转的那一路（一次只播一路）
+SLOTS = ("0", "1", "2", "3")  # 多屏同看：页面上最多 4 格，每格一路中转
+_playing = {}  # 格子 → 正在中转的那一路（每格一次只播一路：这一格开新的一路就停掉它上一路）
 _playing_lock = threading.Lock()
 log = logging.getLogger("evo")
 _status = {"at": 0.0, "found": {}}  # 上次查到的：{选手 id: live_status 的结果}
@@ -276,6 +277,12 @@ def _player(player_id):
     return player
 
 
+def _slot():
+    """网址里的 s（多屏同看的第几格，"0"–"3"）；没写、写得不对当作第一格。"""
+    wanted = request.args.get("s", "0")
+    return wanted if wanted in SLOTS else SLOTS[0]
+
+
 def _rate():
     """网址里的 q（清晰度的编号或档名）；没写、写得不对是 None（没选过：由取地址的模块定要哪一档）。"""
     wanted = request.args.get("q", "")
@@ -302,7 +309,7 @@ def play(player_id):
         log.info("看直播：%s 房间 %s %s", player["platform"], player["room"], found["note"])
     module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
     return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], kind=found.get("kind", "flv"),
-                   stream=url_for("esports.stream", player_id=player_id, q=found["rate"], t=current_app.config["TOKEN"]))
+                   stream=url_for("esports.stream", player_id=player_id, q=found["rate"], s=_slot(), t=current_app.config["TOKEN"]))
 
 
 @bp.post("/esports/play-failed/<player_id>")
@@ -319,7 +326,8 @@ def play_failed(player_id):
 def stream(player_id):
     """本机中转：把平台的视频转给页面里的播放器（斗鱼的 FLV：flv_relay.py；B站：HLS 接成一条 TS 流，hls_relay.py，
     没有 HLS 才是 FLV）。要带面板的口令（别的网页不能让 Evo 去连平台）。
-    一次只播一路：开新的一路就停掉上一路。取不到地址、连不上、不是 H.264 回 502 和原因，页面显示退路。"""
+    每一格（网址里的 s，多屏同看最多 4 格）一次只播一路：这一格开新的一路就停掉它上一路，别的格子不动。
+    取不到地址、连不上、不是 H.264 回 502 和原因，页面显示退路。"""
     if request.args.get("t") != current_app.config["TOKEN"]:
         abort(403)
     player = _player(player_id)
@@ -343,8 +351,9 @@ def stream(player_id):
             return jsonify(ok=False, reason="upstream", detail=str(e)), 502
     else:
         relay = flv_relay.Relay(open_segment, lead=live_status.PLATFORMS[player["platform"]].get("renew_lead", 5), on_event=on_event)
+    slot = _slot()
     with _playing_lock:
-        old, _playing["relay"] = _playing["relay"], relay
+        old, _playing[slot] = _playing.get(slot), relay
     if old is not None:
         old.close()
     try:
@@ -353,7 +362,8 @@ def stream(player_id):
         log.info("看直播：%s 房间 %s 播不了：%s", player["platform"], player["room"], e)
         return jsonify(ok=False, reason=e.code, detail=str(e)), 502
     mimetype = getattr(relay, "mimetype", "video/x-flv")
-    log.info("看直播：开始中转 %s 房间 %s（清晰度 %s，%s）", player["platform"], player["room"], rate, mimetype)
+    log.info("看直播：开始中转 %s 房间 %s（清晰度 %s，%s%s）", player["platform"], player["room"], rate, mimetype,
+             "" if slot == SLOTS[0] else f"，第 {int(slot) + 1} 格")
     return Response(relay.stream(), mimetype=mimetype, headers={"Cache-Control": "no-store"})
 
 

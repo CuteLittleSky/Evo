@@ -416,7 +416,7 @@ def panel_checks(out):
         info = client.get("/esports/play/bilibili-6").get_json()
         chosen = client.get("/esports/play/bilibili-6?q=250").get_json()
         out["登录了：给清晰度和本机中转的地址（带口令、带实际那一档），告诉页面按 TS 流放；没选过要原画，选了按选的要"] = (
-            info == {"ok": True, "applied": "10000", "kind": "mpegts", "stream": f"/esports/stream/bilibili-6?q=10000&t={token}",
+            info == {"ok": True, "applied": "10000", "kind": "mpegts", "stream": f"/esports/stream/bilibili-6?q=10000&s=0&t={token}",
                      "qualities": [{"id": "10000", "name": "原画"}, {"id": "250", "name": "超清"}]}
             and chosen["applied"] == "250"
             and player.asked == [("6", None), ("remember", "6", "10000"), ("6", "250"), ("remember", "6", "250")])
