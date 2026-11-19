@@ -192,19 +192,27 @@ body:has(.side) { padding-left: var(--side-w); }
 .pill-warn { border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-text); }
 .icon-btn { margin-left: auto; width: 36px; height: 36px; border-radius: 4px; border: 1px solid var(--border); background: var(--card); color: var(--muted); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 
-/* 收起：只留图标，文字小一号放在图标下面；主题按钮挪到最下面，切换账号变成人像按钮 */
+/* 收起：只留图标，不写文字（2026-11-19 用户要求；名字留给读屏软件，鼠标指上去、用键盘移过去时在右边显示，见下面的 .side-tip）；
+   主题按钮挪到最下面，切换账号变成人像按钮，"演示数据"只剩一个点 */
 .side-collapsed .side { gap: 10px; }
 .side-collapsed .side-head { justify-content: center; padding: 0; }
 .side-collapsed .brand-name, .side-collapsed .side-theme-top, .side-collapsed .account-switch, .side-collapsed .side-label { display: none; }
 .side-collapsed .side-theme-bottom, .side-collapsed .side-account { display: flex; }
 .side-collapsed .side-btn { width: 100%; }
-.side-collapsed .side .pill { align-self: center; margin: 0; padding: 4px 8px; }
-/* 一项 50 像素高：窗口最矮（640）、又有切换账号时，侧边栏还是一屏放得下 */
+.side-collapsed .side .pill { align-self: center; margin: 0; padding: 6px; }
+.side-collapsed .nav-label, .side-collapsed .pill-text {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .side-collapsed .nav { gap: 2px; }
-.side-collapsed .nav a { flex-direction: column; justify-content: center; gap: 2px; min-height: 50px; padding: 4px 2px; font-size: 12px; line-height: 1.4; }
+.side-collapsed .nav a { justify-content: center; min-height: 44px; padding: 0; }
 .side-collapsed .side-foot { gap: 6px; padding-top: 10px; }
 .side-collapsed .side-toggle { justify-content: center; padding: 0; }
 .side-collapsed .side-toggle svg { transform: scaleX(-1); }  /* « 变成 » */
+/* 只有图标的地方，鼠标指上去、用键盘移过去时在右边显示名字（base.html 的脚本放到那一项旁边）。
+   用 fixed 的一块，不挂在每一项上：侧边栏自己会滚动，挂在里面会被裁掉。颜色和页面反过来，一眼看得出是提示 */
+.side-tip { position: fixed; z-index: 40; transform: translateY(-50%); padding: 5px 10px; border-radius: 6px;
+  background: var(--text); color: var(--bg); font-size: 13px; line-height: 1.4; white-space: nowrap; pointer-events: none;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3); animation: evo-fade-in 120ms both; }
+.side-tip[hidden] { display: none; }
 
 /* 派圈助手（2026-10-28 起在右上角，2026-11-15 挪到总览页"关注我"那一栏，按钮样子和那里的另外三个一样，见 .follow-partner）。
    .partner-btn 是设置页鸣谢卡片里那个描边的圆角按钮。窗口窄时只留"派圈助手"。弹窗里的小程序码总是白底（扫码要），深色主题也一样 */

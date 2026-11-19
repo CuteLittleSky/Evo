@@ -10,7 +10,7 @@
    usage：panel_app.usage_card()（用到时才量，一次约 5 毫秒） #}
 {% set usage = usage_card() %}
 <div class="usage-top" id="usage-top">
-  <button type="button" class="usage-btn" id="usage-open" aria-expanded="false" aria-controls="usage-panel">
+  <button type="button" class="usage-btn" id="usage-open" aria-expanded="false" aria-controls="usage-panel" data-tip="Evo 占用">
     <span class="usage-btn-head">
       <svg class="usage-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg>
       <span class="usage-btn-label">Evo 占用</span>

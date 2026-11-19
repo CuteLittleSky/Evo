@@ -358,7 +358,7 @@
       var label = collapsed() ? "展开侧边栏" : "收起侧边栏";
       toggle.setAttribute("aria-expanded", collapsed() ? "false" : "true");
       toggle.setAttribute("aria-label", label);
-      toggle.title = label;
+      toggle.dataset.tip = label;
     }
     function setCollapsed(on, then) {
       try {
@@ -372,6 +372,27 @@
       document.startViewTransition(apply).finished.finally(function () { root.classList.remove("side-moving"); });
     }
     toggle.addEventListener("click", function () { setCollapsed(!collapsed()); });
+
+    // 只有图标的地方（收起时的每一项，和展开时标志右边的主题按钮）：鼠标指上去、用键盘移过去时在右边显示名字。
+    // 一块 fixed 的提示放到那一项右边（挂在每一项上会被会滚动的侧边栏裁掉）；点了、移开、滚动时收起
+    var side = document.getElementById("side"), tip = document.getElementById("side-tip");
+    function hideTip() { tip.hidden = true; }
+    function showTip(el) {
+      if (!el || !(collapsed() || el.hasAttribute("data-tip-always"))) { hideTip(); return; }
+      var r = el.getBoundingClientRect();
+      tip.textContent = el.dataset.tip;
+      tip.style.left = (r.right + 14) + "px";
+      tip.style.top = (r.top + r.height / 2) + "px";
+      tip.hidden = false;
+    }
+    side.addEventListener("mouseover", function (e) { showTip(e.target.closest("[data-tip]")); });
+    side.addEventListener("mouseleave", hideTip);
+    side.addEventListener("focusin", function (e) {
+      if (e.target.matches(":focus-visible")) showTip(e.target.closest("[data-tip]"));
+    });
+    side.addEventListener("focusout", hideTip);
+    side.addEventListener("click", hideTip);
+    side.addEventListener("scroll", hideTip);
     // 收起时的人像按钮：先展开，再把焦点放到切换账号的下拉框上
     var account = document.getElementById("side-account");
     if (account) account.addEventListener("click", function () {

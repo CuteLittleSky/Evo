@@ -5,6 +5,7 @@
 - 从别的页面点过来：底色带着"从第几项过来"，脚本按实际位置量出滑多远；同一页里的操作不滑
 - 主题按钮两个（展开时在标志右边、收起时在最下面），都能切换；展开 / 收起按钮控制侧边栏
 - 收没收起：画页面之前就按 localStorage 的 evo-side 加上 side-collapsed（换页不闪）
+- 收起时只有图标、不写文字（2026-11-19 用户要求）：名字留给读屏软件，每个只有图标的地方都有 data-tip（指上去在右边显示）
 - 有两个账号时：切换账号的下拉框和收起时的人像按钮都在侧边栏里；只有一个账号时都没有
 - 看直播页没有侧边栏
 - 样式：内容区"变成一列"按内容区自己的宽度算（@container page），不按整个窗口算
@@ -81,6 +82,13 @@ def main():
     out["展开 / 收起按钮控制侧边栏，状态记在 evo-side、写进 aria-expanded"] = (
         re.search(r'id="side-toggle" aria-controls="side"', sides["/"]) is not None
         and 'localStorage.setItem("evo-side", "collapsed")' in home and '"aria-expanded"' in home)
+    tipped = re.findall(r'<(?:a|button) [^>]*>', sides["/"])
+    out["收起时不写文字：导航文字只留给读屏软件；导航、主题、展开 / 收起、Evo 占用都有提示，有放提示的那一块"] = (
+        all(f'data-tip="{label}"' in sides["/"] for label in PAGES.values())
+        and all("data-tip=" in t for t in tipped if "data-theme-toggle" in t or 'id="usage-open"' in t)
+        and 'id="side-tip"' in sides["/"] and "toggle.dataset.tip = label" in home
+        and re.search(r"\.side-collapsed \.nav-label, \.side-collapsed \.pill-text \{\s*position: absolute; width: 1px",
+                      (ROOT / "panel" / "static" / "style.css").read_text(encoding="utf-8")) is not None)
     out["只有一个账号：没有切换账号、没有人像按钮"] = (
         'id="account-select"' not in home and 'id="side-account"' not in home)
 
@@ -91,7 +99,7 @@ def main():
     two = side_of(client.get("/matches").get_data(as_text=True))
     out["两个账号：下拉框和人像按钮都在侧边栏里，人像按钮写着现在看的是哪个"] = (
         'id="account-select"' in two and 'id="side-account"' in two
-        and re.search(r'id="side-account" aria-label="切换账号（现在看的是 AltAccount）"', two) is not None
+        and re.search(r'id="side-account" aria-label="切换账号（现在看的是 AltAccount）" data-tip="账号：AltAccount"', two) is not None
         and two.find('id="account-select"') < two.find('<nav class="nav"'))
 
     css = (ROOT / "panel" / "static" / "style.css").read_text(encoding="utf-8")

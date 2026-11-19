@@ -1,5 +1,6 @@
 {# 左边的侧边栏（2026-11-19 用户要求，代替原来顶部那一行）：EVO 标志、切换账号、导航、「Evo 占用」、主题按钮、展开 / 收起。
-   - 展开（216 像素）：图标和文字一行，主题按钮在标志右边；收起（96 像素）：图标在上、文字在下，主题按钮挪到最下面。
+   - 展开（216 像素）：图标和文字一行，主题按钮在标志右边；收起（96 像素）：只有图标、不写文字（用户 11-19 要求），主题按钮挪到最下面。
+     只有图标的地方都有 data-tip：鼠标指上去、用键盘移过去时右边显示名字（#side-tip，base.html 的脚本）；名字照样留给读屏软件
      收没收起记在 localStorage 的 evo-side（base.html 开头的脚本在画页面之前就加上 side-collapsed，换页不闪）
    - 「设置」在导航最下面（同一个 nav，靠 margin-top: auto 推下去）
    - 有 2 个以上账号时：展开时是下拉框；收起时是一个人像按钮，点了先展开再把焦点放到下拉框上
@@ -13,7 +14,7 @@
   'settings': '<path d="M4 7h9"></path><path d="M17 7h3"></path><path d="M4 17h3"></path><path d="M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle>',
 } %}
 {% macro theme_button(extra) -%}
-<button type="button" class="side-btn {{ extra }}" data-theme-toggle aria-label="切换白天/黑夜" title="切换白天/黑夜"{{ ' id="theme-toggle"'|safe if extra == 'side-theme-top' }}>
+<button type="button" class="side-btn {{ extra }}" data-theme-toggle aria-label="切换白天/黑夜" data-tip="切换白天/黑夜"{{ ' id="theme-toggle" data-tip-always'|safe if extra == 'side-theme-top' }}>
   <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4"></path><path d="M12 20 L12 22"></path><path d="M2 12 L4 12"></path><path d="M20 12 L22 12"></path><path d="M4.9 4.9 L6.3 6.3"></path><path d="M17.7 17.7 L19.1 19.1"></path><path d="M4.9 19.1 L6.3 17.7"></path><path d="M17.7 6.3 L19.1 4.9"></path></svg>
   <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 14.5 A8 8 0 1 1 9.5 4 A6.5 6.5 0 0 0 20 14.5 Z"></path></svg>
 </button>
@@ -28,7 +29,7 @@
   </div>
   {% if is_demo %}
   <div class="pill pill-warn" title="当前读取的是 {{ db_name }}，不是正式数据库">
-    <span class="dot"></span><span>演示<span class="side-label">数据</span></span>
+    <span class="dot"></span><span class="pill-text">演示数据</span>
   </div>
   {% endif %}
   {% if account_view.accounts|length >= 2 %}
@@ -46,14 +47,14 @@
     </select>
     <noscript><button type="submit" class="btn">切换</button></noscript>
   </form>
-  <button type="button" class="side-btn side-account" id="side-account" aria-label="切换账号（现在看的是 {{ current_name }}）" title="账号：{{ current_name }}">
+  <button type="button" class="side-btn side-account" id="side-account" aria-label="切换账号（现在看的是 {{ current_name }}）" data-tip="账号：{{ current_name }}">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"></path></svg>
   </button>
   {% endif %}
   <nav class="nav" aria-label="主导航">
     {% for endpoint, label in nav %}
     {# 选中那一项的底色是单独的一块（nav-pill，左边的红色竖条也在它上面）：从别的页面切过来时，它从上一页的那一项滑过来（下面的脚本量出距离，见 style.css 的"动效"） #}
-    <a href="{{ url_for(endpoint) }}" class="{{ 'active' if request.endpoint == endpoint }}{{ ' nav-end' if endpoint == 'settings' }}"{{ ' aria-current="page"'|safe if request.endpoint == endpoint }}>
+    <a href="{{ url_for(endpoint) }}" class="{{ 'active' if request.endpoint == endpoint }}{{ ' nav-end' if endpoint == 'settings' }}" data-tip="{{ label }}"{{ ' aria-current="page"'|safe if request.endpoint == endpoint }}>
       {%- if request.endpoint == endpoint %}<span class="nav-pill{{ ' slide' if switch.shift }}" data-shift="{{ switch.shift }}"></span>{% endif -%}
       <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ nav_icons[endpoint]|safe }}</svg>
       <span class="nav-label">{{ label }}</span>
@@ -79,4 +80,5 @@
       <span class="side-label">收起</span>
     </button>
   </div>
+  <div class="side-tip" id="side-tip" aria-hidden="true" hidden></div>
 </header>
