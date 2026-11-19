@@ -234,7 +234,8 @@ class Recorder:
     def __init__(self, ffmpeg, run_dir, args, t0_us, log):
         self.ffmpeg, self.dir, self.args, self.t0_us, self.log = ffmpeg, run_dir, args, t0_us, log
         self.proc = None
-        self.feed = None
+        self.feed = None  # 现在这个 ffmpeg 的收图线程
+        self.feeds = []  # 每次开 ffmpeg 的收图线程（重开以后前面收到的也要算上）
         self.runs = 0  # 开过几次 ffmpeg
         self.events = []  # (时刻, 发生了什么, 断了几秒)
         self.last_frame = (0, time.perf_counter())  # (progress 里的帧数, 它最后一次变的时刻)
@@ -252,10 +253,12 @@ class Recorder:
             width, height = 1920, 1080
         source = source_filter(a.source, a.fps, a.output_idx, a.window)
         stamp = f"settb=AVTB,setpts=RTCTIME-{self.t0_us}"  # 时间戳 = 抓到这一帧时电脑的时钟 - t0（微秒）
+        # 送图用 fps 滤镜每 0.3 秒挑一帧，round=up = 挑这一刻之前的最后一帧（晚 0–33 毫秒）。默认的 round=near
+        # 挑的是这一刻前后 0.15 秒里最后一帧，比标的时间晚 150–180 毫秒（2026-11-19 第二局实测，用 testsrc2 核对过）
         start = max(0.0, round(self.since_t0() / FRAME_INTERVAL + 1) * FRAME_INTERVAL)
         if a.frames:
             graph = (f"{source},{stamp},split=2[rec][raw];[rec]{gpu_chain(a.encoder, width, height)}[enc];"
-                     f"[raw]fps=10/3:start_time={start:.1f},hwdownload,format=bgra[img]")
+                     f"[raw]fps=10/3:start_time={start:.1f}:round=up,hwdownload,format=bgra[img]")
         else:
             graph = f"{source},{stamp},{gpu_chain(a.encoder, width, height)}[enc]"
         segments = len(list((self.dir / "segments").glob("*.ts")))
@@ -282,6 +285,7 @@ class Recorder:
         if self.args.frames:
             self.feed = FrameFeed(self.proc.stdout, start)
             self.feed.start()
+            self.feeds.append(self.feed)
         self.progress_path = self.dir / f"progress_{self.runs}.txt"
         self.runs += 1
         self.last_frame = (0, time.perf_counter())
@@ -420,6 +424,7 @@ def record(args, label=None, audio_pid=None, on_ready=None):
     meta = {"t0_us": t0_us, "t0_qpc": t0_qpc, "ffmpeg": ffmpeg, "encoder": args.encoder, "source": args.source,
             "capture_size": list(size), "video_size": [width, height], "fps": args.fps, "bitrate": args.bitrate,
             "frames": args.frames, "ocr_every": args.ocr_every, "game_aspect": aspect, "game_aspect_how": aspect_how,
+            "raw_shift": 0.025,  # 送图 round=up：原图的内容比标的时刻晚 17–33 毫秒
             "started": datetime.now().isoformat(timespec="seconds")}
     (run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     log(f"录像文件夹：{run_dir}")
@@ -490,7 +495,7 @@ def record(args, label=None, audio_pid=None, on_ready=None):
                     writer.writerow([round(rec.since_t0(), 1), round((ff.cpu - prev[0].cpu) / dt * 100, 1)
                                      if ff.pid == prev[0].pid else "", round(ff.memory, 1),
                                      round((mine.cpu - prev[1].cpu) / dt * 100, 1), round(mine.memory, 1), frames,
-                                     rec.feed.count if rec.feed else "", int(ocr_since_tick)])
+                                     sum(f.count for f in rec.feeds) if rec.feeds else "", int(ocr_since_tick)])
                     stats.flush()
                     ocr_since_tick = False
                 prev = (ff, mine, now)
@@ -509,8 +514,8 @@ def record(args, label=None, audio_pid=None, on_ready=None):
                 "packets": audio.packets[::50] + audio.packets[-1:]}, indent=0), encoding="utf-8")
     meta.update({"stopped": datetime.now().isoformat(timespec="seconds"), "wall_seconds": round(rec.since_t0(), 1),
                  "ocr_windows": ocr_windows, "events": rec.events, "runs": rec.runs,
-                 "raw_frames": rec.feed.count if rec.feed else None,
-                 "raw_arrivals": [round(t - t0_qpc, 3) for t in rec.feed.arrivals] if rec.feed else [],
+                 "raw_frames": sum(f.count for f in rec.feeds) if rec.feeds else None,
+                 "raw_arrivals": sorted(round(t - t0_qpc, 3) for f in rec.feeds for t in f.arrivals),
                  "gpu_samples": gpu.samples})
     (run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     log_file.close()
@@ -883,16 +888,41 @@ def cmd_avsync(args):
 
 
 def frame_at(ffmpeg, segs, t):
-    """录像里 t 秒（从 t0 算起）的那一帧（BGR），找不到返回 None。"""
+    """录像里 t 秒（从 t0 算起）那一刻之后的第一帧（BGR），找不到返回 None。
+
+    用 select 滤镜按每一帧自己的时间戳挑（-fps_mode passthrough：不补帧、不丢帧）。不用 -ss：录像的帧间隔不均匀，
+    -ss 放在 -i 后面时取到的帧比要的晚 60–90 毫秒，放在前面时 2 秒一段的 TS 文件常常一帧都拿不到（2026-11-19 实测）。"""
     import cv2
     for f, s, e in segs:
         if s <= t < e:
-            # -ss 放在 -i 后面（从头解到那一帧）：放在前面时 2 秒一段的 TS 文件常常跳不过去、一帧都拿不到
-            r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(f), "-ss", f"{t - s:.3f}",
-                                "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-"], capture_output=True)
+            r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(f), "-vf",
+                                f"select='gte(t\\,{t - s:.4f})'", "-fps_mode", "passthrough", "-frames:v", "1",
+                                "-f", "image2pipe", "-c:v", "png", "-"], capture_output=True)
             if r.stdout:
                 return cv2.imdecode(np.frombuffer(r.stdout, np.uint8), cv2.IMREAD_COLOR)
     return None
+
+
+def same_frame(ffmpeg, segs, raw, lo, hi):
+    """录像里 lo–hi 秒（从 t0 算起）之间和原图最像的那一帧（全分辨率比）：(BGR 图, 它的时刻, 平均差)，没有返回 (None, None, None)。
+
+    原图和录像里的同一帧只差压缩，平均差约 2–5；相邻的帧在动的画面里差得多，所以挑得出来。"""
+    best = (None, None, None)
+    for f, s, e in segs:
+        if e < lo or s > hi:
+            continue
+        p = subprocess.run([ffmpeg, "-hide_banner", "-i", str(f), "-vf",
+                            f"select='between(t\\,{lo - s:.4f}\\,{hi - s:.4f})',showinfo", "-fps_mode", "passthrough",
+                            "-f", "rawvideo", "-pix_fmt", "bgr24", "-"], capture_output=True)
+        times = [float(m) for m in re.findall(rb"pts_time:([\d.]+)", p.stderr)]
+        size = raw.shape[0] * raw.shape[1] * 3
+        frames = np.frombuffer(p.stdout, np.uint8)
+        frames = frames[:len(frames) // size * size].reshape(-1, *raw.shape)
+        for when, frame in zip((s + x for x in times), frames):
+            d = float(np.mean(np.abs(frame.astype(np.int16) - raw.astype(np.int16))))
+            if best[2] is None or d < best[2]:
+                best = (frame, when, d)
+    return best
 
 
 def set_aspect(wanted, run_dir):
@@ -925,20 +955,23 @@ def cmd_ocr(args):
     if not shots:
         sys.exit("这个文件夹里没有原图（frames/），录的时候要送原图（不加 --no-frames）")
     set_aspect(args.aspect, run_dir)
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    shift = meta.get("raw_shift", 0.14)  # 11-19 改挑帧方式以前录的：原图的内容比标的时刻晚 131–150 毫秒
+    print(f"原图按标的时刻 {shift * 1000:+.0f} 毫秒对齐录像")
     reader = hud.Hud(ocr.create_engine(ocr.SMALL_CROP_PARAMS), lang=args.lang)  # 和 Evo 读右上角时一样的参数
     same = differ = 0
     rows = []
     for shot in shots:
         t = int(shot.stem[1:]) / 1000
         raw = cv2.imdecode(np.fromfile(str(shot), np.uint8), cv2.IMREAD_COLOR)  # cv2.imread 读不了中文路径
-        video = frame_at(ffmpeg, segs, t)
-        if video is None:
-            continue
         a, _, shown_a = reader.read_top(reader.top_snip(raw))
         if not shown_a:
             continue  # 这一张不在对局中（右上角什么都没有）
+        # 原图的内容实际在 t + shift 附近（见 record 里送图挑帧的说明）：前后各 0.06 秒里挑和它一样的那一帧
+        video, when, diff = same_frame(ffmpeg, segs, raw, t + shift - 0.06, t + shift + 0.06)
+        if video is None:
+            continue
         b, _, _ = reader.read_top(reader.top_snip(video))
-        diff = float(np.mean(cv2.absdiff(cv2.resize(video, (raw.shape[1], raw.shape[0])), raw)))
         for key in hud.TOP_FIELDS:
             if a.get(key) is None and b.get(key) is None:
                 continue
@@ -947,7 +980,8 @@ def cmd_ocr(args):
             else:
                 differ += 1
         mark = "一样" if all(a.get(k) == b.get(k) for k in hud.TOP_FIELDS) else "不一样"
-        rows.append(f"  {t:7.1f} 秒  原图 {fmt_top(a)}\n            录像 {fmt_top(b)}  → {mark}（整张图平均差 {diff:.1f}）")
+        rows.append(f"  {t:7.1f} 秒  原图 {fmt_top(a)}\n            录像 {fmt_top(b)}  → {mark}"
+                    f"（录像里同一帧在标的时刻 {(when - t) * 1000:+.0f} 毫秒，整张图平均差 {diff:.1f}）")
     print(f"{len(rows)} 张在对局中的原图（不在对局中的跳过）：")
     print("\n".join(rows))
     if same + differ:
