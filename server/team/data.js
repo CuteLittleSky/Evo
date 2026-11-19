@@ -13,7 +13,7 @@
 // rev：每改一次加 1。表单里带着打开时的 rev，保存时对不上（别人刚改过）就不保存，提示看一眼再改。
 
 import { Refuse, randomHex, readDoc, updateDoc } from "./store.js";
-import { NO_STREAM, PLATFORMS, cleanEventFields, cleanPlayerFields, platformName, squash } from "./esports.js";
+import { NO_STREAM, PLATFORMS, cleanEventFields, cleanPlayerFields, eventLabel, platformName, squash } from "./esports.js";
 import { pageFromInput } from "./liquipedia.js";
 
 export const PLAYERS = "manual/players.json";
@@ -224,12 +224,28 @@ export async function importPlayerRows(bucket, by, rows, now) {
 
 // ---------- 赛事 ----------
 
+// 改动记录里的赛事带上阶段（A 组、B 组同名时分得清；2026-11-19 用户同意）
 function eventText(e) {
-  return `「${e.name}」（${e.type}，${e.start.slice(0, 16).replace("T", " ")}）`;
+  return `${eventLabel(e)}（${e.type}，${e.start.slice(0, 16).replace("T", " ")}）`;
 }
 
-const EVENT_LABELS = { name: "名称", type: "类型", stage: "阶段", start: "开始", end: "结束", teams: "队伍", main: "主舞台" };
-const mainText = (main) => (main?.length ? `${main.length} 路` : "没有");
+const EVENT_LABELS = { name: "名称", type: "类型", stage: "阶段", start: "开始", end: "结束" };
+const streamText = (m) => `${m.name}（${platformName(m.platform)} ${m.room}）`;
+
+// 队伍、主舞台改了什么：加了谁、去掉了谁（主舞台还有同一个直播间改了名字），只换了顺序的写"顺序换了"
+function listChange(label, before, after, key, text) {
+  const had = new Map(before.map((x) => [key(x), x]));
+  const has = new Map(after.map((x) => [key(x), x]));
+  const parts = [];
+  const added = after.filter((x) => !had.has(key(x)));
+  const removed = before.filter((x) => !has.has(key(x)));
+  if (added.length) parts.push(`加了 ${added.map(text).join("、")}`);
+  if (removed.length) parts.push(`去掉了 ${removed.map(text).join("、")}`);
+  const renamed = after.filter((x) => had.has(key(x)) && had.get(key(x)).name !== undefined && had.get(key(x)).name !== x.name);
+  if (renamed.length) parts.push(renamed.map((x) => `「${had.get(key(x)).name}」改名「${x.name}」`).join("、"));
+  if (!parts.length && before.map(key).join("\n") !== after.map(key).join("\n")) parts.push("顺序换了");
+  return parts.length ? `${label}${parts.join("，")}` : "";
+}
 
 async function knownTeams(bucket) {
   return [...teamsOf(await players(bucket)).keys()];
@@ -256,17 +272,20 @@ export async function saveEvent(bucket, by, id, form, now) {
     const fields = cleanEventFields(form, [...known, ...item.teams]);
     if (!Array.isArray(form.main)) fields.main = item.main ?? [];  // 表单里没有主舞台那几格（老页面）：照旧
     const when = (iso) => iso.slice(0, 16).replace("T", " ");
-    const before = { ...item, teams: `${item.teams.length} 支队`, start: when(item.start), end: when(item.end), main: mainText(item.main) };
-    const sameTeams = item.teams.join("\n") === fields.teams.join("\n");
-    const sameMain = JSON.stringify(item.main ?? []) === JSON.stringify(fields.main);
+    const before = { ...item, start: when(item.start), end: when(item.end) };
+    const oldTeams = [...item.teams];
+    const oldMain = [...(item.main ?? [])];
     Object.assign(item, fields);
-    const after = { ...item, teams: sameTeams ? before.teams : `${item.teams.length} 支队（换过）`,
-                    start: when(item.start), end: when(item.end), main: sameMain ? before.main : `${mainText(item.main)}（换过）` };
-    const lines = changes(before, after, EVENT_LABELS);
+    const lines = [...changes(before, { ...item, start: when(item.start), end: when(item.end) }, EVENT_LABELS),
+      listChange("队伍：", oldTeams, item.teams, (t) => t, (t) => t),
+      listChange("主舞台：", oldMain, item.main, (m) => `${m.platform}-${m.room}`, streamText)].filter(Boolean);
+    if (item.teams.join("\n") !== oldTeams.join("\n") && lines.some((l) => l.startsWith("队伍：加了") || l.startsWith("队伍：去掉了"))) {
+      lines[lines.findIndex((l) => l.startsWith("队伍："))] += `（现在 ${item.teams.length} 支）`;
+    }
     if (lines.length) stamp(item, by, now);
-    return { name: item.name, lines };
+    return { label: eventLabel(item), lines };
   });
-  if (diff.lines.length) await writeLog(bucket, by, now, `修改赛事「${diff.name}」：${diff.lines.join("，")}`);
+  if (diff.lines.length) await writeLog(bucket, by, now, `修改赛事${diff.label}：${diff.lines.join("；")}`);
 }
 
 export async function deleteEvent(bucket, by, id, now) {

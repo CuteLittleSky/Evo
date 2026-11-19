@@ -68,7 +68,7 @@ check("都没存", events().length === 1);
 r = await editor.post(`/events/${e.id}/save`, form("联赛 第 3 周", [], [["rev", "1"]]).filter(([k]) => !k.startsWith("main_")));
 check("老页面没有主舞台那几格 → 照旧", events()[0].main.length === 2);
 r = await editor.post(`/events/${e.id}/save`, form("联赛 第 3 周", [["bilibili", "7734200", "官方直播"]], [["rev", String(events()[0].rev)]]));
-check("改成一路 → 记下来", events()[0].main.length === 1 && logs()[0] === "修改赛事「联赛 第 3 周」：主舞台 2 路 → 1 路（换过）");
+check("改成一路 → 记下来", events()[0].main.length === 1 && logs()[0] === "修改赛事「联赛 第 3 周」：主舞台：去掉了 某某 解说（抖音 xxfps）");
 
 // ---------- 导入 ----------
 r = await editor.post("/events/import", { table: "名称\t类型\t阶段\t开始\t结束\t队伍\t主舞台\n杯赛\t杯赛\t\t2026-11-19 19:00\t2026-11-19 22:00\t猎鹰、狼队\tB站 1 官方、抖音 Abc_1 解说 二号" });

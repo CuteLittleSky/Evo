@@ -118,3 +118,19 @@ check("发布以后不再提醒", !r.text.includes("有改动还没发布"));
 now += 8 * 24 * HOUR;
 r = await editor.get("/players");
 check("过了 8 天，赛事都该下架了（只是日子过去了）→ 不算有改动", !r.text.includes("有改动还没发布"));
+
+// ---------- 改动记录写清楚 ----------
+now += HOUR;
+const groupA = () => eventList().find((e) => e.stage === "A组");
+const saveA = (teams, main) => editor.post(`/events/${groupA().id}/save`, [...eventForm("LCQ胜者组第1轮", "A组", "2026-11-20T17:00", "2026-11-20T20:00", teams, main),
+  ["rev", String(groupA().rev)]]);
+await saveA(["HABNW", "星火"], [["bilibili", "768756", "快乐滋崩在这里"], ["douyin", "11235066", "解说贝克"]]);
+check("改动记录：带上阶段，主舞台写加了哪几路", logTexts()[0] === "修改赛事「LCQ胜者组第1轮 · A组」：主舞台：加了 快乐滋崩在这里（B站 768756）、解说贝克（抖音 11235066）");
+await saveA(["星火"], [["bilibili", "768756", "快乐滋崩在这里"], ["douyin", "11235066", "解说 贝克"]]);
+check("改动记录：队伍写去掉了谁、现在几支；主舞台同一个直播间改了名字", logTexts()[0]
+  === "修改赛事「LCQ胜者组第1轮 · A组」：队伍：去掉了 HABNW（现在 1 支）；主舞台：「解说贝克」改名「解说 贝克」");
+await saveA(["星火"], [["douyin", "11235066", "解说 贝克"], ["bilibili", "768756", "快乐滋崩在这里"]]);
+check("改动记录：只换了顺序", logTexts()[0] === "修改赛事「LCQ胜者组第1轮 · A组」：主舞台：顺序换了");
+const before = logTexts().length;
+await saveA(["星火"], [["douyin", "11235066", "解说 贝克"], ["bilibili", "768756", "快乐滋崩在这里"]]);
+check("什么都没改 → 不记", logTexts().length === before);

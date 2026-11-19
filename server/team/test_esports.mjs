@@ -138,7 +138,7 @@ check("结束超过 7 天的标出来", r.text.includes("结束超过 7 天，�
 check("只读的看不到改", !r.text.includes("/events/add"));
 e = eventList().find((x) => x.name === "联赛 第 3 周");
 r = await editor.post(`/events/${e.id}/save`, eventForm("联赛 第 3 周", "联赛", "2026-11-17T19:30", "2026-11-17T23:00", ["星火电竞", "北辰"], "B 组对 C 组").concat([["rev", "1"]]));
-check("改开始时间 → 记下几点到几点", logTexts()[0] === "修改赛事「联赛 第 3 周」：开始 2026-11-17 19:00 → 2026-11-17 19:30");
+check("改开始时间 → 记下几点到几点", logTexts()[0] === "修改赛事「联赛 第 3 周 · B 组对 C 组」：开始 2026-11-17 19:00 → 2026-11-17 19:30");
 
 // ---------- 战队改名 ----------
 r = await editor.post("/teams/rename", { from: "北辰", to: "星火电竞" });
