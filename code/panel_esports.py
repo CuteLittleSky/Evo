@@ -108,12 +108,13 @@ def safe_image(url):
 
 
 def member(player, team, main=False):
-    """看直播页上的一位（选手、主舞台的一路、主播）：id、名字、队名、平台、房间号、直播间地址、main、off（不开直播的选手）；
+    """看直播页上的一位（选手、主舞台的一路、主播）：id、名字、队名、平台、房间号、直播间地址、main、off（不开直播的选手）、
+    ob（在这场赛事里观战的人：排在他正在看的那支队里，带"观战"标签）；
     embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时问清晰度和播放地址的接口（都没有就是不能在窗口里播）。"""
     embed = EMBED.get(player["platform"])
     off = player["platform"] == esports_data.NO_STREAM  # 不开直播的选手：照样列在队里，标"不直播"，点不开
     return {"id": player["id"], "name": player["name"], "initial": player["name"][:1].upper(),
-            "team": team, "main": main, "off": off, "platform": player["platform"],
+            "team": team, "main": main, "off": off, "ob": bool(player.get("ob")), "platform": player["platform"],
             "platform_name": esports_data.NO_STREAM_NAME if off else live_status.NAMES[player["platform"]],
             "room": player["room"],
             "url": live_status.room_url(player["platform"], player["room"]),
@@ -150,7 +151,8 @@ def page():
         live=[view(e, now) for e in found["live"]], upcoming=[view(e, now) for e in found["upcoming"]],
         recent=[view(e, now) for e in found["recent"]],
         # 主播名单（赛程文件里有才有这一块）：先照名单的顺序画出来，谁在播由页面里的脚本问 /esports/live
-        streamers=[{**member(s, ""), "watch": url_for("esports.streamers", p=s["id"])} for s in esports_data.streamers(data)])
+        streamers=[{**member(s, s.get("team", "")), "watch": url_for("esports.streamers", p=s["id"])}
+                   for s in esports_data.streamers(data)])
 
 
 @bp.get("/esports/live")
@@ -196,7 +198,7 @@ def watch_page_data(data, members, selected, status_url):
 def streamers():
     """主播的看直播页：和赛事的看直播页是同一个页面，右边不分队伍，只有一列主播（在播的排前面）。"""
     data = esports_data.get()["data"]
-    members = [member(s, "") for s in esports_data.streamers(data)]
+    members = [member(s, s.get("team", "")) for s in esports_data.streamers(data)]  # 选手带着队名，另外加的主播没有队
     if not members:
         flash("现在没有主播名单。", "error")
         return redirect(url_for("esports.page"))

@@ -140,6 +140,8 @@
           <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
             <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
             <span class="watch-p-name es-ell">{{ p.name }}</span>
+            {# 观战的人（赛程里这场赛事写的）：没上场、开着直播在看这支队比赛的选手，排在队里最后 #}
+            {% if p.ob %}<span class="watch-ob">观战</span>{% endif %}
             {% if p.off %}
             <span class="watch-p-time" data-time>{{ p.platform_name }}</span>
             {% else %}
@@ -371,7 +373,7 @@
       if (!p) return;
       setAvatar($("watch-avatar"), p, live ? s : null);
       $("watch-name").textContent = p.name;
-      $("watch-team").textContent = p.team;
+      $("watch-team").textContent = p.team + (p.ob ? "（观战）" : "");
       $("watch-live-title").textContent = live ? (s.title || p.platform_name + " 房间 " + p.room) : "未开播";
       [["watch-danmu", "发弹幕"], ["watch-gift", "送礼物"], ["watch-go", "看直播"]].forEach(function (pair) {
         var link = $(pair[0]);
@@ -390,13 +392,13 @@
       var mates = data.players.filter(function (x) { return x.team === p.team && !!x.main === !!p.main; }).map(function (m) {
         if (!isLive(m.id)) {
           var off = el("span", "watch-mate dis");
-          off.append(m.name, el("span", "watch-mate-sub", m.off ? m.platform_name : st.status ? "未开播" : "…"));
+          off.append(m.name, el("span", "watch-mate-sub", (m.ob ? "观战 · " : "") + (m.off ? m.platform_name : st.status ? "未开播" : "…")));
           return off;
         }
         var btn = el("button", "watch-mate" + (m.id === p.id ? " on" : ""));
         btn.type = "button";
         btn.setAttribute("aria-pressed", m.id === p.id ? "true" : "false");
-        btn.append(el("span", "es-dot pf-" + m.platform), m.name, el("span", "watch-mate-sub", m.platform_name));
+        btn.append(el("span", "es-dot pf-" + m.platform), m.name, el("span", "watch-mate-sub", (m.ob ? "观战 · " : "") + m.platform_name));
         btn.addEventListener("click", function () { select(m.id); });
         return btn;
       });

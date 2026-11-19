@@ -16,11 +16,16 @@
   队伍用顿号「、」隔开，每个队名都要在选手库里。
   可以多一列「主舞台」（第 7 列，没有这一列也行）：这场赛事播导播视角的直播间，写"平台 房间号 名字"，多路用顿号隔开，
   如 B站 7734200 官方直播、斗鱼 9999 某解说；最多 8 路。它们不进选手库，页面上排在队伍的最前面
-- 主播.csv（可以没有这张表；2026-11-19 用户要的：电竞页除了比赛，也列知名主播的日常直播）：主播,平台,房间号。
+  还可以再多一列「观战」（第 8 列；2026-11-19 用户要的）：这场赛事里没上场、开着直播在看别人比赛的选手，写"选手名@他正在看的队"，
+  多位用顿号隔开，如 皮特@DF。选手要在选手库里、开着直播；队要是这场赛事的队（可以不是他自己的队）。
+  页面上他排在那支队的最后，带"观战"标签。比赛时谁在看谁一直在变，平常是在协作网页上改
+- **选手库里的选手全部放进去**（2026-11-19 用户定的："默认职业选手就是主播"，电竞页"主播"一块"只放我们有上传直播链接的选手"）：
+  原来只放这几场赛事用到的队的选手，没有比赛的队就不在文件里、主播一块也就没有他们
+- 主播.csv（可以没有这张表；现在用不上，留着以后加不是职业选手的主播）：主播,平台,房间号。
   和赛事、队伍无关，照表里的顺序；平台只能写四个平台，房间号的规矩同选手库；最多 40 位，其中抖音最多 10 位。
   **没有这张表时，上传照线上现在的主播名单带上**（和队徽一样：名单可能是在协作网页上管的，不能被这里冲掉）；
   有这张表、里面一行都没有，才是"不要主播这一块"
-有错就指出是哪个文件第几行，不上传。结束超过 7 天的赛事不放进去（赛事页只显示最近 7 天的）；选手只放这些赛事用到的。
+有错就指出是哪个文件第几行，不上传。结束超过 7 天的赛事不放进去（赛事页只显示最近 7 天的）。
 平台开关记在线上的文件里：平常上传时照线上现在的开关，--off / --on 只改开关、不动别的。
 只传 R2（https://dl.evotracker.cn/esports.json ，和 notice.json 一起）：COS 停用中，Evo 也只读 R2。
 """
@@ -48,7 +53,7 @@ STREAMERS_NAME = "主播.csv"  # 可以没有的第三张表
 STREAMER_COLUMNS = ["主播", "平台", "房间号"]
 PLAYER_COLUMNS = ["选手", "战队", "平台", "房间号", "Liquipedia页面名"]
 EVENT_COLUMNS = ["名称", "类型", "阶段", "开始", "结束", "队伍"]
-EVENT_EXTRA = ["主舞台"]  # 赛程.csv 可以有、也可以没有的列（接在后面）
+EVENT_EXTRA = ["主舞台", "观战"]  # 赛程.csv 可以有、也可以没有的列（接在后面，照这个顺序：有「观战」就要有「主舞台」）
 MAIN_RE = re.compile(r"(\S+)\s+(\S+)\s+(.+)")  # 主舞台的一路：平台 房间号 名字
 NAME, TEST_NAME = "esports.json", "esports_test.json"
 CONTENT_TYPE = "application/json; charset=utf-8"
@@ -78,6 +83,8 @@ GUIDE = """赛事数据怎么填（python tools/esports.py --init 生成的说�
   - 阶段可以空着
   - 后面可以再加一列「主舞台」（没有这一列也行）：这场赛事播导播视角的直播间（官方直播、解说的直播间），
     写"平台 房间号 名字"，多路用顿号「、」隔开，如：B站 7734200 官方直播、斗鱼 9999 某解说。最多 8 路
+  - 再后面可以加一列「观战」：这场赛事里没上场、开着直播在看别人比赛的选手，写"选手名@他正在看的队"，
+    多位用顿号「、」隔开。Evo 里他排在那支队的最后，带"观战"标签
 
 主播.csv（可以没有这张表）：主播,平台,房间号
   - 电竞页上"主播"那一块：和比赛无关的知名主播，一位一行，照表里的顺序（页面上在播的排前面）
@@ -119,7 +126,7 @@ def read_table(path, columns, extra=()):
     header = [cell.strip() for cell in rows[0]] if rows else []
     while header and not header[-1]:
         header.pop()
-    if header != columns and header != [*columns, *extra]:
+    if header[:len(columns)] != columns or header[len(columns):] != list(extra)[:len(header) - len(columns)]:
         raise Stop(f"{path.name} 第 1 行（表头）要是：{','.join(columns)}"
                    + (f"（后面可以再加：{','.join(extra)}）" if extra else "") + f"\n    现在是：{','.join(header)}")
     names = [*columns, *extra]
@@ -228,9 +235,36 @@ def check_players(rows, errors):
     return players, set(teams)  # 一支队几个人不限（原来要正好 3 个，2026-11-18 用户定了去掉）
 
 
-def check_events(rows, known_teams, errors, notes):
-    """赛程 → [{"line", "name", "type", "stage", "start", "end", "teams", "main"}, ...]；问题写进 errors，提醒写进 notes。
-    main：主舞台（没写是空的）。"""
+def check_observers(text, teams, players, where, errors):
+    """赛程里「观战」那一格 → [{"id": 选手的 id, "team": 队名}, ...]；问题写进 errors。
+    teams：这场赛事的队；players：选手库里的选手（check_players 的结果）。"""
+    by_name = {player["name"]: player for player in players}
+    entries = [entry.strip() for entry in text.split("、") if entry.strip()]
+    found, seen = [], set()
+    if len(entries) > esports_data.OBSERVERS_MAX:
+        errors.append(f"{where}：观战的人最多 {esports_data.OBSERVERS_MAX} 位（现在 {len(entries)} 位）")
+    for entry in entries:
+        name, at, team = (part.strip() for part in entry.partition("@"))
+        player = by_name.get(name)
+        if not at or not name or not team:
+            errors.append(f"{where}：观战「{entry}」要写成：选手名@他正在看的队（如 皮特@DF），多位用顿号「、」隔开")
+        elif player is None:
+            errors.append(f"{where}：观战的选手「{name}」不在{PLAYERS_NAME}里")
+        elif player["platform"] == esports_data.NO_STREAM:
+            errors.append(f"{where}：观战的选手「{name}」在{PLAYERS_NAME}里是不直播的")
+        elif team not in teams:
+            errors.append(f"{where}：观战「{entry}」里的队「{team}」不是这场赛事的队")
+        elif name in seen:
+            errors.append(f"{where}：观战的选手「{name}」写了两次")
+        else:
+            seen.add(name)
+            found.append({"id": player_id(player), "team": team})
+    return found
+
+
+def check_events(rows, known_teams, errors, notes, players=()):
+    """赛程 → [{"line", "name", "type", "stage", "start", "end", "teams", "main", "observers"}, ...]；问题写进 errors，提醒写进 notes。
+    main：主舞台（没写是空的）。observers：观战的人（没写是空的；players 是选手库里的选手，认名字用）。"""
     events = []
     for line, row in rows:
         where = f"{EVENTS_NAME} 第 {line} 行"
@@ -262,9 +296,10 @@ def check_events(rows, known_teams, errors, notes):
             if len(teams) != USUAL_TEAMS:
                 notes.append(f"{where}：「{row['名称']}」有 {len(teams)} 支队（一般是 {USUAL_TEAMS} 支），没写错就不用管")
         main = check_main(row.get("主舞台", ""), where, errors)
+        observers = check_observers(row.get("观战", ""), teams, players, where, errors)
         if len(errors) == before:
             events.append({"line": line, "name": row["名称"], "type": row["类型"], "stage": row["阶段"],
-                           "start": start, "end": end, "teams": teams, "main": main})
+                           "start": start, "end": end, "teams": teams, "main": main, "observers": observers})
     return events
 
 
@@ -320,7 +355,7 @@ def load_tables(folder):
     """读两张表并检查。返回 (选手, 赛事, 提醒)；有错把每一条都打印出来再停下。"""
     errors, notes = [], []
     players, teams = check_players(read_table(folder / PLAYERS_NAME, PLAYER_COLUMNS), errors)
-    events = check_events(read_table(folder / EVENTS_NAME, EVENT_COLUMNS, EVENT_EXTRA), teams, errors, notes)
+    events = check_events(read_table(folder / EVENTS_NAME, EVENT_COLUMNS, EVENT_EXTRA), teams, errors, notes, players)
     if errors:
         raise Stop(f"表里有 {len(errors)} 处要改：\n" + "\n".join(f"  · {error}" for error in errors))
     return players, events, notes
@@ -335,8 +370,11 @@ def player_id(player):
     return f"{player['platform']}-{player['room']}"
 
 
-def build(players, events, switches, notes, now=None, teams=None, streamers=None):
+def build(players, events, switches, notes, now=None, teams=None, streamers=None, everyone=False):
     """teams：{队名: {"logo": 文件名}}（队徽；这个脚本不管队徽，上传时照线上现在的带上）。只留这次用到的队，一个都没有就不写这一项。
+    everyone：选手库里的选手全部放进去（2026-11-19 起本机脚本发布时都是这样：电竞页"主播"一块列所有开直播的选手）；
+    False 是原来的做法，只放这几场赛事用到的队的选手（协作网页改成放全部以前，对照测试用它）。
+    赛事带 observers（观战的人，[{"id", "team"}, ...]）才写这一项。
     streamers：主播名单 [{"name", "platform", "room"}, ...]（主播.csv 里的，或者线上现在的）；没有、是空的就不写这一项。"""
     now = now or now_beijing()
     kept, ids = [], set()
@@ -356,12 +394,14 @@ def build(players, events, switches, notes, now=None, teams=None, streamers=None
         if event.get("main"):  # 主舞台：有才写这一项
             kept[-1]["main"] = [{"id": f"{m['platform']}-{m['room']}", "name": m["name"], "platform": m["platform"],
                                  "room": m["room"]} for m in event["main"]]
+        if event.get("observers"):  # 观战的人：有才写这一项
+            kept[-1]["observers"] = [{"id": o["id"], "team": o["team"]} for o in event["observers"]]
     used = {team for event in kept for team in event["teams"]}
     data = {"version": esports_data.VERSION, "updated": now.isoformat(timespec="seconds"),
             "platforms": {key: switches.get(key) is not False for key in live_status.PLATFORMS},
             "players": [{"id": player_id(p), "name": p["name"], "team": p["team"],
                          "platform": p["platform"], "room": p["room"], "liquipedia": p["liquipedia"]}
-                        for p in players if p["team"] in used],
+                        for p in players if everyone or p["team"] in used],
             "events": kept}
     logos = esports_data.clean_teams(teams, used)
     if logos:
@@ -370,7 +410,8 @@ def build(players, events, switches, notes, now=None, teams=None, streamers=None
         data["streamers"] = [{"id": f"{s['platform']}-{s['room']}", "name": s["name"], "platform": s["platform"], "room": s["room"]}
                              for s in streamers]
     checked = esports_data.clean(data)  # Evo 读的时候会不会去掉哪一条
-    streams = lambda found: sum(len(event.get("main") or []) for event in found["events"])  # noqa: E731
+    streams = lambda found: sum(len(event.get("main") or []) + len(event.get("observers") or [])  # noqa: E731
+                                for event in found["events"])
     if (len(checked["players"]) != len(data["players"]) or len(checked["events"]) != len(data["events"])
             or streams(checked) != streams(data) or len(checked["streamers"]) != len(data.get("streamers") or [])):
         raise Stop("生成的文件里有 Evo 会去掉的条目（名字里有特别的字符？），告诉 Claude 查一下")
@@ -399,7 +440,8 @@ def describe(data, now=None):
         lines.append(f"    [{words[esports_data.status(event, now)]}] {start:%m-%d %H:%M}–{end:%H:%M} {event['type']} "
                      f"{event['name']}" + (f" · {event['stage']}" if event["stage"] else "")
                      + f" · {len(event['teams'])} 支队 {len(esports_data.event_players(data, event))} 人"
-                     + (f" · 主舞台 {len(event['main'])} 路" if event.get("main") else ""))
+                     + (f" · 主舞台 {len(event['main'])} 路" if event.get("main") else "")
+                     + (f" · 观战 {len(event['observers'])} 位" if event.get("observers") else ""))
     return "\n".join(lines)
 
 
@@ -545,7 +587,7 @@ def main():
                 print(f"提醒：{note}")
             return 0 if check_rooms(players + (streamers or [])) else 1
         if args.out:
-            data = build(players, events, {}, notes, streamers=streamers)
+            data = build(players, events, {}, notes, streamers=streamers, everyone=True)
             Path(args.out).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
             print(describe(data))
             for note in notes:
@@ -557,7 +599,8 @@ def main():
         if streamers is None and online_now.get("streamers"):
             streamers = online_now["streamers"]  # 没有 主播.csv：照线上现在的带上
             notes.append(f"没有{STREAMERS_NAME}：线上现在的 {len(streamers)} 位主播照原样带上")
-        data = build(players, events, online_now.get("platforms", {}), notes, teams=online_now.get("teams"), streamers=streamers)
+        data = build(players, events, online_now.get("platforms", {}), notes, teams=online_now.get("teams"), streamers=streamers,
+                     everyone=True)
         for note in notes:
             print(f"提醒：{note}")
         examples = [text for text in [p["name"] for p in data["players"]] + [e["name"] for e in data["events"]]

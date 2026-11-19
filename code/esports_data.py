@@ -25,7 +25,13 @@ esports.json 由 tools/esports.py 从两张 CSV 表生成、上传：
 - teams（可以没有）：队徽。键是队名，logo 是公开存储桶 esports/logos/ 下的文件名（小写字母和数字 + .png / .webp，
   协作网页上传时起的）。**只写文件名、不写网址**：Evo 自己拼成 config/watch.json 里 logo_url 那个地址（logo_url()）。
   没有队徽的队不写；名单里没有的队、文件名写得不对的那一条去掉
-- streamers（可以没有；2026-11-19 用户要的：电竞页除了比赛，也列知名主播的日常直播）：**主播名单**，和赛事、队伍无关，
+  observers（可以没有；2026-11-19 用户要的）：这场赛事里**观战的人**，就是没上场、开着直播在看别人比赛的选手：
+  [{"id": "douyu-123456", "team": "DF"}]。id 是 players 里一位开直播的选手，team 是这场赛事的一支队（他正在看的那支队，
+  可以不是他自己的队）。页面上他排在那支队的最后、带"观战"标签（event_teams()）；他本来就在这场赛事的某支队里时，
+  只在 observers 写的那支队下面出现一次。最多 60 位，同一位只留第一次；队名不在这场赛事里的去掉
+- **电竞页的"主播"一块**（streamers()，2026-11-19 用户定的："默认职业选手就是主播""只放我们有上传直播链接的选手"）：
+  players 里所有开直播的选手（发布时要放选手库里的全部选手，不只是这几场赛事用到的队），后面接 streamers 里另外加的
+- streamers（可以没有；现在没人写它，留着以后加不是职业选手的主播）：另外加的主播，和赛事、队伍无关，
   照写的顺序（页面上在播的排前面）。每位和主舞台的一路一样写：id、name、platform（四个平台之一，不能是 "none"）、room。
   最多 40 位，其中抖音最多 10 位（抖音没开播的房间每查一次要开约 1 MB 的网页），多出来的去掉。
   主播可以同时是 players 里的选手（同一个平台和房间）；id 和某位选手、某路主舞台一样，房间却不一样的那一位去掉
@@ -68,8 +74,9 @@ NO_STREAM = "none"     # 选手的 platform 写这个：这位选手不开直播
 NO_STREAM_NAME = "不直播"
 MAIN_MAX = 8           # 一场赛事的主舞台最多几路
 MAIN_TEAM = "主舞台"   # 主舞台的直播间在页面上"算哪支队"
-STREAMERS_MAX = 40     # 主播名单最多几位
+STREAMERS_MAX = 40     # streamers（另外加的主播）最多几位
 STREAMERS_DOUYIN_MAX = 10  # 其中抖音最多几位（没开播的抖音房间每查一次约 1 MB）
+OBSERVERS_MAX = 60     # 一场赛事里观战的人最多几位
 LOGO_RE = re.compile(r"[a-z0-9]{8,40}\.(png|webp)")  # 队徽的文件名：拼不出别的文件夹、别的网站
 LIVE, UPCOMING, ENDED = "live", "upcoming", "ended"
 
@@ -144,7 +151,21 @@ def clean_event(raw):
     main = _unique(raw["main"][:MAIN_MAX], clean_stream) if isinstance(raw.get("main"), list) else []
     if main:  # 没有主舞台的赛事不带这一项（和以前的文件一模一样）
         event["main"] = main
+    observers = _unique(raw["observers"][:200], lambda item: clean_observer(item, event["teams"])) \
+        if isinstance(raw.get("observers"), list) else []
+    if observers:  # 没有人观战的赛事不带这一项
+        event["observers"] = observers[:OBSERVERS_MAX]
     return event
+
+
+def clean_observer(raw, teams):
+    """赛事里观战的一位：{"id": 选手的 id, "team": 这场赛事的一支队}；写得不对、队不在这场赛事里返回 None。"""
+    if not isinstance(raw, dict):
+        return None
+    pid, team = raw.get("id"), _text(raw.get("team"), 40)
+    if not isinstance(pid, str) or not ID_RE.fullmatch(pid) or team not in teams:
+        return None
+    return {"id": pid, "team": team}
 
 
 def clean_teams(raw, known):
@@ -309,10 +330,18 @@ def find_event(data, event_id):
 
 
 def event_teams(data, event):
-    """这场赛事的队伍和选手：[(队名, [选手, ...]), ...]，按赛程里写的顺序。"""
+    """这场赛事的队伍和选手：[(队名, [选手, ...]), ...]，按赛程里写的顺序。
+    观战的人（赛事的 observers）排在他正在看的那支队的最后，是选手的一份拷贝、多一项 "ob": True；
+    他本来就在这场赛事的某支队里时，从原来的位置拿掉（一位选手在页面上只出现一次）。名单里没有、不开直播的那一条不算。"""
+    by_id = {player["id"]: player for player in data["players"]}
+    watching = {item["id"]: item["team"] for item in event.get("observers") or []
+                if item["id"] in by_id and by_id[item["id"]]["platform"] != NO_STREAM}
     by_team = {}
     for player in data["players"]:
-        by_team.setdefault(player["team"], []).append(player)
+        if player["id"] not in watching:
+            by_team.setdefault(player["team"], []).append(player)
+    for pid, team in watching.items():
+        by_team.setdefault(team, []).append({**by_id[pid], "ob": True})
     return [(team, by_team.get(team, [])) for team in event["teams"]]
 
 
@@ -333,8 +362,16 @@ def event_main(data, event):
 
 
 def streamers(data):
-    """主播名单（照赛程文件里写的顺序）；没有、存下的是老版本下载的（没有这一项）返回 []。"""
-    return (data.get("streamers") or []) if data else []
+    """电竞页"主播"一块列的人：名单里所有开直播的选手（照名单的顺序），后面接 streamers 里另外加的（和选手同一个 id 的不重复）。
+    没有赛事数据返回 []。"""
+    if not data:
+        return []
+    out, seen = [], set()
+    for item in streaming(data.get("players") or []) + (data.get("streamers") or []):
+        if item["id"] not in seen:
+            seen.add(item["id"])
+            out.append(item)
+    return out
 
 
 def find_stream(data, stream_id):

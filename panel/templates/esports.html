@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}电竞 · Evo{% endblock %}
 
-{# "电竞"页面（panel_esports.py，2026-11-17 用户定的；0.6.0、0.6.1 里叫"赛事"）：正在进行（卡片）、主播（有名单才有）、即将开始、最近结束（一行一场）。
+{# "电竞"页面（panel_esports.py，2026-11-17 用户定的；0.6.0、0.6.1 里叫"赛事"）：正在进行（卡片）、主播（名单里开直播的选手）、即将开始、最近结束（一行一场）。
    赛程是开发者手动维护的 esports.json；"几位选手在播"晚一点才到（下面的脚本问 /esports/live），位置先留好，不让卡片跳 #}
 
 {# 即将开始、最近结束的一行：日期和钟点、名称和阶段、队伍数、右边一句话。
@@ -71,9 +71,10 @@
 </section>
 
 
-{# 主播（2026-11-19 用户要的：除了比赛，也列知名主播的日常直播；赛程文件里有主播名单才有这一块）。
-   先照名单的顺序画出来（都当作还不知道）；谁在播由下面的脚本问 /esports/live，再把在播的排到前面：
-   在播的点了在 Evo 里看（主播的看直播页），没开播、没查到的用浏览器打开他的直播间（用户选的）。
+{# 主播（2026-11-19 用户要的：除了比赛，也列主播的日常直播）。列的是名单里所有开直播的选手（用户定的：
+   "默认职业选手就是主播""只放我们有上传直播链接的选手"），后面接赛程文件里另外加的主播；一位都没有就没有这一块。
+   名单先由服务器画好、藏着；谁在播由下面的脚本问 /esports/live，再分成两堆：在播的一位一格，点了在 Evo 里看
+   （主播的看直播页）；没开播、没查到的收在下面一栏里（人多，不超过 12 位时默认展开），点了用浏览器打开他的直播间。
    只在打开这一页、点"刷新"时查，不定时查（抖音没开播的房间每查一次约 1 MB）。平台一直写在名字下面（不藏平台） #}
 {% if streamers %}
 <section class="es-section" aria-labelledby="h-es-streamers">
@@ -82,14 +83,15 @@
     <span class="es-count" id="es-st-count" role="status" aria-atomic="true">正在看谁在播…</span>
     <button type="button" class="btn-text es-st-refresh" id="es-st-refresh" hidden>刷新</button>
   </div>
-  <ul class="es-st-grid" id="es-st-grid">
+  <p class="card es-none" id="es-st-none" hidden>现在没有人在播。</p>
+  <ul class="es-st-grid" id="es-st-grid" hidden>
     {% for s in streamers %}
     <li>
       <a class="card es-st" href="{{ s.watch }}" data-streamer="{{ s.id }}" data-name="{{ s.name }}" data-initial="{{ s.initial }}"
-         data-platform="{{ s.platform_name }}" data-watch="{{ s.watch }}" data-room="{{ s.url }}">
+         data-team="{{ s.team }}" data-platform="{{ s.platform_name }}" data-watch="{{ s.watch }}" data-room="{{ s.url }}">
         <span class="es-avatar es-st-avatar" data-avatar aria-hidden="true">{{ s.initial }}</span>
         <span class="es-st-main">
-          <span class="es-st-name es-ell">{{ s.name }}</span>
+          <span class="es-st-top"><span class="es-st-name es-ell">{{ s.name }}</span>{% if s.team %}<span class="es-st-team es-ell">{{ s.team }}</span>{% endif %}</span>
           <span class="es-st-sub"><span class="es-dot pf-{{ s.platform }}" aria-hidden="true"></span><span class="es-st-plat">{{ s.platform_name }}</span><span class="es-st-title es-ell" data-title></span></span>
         </span>
         <span class="es-st-state" data-state>…</span>
@@ -97,6 +99,13 @@
     </li>
     {% endfor %}
   </ul>
+  <details class="es-st-more" id="es-st-more" hidden>
+    <summary>
+      <svg class="es-st-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+      <span id="es-st-more-text">没开播的</span>
+    </summary>
+    <ul class="es-st-grid" id="es-st-off"></ul>
+  </details>
 </section>
 {% endif %}
 
@@ -118,7 +127,7 @@
 </section>
 {% endif %}
 
-<p class="es-foot">{% if streamers %}赛事、队伍、主播名单和每个直播间{% else %}赛事、队伍和每位选手的直播间{% endif %}由 Evo 统一维护。</p>
+<p class="es-foot">赛事、队伍和每位选手的直播间由 Evo 统一维护。</p>
 {% endif %}
 {% endblock %}
 
@@ -150,12 +159,14 @@
 {% endif %}
 {% if streamers %}
 <script>
-  // 主播名单里谁在播：页面画好以后问一次，点"刷新"再问（服务器 60 秒内查过就用上次的）。在播的排前面、点了在 Evo 里看；
-  // 没开播、没查到的用浏览器打开直播间
+  // 主播一块里谁在播：页面画好以后问一次，点"刷新"再问（服务器 60 秒内查过就用上次的）。在播的放上面、点了在 Evo 里看；
+  // 没开播、没查到的收在下面一栏，点了用浏览器打开直播间
   (function () {
-    var grid = document.getElementById("es-st-grid"), count = document.getElementById("es-st-count");
-    var button = document.getElementById("es-st-refresh");
+    var grid = document.getElementById("es-st-grid"), offGrid = document.getElementById("es-st-off");
+    var more = document.getElementById("es-st-more"), none = document.getElementById("es-st-none");
+    var count = document.getElementById("es-st-count"), button = document.getElementById("es-st-refresh");
     var cards = Array.prototype.slice.call(grid.querySelectorAll(".es-st"));
+    var opened = false;  // 下面那一栏默认开不开只在第一次定，以后听玩家的
     var EXTERNAL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>';
     function minutes(since) { return since ? Math.max(0, Math.floor((Date.now() / 1000 - since) / 60)) : null; }
     function el(cls, text) { var n = document.createElement("span"); n.className = cls; if (text !== undefined) n.textContent = text; return n; }
@@ -174,7 +185,8 @@
     function paint(card, info) {
       var live = !!info && info.state === "live", known = !!info && info.state !== "error";
       var state = card.querySelector("[data-state]"), title = card.querySelector("[data-title]");
-      var name = card.dataset.name, platform = card.dataset.platform, m = live ? minutes(info.since) : null;
+      var name = card.dataset.name + (card.dataset.team ? "（" + card.dataset.team + "）" : ""), platform = card.dataset.platform;
+      var m = live ? minutes(info.since) : null;
       card.classList.toggle("live", live);
       card.classList.toggle("off", !live);
       avatar(card.querySelector("[data-avatar]"), card, live && info.avatar ? info.avatar : "");
@@ -193,26 +205,35 @@
         card.rel = "noopener noreferrer";
         state.innerHTML = EXTERNAL;  // 写死的图形，不放外来的字
         card.setAttribute("aria-label", name + (known ? "，未开播" : "，没查到在不在播") + "，用浏览器打开" + platform + "直播间");
-        card.title = "用浏览器打开 " + name + " 的" + platform + "直播间";
+        card.title = "用浏览器打开 " + card.dataset.name + " 的" + platform + "直播间";
       }
-      return live;
+      return live ? "live" : known ? "offline" : "error";
+    }
+    function fill(list, wanted) {  // 这一堆里该有哪几格、照名单的顺序；本来就对就不动
+      var now = Array.prototype.map.call(list.children, function (li) { return li.firstElementChild; });
+      if (now.length === wanted.length && wanted.every(function (card, i) { return card === now[i]; })) return;
+      wanted.forEach(function (card) { list.appendChild(card.parentNode); });
     }
     function show(found, checked) {
-      var live = 0, focused = document.activeElement;
-      var order = cards.map(function (card, index) {
-        var on = paint(card, found ? found[card.dataset.streamer] : null);
-        if (on) live++;
-        return {card: card, key: (on ? 0 : 1) * 1000 + index};
-      }).sort(function (a, b) { return a.key - b.key; });
-      var now = Array.prototype.map.call(grid.children, function (li) { return li.firstElementChild; });
-      if (order.some(function (item, index) { return item.card !== now[index]; })) {
-        order.forEach(function (item) { grid.appendChild(item.card.parentNode); });
-        if (focused && grid.contains(focused)) focused.focus();  // 挪了位置以后焦点还在原来那一位上
-      }
+      var focused = document.activeElement, on = [], rest = [], unknown = 0;
+      cards.forEach(function (card) {
+        var state = paint(card, found ? found[card.dataset.streamer] : null);
+        (state === "live" ? on : rest).push(card);
+        if (state === "error") unknown++;
+      });
+      fill(grid, on);
+      fill(offGrid, rest);
+      grid.hidden = on.length === 0;
+      none.hidden = !found || on.length > 0;
+      more.hidden = rest.length === 0;
+      if (!opened) { more.open = rest.length <= 12; opened = true; }
+      document.getElementById("es-st-more-text").textContent =
+        (!found ? "没查到的 " : unknown && unknown < rest.length ? "没开播、没查到的 " : unknown ? "没查到的 " : "没开播的 ") + rest.length + " 位";
+      if (focused && (grid.contains(focused) || offGrid.contains(focused)) && focused.offsetParent) focused.focus();  // 挪了位置以后焦点还在原来那一位上
       count.textContent = "";
       if (found) {
         var at = new Date(checked * 1000);
-        count.append("在播 ", el("num", live), " / ", String(cards.length), " 位，",
+        count.append("在播 ", el("num", on.length), " / ", String(cards.length), " 位，",
                      el("num", String(at.getHours()).padStart(2, "0") + ":" + String(at.getMinutes()).padStart(2, "0")), " 查的");
       } else {
         count.textContent = "没查到谁在播，可能是网络连不上";

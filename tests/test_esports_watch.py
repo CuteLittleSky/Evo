@@ -40,7 +40,7 @@ STREAMERS = [{"id": "douyu-901", "name": "大主播", "platform": "douyu", "room
              {"id": "bilibili-903", "name": "三主播", "platform": "bilibili", "room": "903"}]
 
 
-def serve(folder, platforms=None, teams=None, main=None, off=False, streamers=None):
+def serve(folder, platforms=None, teams=None, main=None, off=False, streamers=None, observers=None, nobody=False):
     players = []
     for team, platform in zip(TEAMS, ("douyu", "bilibili", "douyin")):
         players += [{"id": f"{platform}-{n}", "name": f"{team[:1]}{n}号" if n > 1 else "kite</script>", "team": team,
@@ -53,6 +53,10 @@ def serve(folder, platforms=None, teams=None, main=None, off=False, streamers=No
                "teams": ["甲队"]}]
     if main:
         events[0]["main"] = main
+    if observers:  # 第一场赛事里观战的人
+        events[0]["observers"] = observers
+    if nobody:  # 选手库是空的（只看另外加的主播时用）
+        players = []
     if off:  # 甲队的第三个人不开直播
         players[2].update(id="none-0123456789ab", platform="none", room="")
     path = Path(folder) / "esports.json"
@@ -247,13 +251,39 @@ def main():
         "none-0123456789ab" not in asked_ids and len(asked_ids) == 8 and len(got["players"]) == 8
         and count["events"]["live"]["total"] == 8 and gone == 404)
     # ---- 主播的看直播页（2026-11-19）----
+    serve(folder, observers=[{"id": "bilibili-1", "team": "丙队"}, {"id": "douyin-2", "team": "甲队"}])
+    seen = client.get("/esports/live/watch?p=bilibili-1").get_data(as_text=True)
+    seen_data = page_data(seen)
+    seen_side = seen[seen.find('<aside class="watch-side"'):seen.find("</aside>")]
+    boxes = {re.search(r'class="watch-team-name es-ell">(.*?)</span>', box, re.S).group(1): box
+             for box in re.findall(r"<details.*?</details>", seen_side, re.S)}
+    order = [(p["id"], p["team"], p["ob"]) for p in seen_data["players"]]
+    out["赛程里写了观战的人：他排在正在看的那支队的最后、名字后面有\"观战\"的标签，从自己的队里拿掉；别人没有这个标签；照样能选来看"] = (
+        order[:7] == [("douyin-1", "丙队", False), ("douyin-3", "丙队", False), ("bilibili-1", "丙队", True), ("douyu-1", "甲队", False),
+                      ("douyu-2", "甲队", False), ("douyu-3", "甲队", False), ("douyin-2", "甲队", True)]
+        and len(order) == 9 and len({pid for pid, _, _ in order}) == 9 and seen_data["selected"] == "bilibili-1"
+        and seen_side.count('class="watch-ob">观战</span>') == 2 and boxes["丙队"].count('class="watch-ob"') == 1
+        and boxes["甲队"].count('class="watch-ob"') == 1 and boxes["&lt;b&gt;乙队&lt;/b&gt;"].count('class="watch-ob"') == 0
+        and boxes["丙队"].count('class="watch-p"') == 3 and boxes["&lt;b&gt;乙队&lt;/b&gt;"].count('class="watch-p"') == 2)
     serve(folder)
+    plain = page_data(client.get("/esports/live/watch").get_data(as_text=True))
+    out["没有人观战的赛事照旧：没有\"观战\"的标签，每位都在自己的队里"] = (
+        'class="watch-ob"' not in client.get("/esports/live/watch").get_data(as_text=True)
+        and not any(p["ob"] for p in plain["players"]) and len(plain["players"]) == 9)
+    serve(folder, nobody=True)
     none = client.get("/esports/streamers")
-    out["没有主播名单：主播的看直播页回电竞页并说明，状态接口回 404"] = (
+    out["名单里一位开直播的都没有：主播的看直播页回电竞页并说明，状态接口回 404"] = (
         none.status_code == 302 and none.headers["Location"].endswith("/esports")
         and "现在没有主播名单" in client.get("/esports").get_data(as_text=True)
         and client.get("/esports/streamers/status").status_code == 404)
     serve(folder, streamers=STREAMERS)
+    everyone = page_data(client.get("/esports/streamers?p=douyu-1").get_data(as_text=True))
+    out["主播的看直播页列的是名单里所有开直播的选手（带着队名），后面接另外加的主播；选手也能选来看"] = (
+        [p["id"] for p in everyone["players"]][:3] == ["douyu-1", "douyu-2", "douyu-3"] and len(everyone["players"]) == 12
+        and everyone["players"][0]["team"] == "甲队" and everyone["players"][-1]["id"] == "bilibili-903"
+        and everyone["players"][-1]["team"] == "" and everyone["selected"] == "douyu-1"
+        and not any(p["ob"] for p in everyone["players"]))
+    serve(folder, streamers=STREAMERS, nobody=True)
     solo = client.get("/esports/streamers?p=huya-902").get_data(as_text=True)
     side = solo[solo.find('<aside class="watch-side"'):solo.find("</aside>")]
     rows = re.findall(r'<button type="button" class="watch-p".*?</button>', side, re.S)

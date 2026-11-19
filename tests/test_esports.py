@@ -396,9 +396,9 @@ def tool_checks(out):
         and data["events"][0]["start"].endswith("T19:00:00+08:00") and data["events"][0]["teams"] == ["星火电竞", "北辰"])
     out["Excel 改成 2026/11/17 20:00、带秒的时间也认"] = (
         len(data["events"]) == 2 and data["events"][1].get("end", "").endswith("T23:30:00+08:00"))
-    out["结束超过 7 天的赛事不放进去并提醒；选手只放这些赛事用到的队伍"] = (
+    out["结束超过 7 天的赛事不放进去并提醒；选手库里的选手全部放进去（没比赛的队的也在：电竞页\"主播\"一块列所有开直播的选手）"] = (
         "结束超过 7 天" in text and "第 4 行" in text
-        and {p["team"] for p in data["players"]} == {"星火电竞", "北辰"} and len(data["players"]) == 6)
+        and {p["team"] for p in data["players"]} == {"星火电竞", "北辰", "没比赛的队"} and len(data["players"]) == 9)
     bad_roster = ["阿一,星火电竞,斗鱼,101,", "阿二,星火电竞,快手,102,", "阿三,星火电竞,B站,10x3,",
                   "阿一,北辰,抖音,201,", "乙二,北辰,斗鱼,101,", ",北辰,B站,203,", "丁一,两个人的队,斗鱼,401,", "丁二,两个人的队,斗鱼,402,"]
     bad_schedule = [f"联赛,联赛,,{day(0, '19:00')},{day(0, '18:00')},两个人的队",
@@ -514,10 +514,36 @@ def streamer_checks(out):
            {"id": "douyu-1x", "name": "占了别人 id 的", "platform": "douyu", "room": "9008"}]
     players = [player(), player("douyu-1x", "另一位", room="77")]
     read = esports_data.clean(file(players, [event()], streamers=good + bad))
-    out["主播名单：照写的顺序读进来；不直播、房间号不对、没名字、不认识的平台、重复的去掉；没有这一项就是空的"] = (
-        read["streamers"] == good and esports_data.streamers(read) == good
+    out["另外加的主播（streamers）：照写的顺序读进来；不直播、房间号不对、没名字、不认识的平台、重复的去掉；没有这一项就是空的"] = (
+        read["streamers"] == good
         and esports_data.clean(file())["streamers"] == [] and esports_data.clean(file(streamers="乱写"))["streamers"] == []
         and esports_data.streamers(None) == [] and esports_data.streamers({"players": []}) == [])
+    quiet = esports_data.clean(file(players + [player("none-0123456789ab", "不播的", platform="none", room="")], [event()]))
+    out["电竞页\"主播\"一块列的人：名单里所有开直播的选手（不开直播的不算），后面接另外加的主播，同一个人不重复"] = (
+        esports_data.streamers(read) == read["players"] + good[:4]
+        and [s["id"] for s in esports_data.streamers(quiet)] == ["douyu-1", "douyu-1x"])
+    # ---- 观战的人（赛事的 observers）----
+    cast = [player("douyu-1", "甲一", team="甲队"), player("douyu-2", "甲二", team="甲队", room="2"),
+            player("huya-3", "乙一", team="乙队", platform="huya", room="3"),
+            player("bilibili-4", "丙一", team="丙队", platform="bilibili", room="4"),
+            player("none-0123456789ab", "丙二", team="丙队", platform="none", room="")]
+    watched = esports_data.clean(file(cast, [event(teams=("甲队", "乙队"), observers=[
+        {"id": "bilibili-4", "team": "甲队"}, {"id": "douyu-2", "team": "乙队"}, {"id": "bilibili-4", "team": "乙队"},
+        {"id": "huya-3", "team": "丙队"}, {"id": "有 空格", "team": "甲队"}, {"id": "nobody-9", "team": "甲队"},
+        {"id": "none-0123456789ab", "team": "甲队"}, "不是一条"])]))
+    game = watched["events"][0]
+    out["赛事里观战的人：队不在这场赛事里、id 写得不对、同一位写两次的去掉；没有人观战的赛事不带这一项"] = (
+        game["observers"] == [{"id": "bilibili-4", "team": "甲队"}, {"id": "douyu-2", "team": "乙队"}, {"id": "nobody-9", "team": "甲队"},
+                              {"id": "none-0123456789ab", "team": "甲队"}]
+        and "observers" not in esports_data.clean(file(cast, [event(teams=("甲队",))]))["events"][0]
+        and len(esports_data.clean(file(cast, [event(teams=("甲队",), observers=[{"id": f"x-{n}", "team": "甲队"} for n in range(80)])]))
+                ["events"][0]["observers"]) == 60)
+    teams = esports_data.event_teams(watched, game)
+    out["观战的人排在他正在看的那支队的最后、带着标记，可以不是那支队的人；本来就在这场赛事里的从原来的队拿掉；名单里没有、不开直播的不算"] = (
+        [(team, [(p["name"], bool(p.get("ob"))) for p in members]) for team, members in teams]
+        == [("甲队", [("甲一", False), ("丙一", True)]), ("乙队", [("乙一", False), ("甲二", True)])]
+        and [p["id"] for p in esports_data.event_players(watched, game)] == ["douyu-1", "bilibili-4", "huya-3", "douyu-2"]
+        and teams[0][1][1]["team"] == "丙队" and "ob" not in watched["players"][3])
     out["主播可以同时是选手（同一个房间）；id 和某位选手一样、房间却不一样的那一位去掉"] = (
         good[4] in read["streamers"] and all(s["name"] != "占了别人 id 的" for s in read["streamers"]))
     many = [one("douyu", 10000 + n) for n in range(60)]
@@ -542,6 +568,12 @@ def streamer_checks(out):
                 (Path(folder) / "主播.csv").write_bytes((header + "\r\n" + "\r\n".join(rows) + "\r\n").encode("utf-8-sig"))
             return run_tool(folder, roster, schedule)
 
+    def with_header(players, events, header):
+        """用这个表头写赛程表，运行脚本，返回打印的字里说表头不对的那一句（没有就是空的）。"""
+        with tempfile.TemporaryDirectory() as folder:
+            printed = run_tool(folder, players, events, event_columns=header)[1]
+        return printed if "表头" in printed else ""
+
     code, text, data = with_streamers(["大主播,斗鱼,9001", "二主播,抖音,XxFps", "也是选手,斗鱼,101", ",,"])
     plain = with_streamers(None)
     out["发布脚本：有 主播.csv 就生成主播名单（id 是平台-房间号，抖音转小写，照表里的顺序），预览里写着几位；没有这张表就不写这一项"] = (
@@ -560,11 +592,35 @@ def streamer_checks(out):
     members = [{"line": n, "name": f"选手{n}", "team": "甲队", "platform": "douyu", "room": str(n), "liquipedia": ""} for n in (1, 2, 3)]
     matches = [{"line": 2, "name": "联赛", "type": "联赛", "stage": "", "teams": ["甲队"],
                 "start": today + timedelta(hours=1), "end": today + timedelta(hours=4)}]
-    kept = tool.build(members, matches, {}, [], streamers=read["streamers"][:2])  # 线上现在的名单照原样带上
+    members.append({"line": 9, "name": "没比赛的", "team": "乙队", "platform": "huya", "room": "9", "liquipedia": ""})
+    seen = [{**matches[0], "observers": [{"id": "huya-9", "team": "甲队"}]}]
+    out["发布脚本：everyone 放选手库里的全部选手，不写就是原来的（只放用到的队，协作网页的对照用）；赛事带观战的人才写 observers"] = (
+        len(tool.build(members, matches, {}, [])["players"]) == 3 and len(tool.build(members, matches, {}, [], everyone=True)["players"]) == 4
+        and "observers" not in tool.build(members, matches, {}, [], everyone=True)["events"][0]
+        and tool.build(members, seen, {}, [], everyone=True)["events"][0]["observers"] == [{"id": "huya-9", "team": "甲队"}])
+    both = "名称,类型,阶段,开始,结束,队伍,主舞台,观战"
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(folder, roster + ["乙一,北辰,抖音,XxFps,", "乙二,北辰,不直播,,"],
+                                    [schedule[0] + ",,乙一@星火电竞、阿三 @ 星火电竞"], event_columns=both)
+    out["赛程表可以再多一列「观战」（选手名@他正在看的队）：生成时换成选手的 id，预览里写着几位"] = (
+        code == 0 and data is not None and data["events"][0]["observers"] == [
+            {"id": "douyin-xxfps", "team": "星火电竞"}, {"id": "bilibili-103", "team": "星火电竞"}]
+        and esports_data.clean(data)["events"][0]["observers"] == data["events"][0]["observers"] and "观战 2 位" in text)
+    with tempfile.TemporaryDirectory() as folder:
+        code, text, data = run_tool(folder, roster + ["乙一,北辰,抖音,XxFps,", "乙二,北辰,不直播,,"],
+                                    [schedule[0] + ",,乙一、没这个人@星火电竞、乙二@星火电竞、乙一@北辰、阿一@星火电竞、阿一@星火电竞"],
+                                    event_columns=both)
+    out["「观战」写错了（没写队、选手不在选手库、不直播的选手、队不是这场赛事的、同一位写两次）都指出来，不生成文件；只有「观战」没有「主舞台」的表头不认"] = (
+        code == 1 and data is None and all(word in text for word in (
+            "观战「乙一」要写成：选手名@他正在看的队", "观战的选手「没这个人」不在选手库.csv里", "观战的选手「乙二」在选手库.csv里是不直播的",
+            "观战「乙一@北辰」里的队「北辰」不是这场赛事的队", "观战的选手「阿一」写了两次"))
+        and "表头" in with_header(roster, schedule, "名称,类型,阶段,开始,结束,队伍,观战")
+        and with_header(roster, [schedule[0] + ","], "名称,类型,阶段,开始,结束,队伍,主舞台") == "")
+    kept = tool.build(members[:3], matches, {}, [], streamers=read["streamers"][:2])  # 线上现在的名单照原样带上
     out["发布脚本带着线上现在的主播名单生成时内容不变；没有主播、名单是空的都不写这一项（和以前的文件一模一样）"] = (
-        kept["streamers"] == good[:2] and "streamers" not in tool.build(members, matches, {}, [])
-        and "streamers" not in tool.build(members, matches, {}, [], streamers=[])
-        and {**kept, "streamers": None, "updated": ""} == {**tool.build(members, matches, {}, []), "streamers": None, "updated": ""})
+        kept["streamers"] == good[:2] and "streamers" not in tool.build(members[:3], matches, {}, [])
+        and "streamers" not in tool.build(members[:3], matches, {}, [], streamers=[])
+        and {**kept, "streamers": None, "updated": ""} == {**tool.build(members[:3], matches, {}, []), "streamers": None, "updated": ""})
 
 
 def main():

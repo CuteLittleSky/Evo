@@ -1218,7 +1218,17 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .es-st-avatar { width: 36px; height: 36px; font-size: 14px; }
 .es-st.off .es-st-avatar { background: var(--bg); border: 1px solid var(--border); font-weight: 600; }
 .es-st-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.es-st-name { font-weight: 600; }
+.es-st-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.es-st-name { font-weight: 600; flex: 0 1 auto; min-width: 0; }
+.es-st-team { flex: 0 10000 auto; min-width: 0; font-size: 12px; color: var(--muted); }
+.es-st-grid[hidden], .es-st-more[hidden], .es-none[hidden] { display: none; }
+.es-st-more > summary { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px 0 6px; border-radius: 6px; cursor: pointer;
+  list-style: none; font-size: 13px; color: var(--muted); }
+.es-st-more > summary::-webkit-details-marker { display: none; }
+.es-st-more > summary:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.es-st-more > summary:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.es-st-more[open] .es-st-chev { transform: rotate(90deg); }
+.es-st-more[open] > summary { margin-bottom: 8px; }
 .es-st-sub { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--muted); }
 .es-st-plat { flex: none; }
 .es-st-title { min-width: 0; }
@@ -1388,6 +1398,9 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .watch-team-live.on { color: var(--bad); }  /* 红点 + "N 人在播"：字用 --bad（浅色主题下 --accent 在白底上不到 4.5:1） */
 .watch-players { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 2px; }
 .watch-solo .watch-players { padding-left: 0; }  /* 主播名单：不分队伍，不用缩进 */
+/* 观战的人：名字后面一个小标签（描边，不抢在播的红点；--muted 在侧栏上 ≥ 4.5:1） */
+.watch-ob { flex: none; padding: 0 6px; height: 18px; display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px; color: var(--muted); white-space: nowrap; }
 .watch-p[hidden] { display: none; }
 .watch-p { font: inherit; display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px;
   background: transparent; color: var(--text); text-align: left; cursor: pointer; }
