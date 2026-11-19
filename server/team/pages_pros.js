@@ -4,6 +4,7 @@
 import { can } from "./auth.js";
 import { beijingText, squash } from "./esports.js";
 import { FIELDS } from "./overrides.js";
+import { STATUSES } from "./manualpros.js";
 import { SITE } from "./liquipedia.js";
 import { nameKey } from "./lpsync.js";
 import { ago, escape, layout } from "./pages.js";
@@ -49,6 +50,7 @@ function teamLink(p, knownTeams) {
 function playerRow(p, linked, knownTeams) {
   return `<li class="row"><div class="row-main">
     <div class="row-name"><a href="${proHref(p.page)}">${escape(p.id)}</a>${Object.keys(p.fixed ?? {}).length ? '<span class="badge badge-upcoming">有修正</span>' : ""}
+      ${p.manual ? '<span class="badge">手动建的</span>' : ""}
       ${linked.length ? `<span class="badge">选手库：${escape(linked.map((m) => m.name).join("、"))}</span>` : ""}</div>
     <div class="row-meta">${p.name ? `<span>${escape(p.name)}</span>` : ""}${p.team ? `<span>${teamLink(p, knownTeams)}</span>` : '<span>现在没有队</span>'}
       ${p.nats?.length ? `<span>${escape(p.nats.join("、"))}</span>` : ""}${p.results ? `<span>${p.results} 场成绩</span>` : ""}</div></div></li>`;
@@ -57,7 +59,7 @@ function playerRow(p, linked, knownTeams) {
 // ---------- 搜索、名单 ----------
 
 // players：合并了修正的选手（不含 missing）；teams：战队资料；linkedBy：页面名 → 选手库里连着的人
-export function prosPage(me, { q, players, teams, linkedBy, now }) {
+export function prosPage(me, { q, players, teams, linkedBy, now, ok = "" }) {
   const query = squash(q);
   const key = nameKey(query);
   const knownTeams = new Set(teams.map((t) => t.page));
@@ -73,7 +75,8 @@ export function prosPage(me, { q, players, teams, linkedBy, now }) {
 <div class="stack"><h1>资料</h1>
   <p class="muted">职业选手和战队的资料、经历、成绩，定时从 Liquipedia 抓（数据来自 <a href="https://liquipedia.net/apexlegends/" target="_blank" rel="noopener noreferrer">Liquipedia</a>，CC BY-SA 3.0）。
     Liquipedia 还没更新的，可以在选手页上手动修正。</p>
-  <p><a href="/liquipedia">收录的比赛、抓取进度、待确认 ›</a></p></div>
+  <p class="links"><a href="/liquipedia">收录的比赛、抓取进度、待确认 ›</a>${can(me, "edit") ? '<a href="/pros/new">Liquipedia 上没有的选手：手动建一份资料 ›</a>' : ""}</p></div>
+${notes({ ok })}
 <form class="search" method="get" action="/pros" role="search">
   <label class="field">搜选手、战队<span class="help">ID、真名、战队名都行，不管大小写</span>
     <span class="search-row"><input class="input" type="search" name="q" value="${escape(query)}" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -109,7 +112,8 @@ function fieldRow(me, p, field, now) {
     <div class="row-name">${shown}</div>${source}</div>${edit}</li>`;
 }
 
-export function proPage(me, { p, squads, results, linked, knownTeams, now, error = "", ok = "" }) {
+// shadowed：以前手动建过这个人的资料，现在 Liquipedia 有页面了（用 Liquipedia 的，那一份留着不显示）
+export function proPage(me, { p, squads, results, linked, knownTeams, now, error = "", ok = "", shadowed = null }) {
   const facts = [p.nats?.length ? escape(p.nats.join("、")) : "", age(p.birth, now), p.input ? escape(p.input) : "",
                  p.status && p.status !== "active" ? escape(STATUS[p.status] ?? p.status) : ""].filter(Boolean);
   const stints = (squads ?? []).filter((s) => !s.type || s.type === "player").map((s) => `<li class="row"><div class="row-main">
@@ -135,6 +139,8 @@ ${notes({ error, ok })}
   <p class="small"><a href="${escape(lpUrl(p.page))}" target="_blank" rel="noopener noreferrer">在 Liquipedia 上看</a>
     ${linked.length ? ` · 选手库里是 ${linked.map((m) => `「${escape(m.name)}」（${escape(m.team)}）`).join("、")}` : " · 选手库里没有连上他"}</p>
   <p class="small muted">资料 ${escape(ago(p.fetchedAt, now))}从 Liquipedia 抓的（${escape(beijingText(p.fetchedAt))}）。</p>
+  ${shadowed ? `<div class="note note-info small">${escape(shadowed.createdBy)} 以前手动建过他的资料，现在 Liquipedia 有这个页面了，用的是 Liquipedia 的。
+    ${can(me, "edit") ? `<form method="post" action="${proHref(p.page)}/delete"><button class="btn btn-small" type="submit">删掉手动建的那份</button></form>` : ""}</div>` : ""}
 </section>
 <section class="card"><h2>资料</h2>
   <p class="small muted">Liquipedia 还没更新的（比如改了 ID），点"改"手动修正：页面上用你们改的，Liquipedia 以后改成一样的，修正会自动撤掉；改成别的，会放进待确认。</p>
@@ -169,4 +175,68 @@ export function teamProfilePage(me, { t, current, past, now, inRoster = new Set(
 <section class="card"><h2>待过的选手（${past.length}）</h2>
   <p class="small muted">只算我们抓了资料的选手（收录的比赛里的人、选手库里连上的人）。</p>
   ${past.length ? `<ul class="list">${past.map(({ p, s }) => person(p, `<span>${escape(s.join || "？")} – ${escape(s.leave || "？")}</span>`)).join("")}</ul>` : '<p class="muted">没有。</p>'}</section>` });
+}
+
+// ---------- 手动建的选手资料（2026-11-19 用户定的：Liquipedia 上没有页面的选手，管理员、编辑能手动建）----------
+
+const statusOptions = (selected) => Object.entries(STATUSES).map(([k, v]) => `<option value="${k}"${k === (selected || "active") ? " selected" : ""}>${v}</option>`).join("");
+
+function proFields(x) {
+  return `<label class="field">ID<span class="help">比赛里用的名字，比如 Dokiovo</span>
+      <input class="input" name="id" value="${escape(x.id)}" maxlength="40" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <div class="two">
+      <label class="field">真名<span class="help">不知道就空着</span><input class="input" name="name" value="${escape(x.name)}" maxlength="80" autocomplete="off"></label>
+      <label class="field">现在的队<span class="help">没有队就空着</span><input class="input" name="team" value="${escape(x.team)}" maxlength="80" autocomplete="off"></label>
+      <label class="field">国籍<span class="help">好几个用顿号隔开，比如 中国、加拿大</span><input class="input" name="nats" value="${escape((x.nats ?? []).join("、"))}" maxlength="80" autocomplete="off"></label>
+      <label class="field">生日<span class="help">写成 1999-05-20，不知道就空着</span><input class="input" name="birth" value="${escape(x.birth)}" maxlength="10" placeholder="1999-05-20" autocomplete="off"></label>
+      <label class="field">输入设备<span class="help">比如 键鼠、手柄</span><input class="input" name="input" value="${escape(x.input)}" maxlength="80" autocomplete="off"></label>
+      <label class="field">状态<select class="input" name="status">${statusOptions(x.status)}</select></label>
+    </div>`;
+}
+
+// 新建：draft 是从待确认带过来的（page、link、team）或者出错时填的
+export function newProPage(me, { draft = {}, playerNames = [], error = "" }) {
+  const fromPending = Boolean(draft.page);
+  return layout({ title: "手动建选手资料", me, current: "pros", narrow: true, body: `
+<p class="small"><a href="${fromPending ? "/liquipedia#confirm" : "/pros"}">‹ ${fromPending ? "待确认" : "资料"}</a></p>
+<div class="stack"><h1>手动建一份选手资料</h1>
+  <p class="muted">给 Liquipedia 上没有页面的选手建一份资料，资料页里能搜到、标"手动建的"。以后 Liquipedia 有了他的页面，就改用 Liquipedia 的。</p></div>
+${notes({ error })}
+<form class="card stack" method="post" action="/pros/new">
+  ${fromPending ? `<input type="hidden" name="page" value="${escape(draft.page)}">
+    <p class="small muted">选手库里填的页面名是「${escape(draft.page)}」：建好以后就连上了，待确认里那一条也就没了。</p>` : ""}
+  ${proFields({ id: draft.id ?? draft.link ?? "", name: draft.name ?? "", team: draft.team ?? "", nats: draft.nats ? String(draft.nats).split("、") : [],
+                birth: draft.birth ?? "", input: draft.input ?? "", status: draft.status ?? "active" })}
+  <label class="field">连上选手库里的谁<span class="help">可以空着；选了的话，他的 Liquipedia 页面名填成这份资料（已经填了别的就不动）</span>
+    <input class="input" name="link" value="${escape(draft.link ?? "")}" list="player-names" maxlength="40" autocomplete="off"></label>
+  <datalist id="player-names">${playerNames.map((n) => `<option value="${escape(n)}">`).join("")}</datalist>
+  <div><button class="btn btn-primary" type="submit">建好</button></div>
+</form>` });
+}
+
+// 手动建的那一份的选手页：资料、谁建的、改、删
+export function manualProPage(me, { p, item, linked, now, error = "", ok = "" }) {
+  const editable = can(me, "edit");
+  const facts = [p.nats?.length ? escape(p.nats.join("、")) : "", age(p.birth, now), p.input ? escape(p.input) : "",
+                 p.status && p.status !== "active" ? escape(STATUSES[p.status] ?? p.status) : ""].filter(Boolean);
+  return layout({ title: p.id, me, current: "pros", body: `
+<p class="small"><a href="/pros">‹ 资料</a></p>
+${notes({ error, ok })}
+<section class="card stack">
+  <div class="title-row"><h1>${escape(p.id)}</h1><span class="badge">手动建的</span></div>
+  ${p.name ? `<p>${escape(p.name)}</p>` : ""}
+  <p>${p.team ? `现在在 ${escape(p.team)}` : "现在没有队"}${facts.length ? ` · ${facts.join(" · ")}` : ""}</p>
+  <p class="small">Liquipedia 上没有这个页面（${escape(p.page)}）${linked.length ? ` · 选手库里是 ${linked.map((m) => `「${escape(m.name)}」（${escape(m.team)}）`).join("、")}` : " · 选手库里没有连上他"}</p>
+  <p class="small muted">${escape(item.createdBy)} ${escape(ago(item.created, now))}手动建的${item.updated !== item.created ? `；${escape(item.updatedBy)} ${escape(ago(item.updated, now))}改过` : ""}。</p>
+</section>
+${editable ? `<details class="card fold"${error ? " open" : ""}><summary class="fold-head"><span>改资料</span></summary>
+  <form class="stack" method="post" action="${proHref(p.page)}/edit"><input type="hidden" name="rev" value="${item.rev}">
+    ${proFields(item)}
+    <div><button class="btn btn-primary" type="submit">保存</button></div></form></details>
+<section class="card stack"><h2>删掉这份资料</h2>
+  <p class="small muted">删了以后资料页里就没有他了；选手库里填的页面名不动（待确认里会重新列出来"Liquipedia 上没有这个页面"）。</p>
+  <details class="act"><summary class="btn btn-danger">删除</summary><div class="panel">
+    <p class="small">删掉「${escape(p.id)}」的资料？删了找不回来。</p>
+    <form method="post" action="${proHref(p.page)}/delete"><button class="btn btn-danger btn-wide" type="submit">确定删除</button></form></div></details>
+</section>` : ""}` });
 }

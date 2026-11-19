@@ -33,7 +33,8 @@ import { liquipediaPage } from "./pages_lp.js";
 import { addFromLiquipedia, eventEntries, teamEntries } from "./lpimport.js";
 import { logoHref, logoPage, logosPage } from "./pages_logos.js";
 import { LOGO_FILE, autoMatches, library, libraryKey, pickLogo, pickMany, removeLogo, search, suggest, teamLogos, uploadLogo } from "./logos.js";
-import { proHref, proPage, prosPage, teamProfilePage } from "./pages_pros.js";
+import { manualProPage, newProPage, proHref, proPage, prosPage, teamProfilePage } from "./pages_pros.js";
+import { createPro, deletePro, manualPros, onLiquipedia, savePro, visible } from "./manualpros.js";
 import { merged, overrides, removeOverride, resolveConflict, setOverride } from "./overrides.js";
 import {
   addTracked, confirmMatch, index, pending, pendingCount, progress, rejectMatch, rejects, removeTracked, requestRefresh, resultsOf,
@@ -110,6 +111,7 @@ const OK = {
   matched: "填好了：选手库里记上了 Liquipedia 页面名", rejected: "记下了：以后不再这样建议",
   fixed: "修正好了：页面上用你们改的", unfixed: "撤掉了：改回用 Liquipedia 的", resolved: "处理好了",
   logo: "队徽换好了：下次发布 Evo 就能看到", unlogo: "队徽去掉了",
+  created: "建好了：资料页里能搜到他", 
 };
 
 function okText(params) {
@@ -184,9 +186,9 @@ export async function handle(request, env, now = Date.now()) {
     return redirect("/", { "Set-Cookie": clearCookie() });
   }
   if (path === "/" && method === "GET") {
-    const [playerItems, eventItems, recent, last, idx, no, ov] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
-      published(bucket), index(bucket), rejects(bucket), overrides(bucket)]);
-    const pend = pending(playerItems, idx, no, ov);
+    const [playerItems, eventItems, recent, last, idx, no, ov, mp] = await Promise.all([players(bucket), events(bucket), recentLog(bucket, 8),
+      published(bucket), index(bucket), rejects(bucket), overrides(bucket), manualPros(bucket)]);
+    const pend = pending(playerItems, idx, no, ov, mp);
     return respond(homePage(me, { now, recent, banner: publishBanner(me, await unpublished(env, now), now), stats: { players: playerItems.length, teams: teamsOf(playerItems).size,
       events: eventItems.length, published: last, lpPlayers: Object.values(idx.players).filter((x) => !x.missing).length,
       pending: pendingCount(pend) } }));
@@ -364,9 +366,9 @@ export async function handle(request, env, now = Date.now()) {
   // ---------- Liquipedia ----------
   if (path === "/liquipedia" || path.startsWith("/liquipedia/")) {
     const show = async (options = {}, status = 200) => {
-      const [trackedItems, idx, s, playerItems, no, ov] = await Promise.all([tracked(bucket), index(bucket), state(bucket), players(bucket),
-        rejects(bucket), overrides(bucket)]);
-      return respond(liquipediaPage(me, { tracked: trackedItems, idx, progress: progress(s, now), pend: pending(playerItems, idx, no, ov),
+      const [trackedItems, idx, s, playerItems, no, ov, mp] = await Promise.all([tracked(bucket), index(bucket), state(bucket), players(bucket),
+        rejects(bucket), overrides(bucket), manualPros(bucket)]);
+      return respond(liquipediaPage(me, { tracked: trackedItems, idx, progress: progress(s, now), pend: pending(playerItems, idx, no, ov, mp),
         keySet: Boolean(String(env.LIQUIPEDIA_API_KEY ?? "").trim()), now, ...options }), { status });
     };
     if (method === "GET") return path === "/liquipedia" ? show({ ok: okText(url.searchParams) }) : notFound();
@@ -411,7 +413,7 @@ export async function handle(request, env, now = Date.now()) {
       }
     };
     const load = async () => {
-      const [idx, ov, manual] = await Promise.all([index(bucket), overrides(bucket), players(bucket)]);
+      const [idx, ov, manual, mp] = await Promise.all([index(bucket), overrides(bucket), players(bucket), manualPros(bucket)]);
       const linkedBy = new Map();
       for (const m of manual) {
         if (!m.liquipedia) continue;
@@ -419,12 +421,32 @@ export async function handle(request, env, now = Date.now()) {
         linkedBy.get(m.liquipedia).push(m);
       }
       const teams = Object.values(idx.teams).filter((t) => !t.missing);
-      return { idx, ov, linkedBy, teams, knownTeams: new Set(teams.map((t) => t.page)),
-               all: Object.values(idx.players).filter((p) => !p.missing).map((p) => merged(p, ov[p.page])) };
+      // 手动建的资料（11-19）和 Liquipedia 抓来的放在一起；Liquipedia 有了这个页面的，用 Liquipedia 的
+      return { idx, ov, linkedBy, teams, knownTeams: new Set(teams.map((t) => t.page)), mp, manual,
+               all: [...Object.values(idx.players).filter((p) => !p.missing).map((p) => merged(p, ov[p.page])), ...visible(mp, idx)] };
     };
     if (path === "/pros" && method === "GET") {
       const d = await load();
-      return respond(prosPage(me, { q: url.searchParams.get("q") ?? "", players: d.all, teams: d.teams, linkedBy: d.linkedBy, now }));
+      return respond(prosPage(me, { q: url.searchParams.get("q") ?? "", players: d.all, teams: d.teams, linkedBy: d.linkedBy, now,
+        ok: okText(url.searchParams) }));
+    }
+    // 手动建一份选手资料（Liquipedia 上没有页面的；11-19 用户定的，管理员和编辑都能建）
+    if (path === "/pros/new") {
+      if (!can(me, "edit")) return readOnly();
+      const names = async () => (await players(bucket)).map((p) => p.name);
+      if (method === "GET") {
+        const q = (k) => url.searchParams.get(k) ?? "";
+        return respond(newProPage(me, { draft: { page: q("page"), link: q("link"), team: q("team") }, playerNames: await names() }));
+      }
+      let form = {};
+      try {
+        form = await readFields(request);
+        const page = await createPro(bucket, me, form, await index(bucket), now);
+        return redirect(`${proHref(page)}?ok=created`);
+      } catch (error) {
+        if (!(error instanceof Refuse)) throw error;
+        return respond(newProPage(me, { draft: form, playerNames: await names(), error: error.message }), { status: 400 });
+      }
     }
     const toRoster = path.match(/^\/teams\/([^/]+)\/to-roster$/);
     if (toRoster) {
@@ -448,7 +470,7 @@ export async function handle(request, env, now = Date.now()) {
       const t = d.idx.teams[page];
       if (!t || t.missing) return respond(messagePage("没有这支战队的资料", "可能还没抓到，或者地址写错了。", me), { status: 404 });
       const squads = await squadsOf(bucket);
-      const current = d.all.filter((p) => (p.teamPage === page && !p.fixed?.team) || (p.fixed?.team && p.team === t.name));
+      const current = d.all.filter((p) => (p.teamPage === page && !p.fixed?.team) || ((p.fixed?.team || p.manual) && p.team === t.name));
       const past = [];
       for (const p of d.all) {
         for (const s of squads[p.page] ?? []) {
@@ -459,16 +481,20 @@ export async function handle(request, env, now = Date.now()) {
       const inRoster = new Set((await players(bucket)).map((p) => p.liquipedia).filter(Boolean));
       return respond(teamProfilePage(me, { t, current, past, now, inRoster }));
     }
-    const pro = path.match(/^\/pros\/([^/]+)(?:\/(fix|unfix|resolve))?$/);
+    const pro = path.match(/^\/pros\/([^/]+)(?:\/(fix|unfix|resolve|edit|delete))?$/);
     const page = pro ? decode(pro[1]) : null;
     if (!pro || page === null) return notFound();
     const show = async (options = {}, status = 200) => {
       const d = await load();
       const raw = d.idx.players[page];
-      if (!raw || raw.missing) return respond(messagePage("没有这位选手的资料", "可能还没抓到，或者 Liquipedia 上没有这个页面。", me), { status: 404 });
+      if (!onLiquipedia(d.idx, page)) {
+        const item = d.mp[page];  // 手动建的（11-19）
+        if (!item) return respond(messagePage("没有这位选手的资料", "可能还没抓到，或者 Liquipedia 上没有这个页面（可以在资料页手动建一份）。", me), { status: 404 });
+        return respond(manualProPage(me, { p: visible({ [page]: item }, d.idx)[0], item, linked: d.linkedBy.get(page) ?? [], now, ...options }), { status });
+      }
       const [squads, results] = await Promise.all([squadsOf(bucket), resultsOf(bucket, page)]);
       return respond(proPage(me, { p: merged(raw, d.ov[page]), squads: squads[page] ?? [], results, linked: d.linkedBy.get(page) ?? [],
-        knownTeams: d.knownTeams, now, ...options }), { status });
+        knownTeams: d.knownTeams, now, shadowed: d.mp[page] ?? null, ...options }), { status });
     };
     if (!pro[2]) return method === "GET" ? show({ ok: okText(url.searchParams) }) : notFound();
     if (method !== "POST") return notFound();
@@ -482,6 +508,15 @@ export async function handle(request, env, now = Date.now()) {
       if (pro[2] === "unfix") {
         await removeOverride(bucket, me, page, form.field ?? "", now);
         return redirect(`${proHref(page)}?ok=unfixed`);
+      }
+      if (pro[2] === "edit") {
+        await savePro(bucket, me, page, form, now);
+        return redirect(`${proHref(page)}?ok=saved`);
+      }
+      if (pro[2] === "delete") {
+        const shown = onLiquipedia(await index(bucket), page);
+        await deletePro(bucket, me, page, now);
+        return redirect(shown ? `${proHref(page)}?ok=deleted` : "/pros?ok=deleted");
       }
       await resolveConflict(bucket, me, page, form.field ?? "", form.keep === "ours", now);
       return redirect("/liquipedia?ok=resolved#confirm");

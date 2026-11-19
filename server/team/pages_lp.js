@@ -82,7 +82,10 @@ function pendingCard(me, pend) {
     </li>`).join("")).join("");
   const missing = pend.missing.map((m) => `<li class="row"><div class="row-main">
       <div class="row-name">选手库的「${escape(m.name)}」填的 Liquipedia 页面名「${escape(m.liquipedia)}」，Liquipedia 上没有这个页面</div>
-      <div class="row-meta"><span>大小写、下划线、括号里的说明（比如 Panic_(American_player)）都要一样</span><a href="/players">去选手库改</a></div></div></li>`).join("");
+      <div class="row-meta"><span>页面名写错了：大小写、下划线、括号里的说明（比如 Panic_(American_player)）都要一样，去选手库改；
+        Liquipedia 上真的没有他：手动建一份资料</span></div></div>
+      ${editable ? `<div class="row-actions"><a class="btn btn-primary" href="/pros/new?page=${encodeURIComponent(m.liquipedia)}&amp;link=${encodeURIComponent(m.name)}&amp;team=${encodeURIComponent(m.team)}">手动建资料</a>
+        <a class="btn" href="/players">去选手库改</a></div>` : ""}</li>`).join("");
   const clashes = (pend.conflicts ?? []).map((c) => `<li class="row"><div class="row-main">
       <div class="row-name">${escape(c.player?.id ?? c.page)} 的${escape(FIELDS[c.field])}：你们改成了「${escape(c.value)}」，Liquipedia 后来改成了「${escape(c.conflict.value || "（空）")}」</div>
       <div class="row-meta"><a href="/pros/${encodeURIComponent(c.page)}">看选手资料</a><span>${escape(c.by)} 改的${c.reason ? `：${escape(c.reason)}` : ""}</span></div></div>

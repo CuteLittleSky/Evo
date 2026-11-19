@@ -314,7 +314,8 @@ export function nameKey(text) {
 
 // 选手库里没填 Liquipedia 页面名的人：名字和抓到的某位选手的 ID 一样（点过"不是"的不算；ID 有手动修正的按修正的比）→ 建议
 // 填了页面名、Liquipedia 上却没有这个页面的 → 也列出来；手动修正过、Liquipedia 后来又改成别的 → conflicts
-export function pending(manual, idx, rejected, ov = {}) {
+// manualPros：手动建的选手资料（manualpros.js）：Liquipedia 上没有页面、但手动建了资料的，不再列出来
+export function pending(manual, idx, rejected, ov = {}, manualPros = {}) {
   const byKey = new Map();
   for (const raw of Object.values(idx.players)) {
     if (raw.missing) continue;
@@ -328,7 +329,7 @@ export function pending(manual, idx, rejected, ov = {}) {
   const missing = [];
   for (const m of manual) {
     if (m.liquipedia) {
-      if (idx.players[m.liquipedia]?.missing) missing.push(m);
+      if (idx.players[m.liquipedia]?.missing && !manualPros[m.liquipedia]) missing.push(m);
       continue;
     }
     const candidates = (byKey.get(nameKey(m.name)) ?? []).filter((p) => !no.has(`${m.id}|${p.page}`));
