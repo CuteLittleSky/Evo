@@ -94,6 +94,22 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
         <label class="field">新队名<span class="help">选手库和赛程里一起改</span>
           <input class="input" name="to" value="${escape(team)}" maxlength="40" required></label>
         <button class="btn btn-primary" type="submit">改名</button></form></details>` : "";
+    const others = [...teams.keys()].filter((t) => t !== team);
+    // 两支队并成一支（11-19 用户要的）：这一队的人都挪过去，赛程跟着改。队名用页面上那一份下拉（datalist），不每个按钮放一份 40 个选项
+    const merge = editable && others.length ? `<details class="act"><summary class="btn">并到另一支队</summary>
+      <form class="panel" method="post" action="/teams/merge"><input type="hidden" name="from" value="${escape(team)}">
+        <label class="field">并进哪一队<span class="help">点输入框从下拉里选，或者打几个字</span>
+          <input class="input" name="to" list="team-names" maxlength="40" required autocomplete="off"></label>
+        <p class="small muted">「${escape(team)}」的 ${members.length} 位选手都挪过去，赛程里的「${escape(team)}」也换成它（同一场里两支都有的只留一个）；
+          那一队没有队徽的话用「${escape(team)}」的。</p>
+        <button class="btn btn-primary" type="submit">并过去</button></form></details>` : "";
+    // 选手换队（11-19 用户要的）：从下拉里选，或者写一个新队名
+    const move = (p) => `<details class="act"><summary class="btn">换队</summary>
+      <form class="panel" method="post" action="/players/${p.id}/move"><input type="hidden" name="rev" value="${p.rev}">
+        <label class="field">换到哪一队<span class="help">点输入框从下拉里选；选手库里还没有的队，直接写新队名</span>
+          <input class="input" name="team" list="team-names" maxlength="40" required autocomplete="off"></label>
+        <p class="small muted">只挪「${escape(p.name)}」一个人，赛程不动。整支队改名、并队用队名旁边的按钮。</p>
+        <button class="btn btn-primary" type="submit">换过去</button></form></details>`;
     const rows = members.map((p) => `<li class="row">
       <div class="row-main">
         <div class="row-name">${escape(p.name)}</div>
@@ -103,12 +119,13 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
       </div>
       ${editable ? `<div class="row-actions">
         <details class="act"><summary class="btn">改</summary><div class="panel">${playerForm(`/players/${p.id}/save`, p, teams, "保存")}</div></details>
+        ${move(p)}
         ${confirmDelete(`/players/${p.id}/delete`, p.name)}</div>` : ""}
     </li>`).join("");
     const logo = logos[team]?.logo;
     const badge = `<a class="logo-link" href="${logoHref(team)}" title="队徽">${logo ? logoBox(PUBLIC_LOGO_URL + logo, team, "small")
       : '<span class="logo-box logo-small logo-empty" aria-hidden="true">＋</span>'}<span class="small">${logo ? "队徽" : "加队徽"}</span></a>`;
-    return `<section class="card"><div class="title-row team-head">${badge}<h2>${escape(team)}</h2>${size}<span class="grow"></span>${rename}</div>
+    return `<section class="card"><div class="title-row team-head">${badge}<h2>${escape(team)}</h2>${size}<span class="grow"></span>${rename}${merge}</div>
       <ul class="list">${rows}</ul></section>`;
   }).join("");
   return layout({ title: "选手库", me, current: "players", banner, body: `

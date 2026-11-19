@@ -151,3 +151,48 @@ r = await editor.post("/events/add", eventForm("LCQ胜者组第1轮", "B组", "2
 check("改了阶段再添加 → 多一场", r.location === "/events?ok=added" && eventList().length === count + 1);
 r = await editor.get("/events?copy=ffffffff");
 check("要复制的那场没了 → 提示", r.text.includes("要复制的那一场找不到了") && !r.text.includes('id="add" open'));
+
+// ---------- 选手换队、两支队并成一支 ----------
+const P = () => env.DATA.json(PLAYERS).items;
+await add(editor, "Tastingblood", "HAB", "none", "");
+await add(editor, "Ahao", "HAB", "none", "");
+r = await editor.get("/players");
+check("选手每一行有换队、队名旁边有并到另一支队（用页面上那一份队名下拉）", r.text.includes('action="/players/') && r.text.includes("/move")
+  && r.text.includes('action="/teams/merge"') && r.text.includes('name="to" list="team-names"'));
+r = await viewer.get("/players");
+check("只读的没有换队、并队", !r.text.includes("/move") && !r.text.includes("/teams/merge"));
+let tb = P().find((p) => p.name === "Tastingblood");
+r = await viewer.post(`/players/${tb.id}/move`, { team: "HABNW", rev: String(tb.rev) });
+check("只读的不能换队", r.status === 403);
+r = await editor.post(`/players/${tb.id}/move`, { team: " HABNW ", rev: String(tb.rev) });
+tb = P().find((p) => p.name === "Tastingblood");
+check("换队 → 只改他的队，编号不变、记下来", r.location === "/players?ok=moved" && tb.team === "HABNW" && tb.updatedBy === "毛毛"
+  && logTexts()[0] === "选手 Tastingblood 换队：HAB → HABNW");
+r = await editor.post(`/players/${tb.id}/move`, { team: "HABNW", rev: String(tb.rev) });
+check("换到他已经在的队 → 提示", r.status === 400 && r.text.includes("已经在「HABNW」了"));
+r = await editor.post(`/players/${tb.id}/move`, { team: "新队", rev: "1" });
+check("别人刚改过（rev 对不上）→ 不换", r.status === 400 && r.text.includes("刚改过") && P().find((p) => p.name === "Tastingblood").team === "HABNW");
+const ah = P().find((p) => p.name === "Ahao");
+await editor.post("/events/add", eventForm("周赛", "", "2026-12-01T19:00", "2026-12-01T22:00", ["HAB", "HABNW", "星火"]));
+r = await editor.post(`/players/${ah.id}/move`, { team: "全新队", rev: String(ah.rev) });
+check("换到新队名 → 新建一支队；原来的队没人了 → 提醒去赛程里换掉", r.location === "/players?ok=moved_emptied"
+  && P().find((p) => p.name === "Ahao").team === "全新队" && logTexts()[0] === "选手 Ahao 换队：HAB → 全新队（「HAB」没人了）");
+r = await editor.get(r.location);
+check("页面上写着原来那支队没人了", r.text.includes("原来那支队没人了"));
+// 并队：全新队（Ahao）并进 HABNW；赛程里两支都有的只留一个；队徽
+await env.DATA.put("manual/teams.json", JSON.stringify({ items: { 全新队: { logo: "aaaaaaaaaaaaaaaa.png", source: "上传的", by: "毛毛", at: now } } }));
+await editor.post("/events/add", eventForm("周赛二", "", "2026-12-02T19:00", "2026-12-02T22:00", ["全新队", "HABNW", "星火"]));
+r = await viewer.post("/teams/merge", { from: "全新队", to: "HABNW" });
+check("只读的不能并队", r.status === 403);
+r = await editor.post("/teams/merge", { from: "全新队", to: "不存在的队" });
+check("并进一支没有的队 → 提示用改队名", r.status === 400 && r.text.includes("没有叫「不存在的队」的队") && r.text.includes("改队名"));
+r = await editor.post("/teams/merge", { from: "全新队", to: "全新队" });
+check("并进自己 → 提示", r.status === 400 && r.text.includes("选另一支队"));
+r = await editor.post("/teams/merge", { from: "全新队", to: "HABNW" });
+const week2 = eventList().find((e) => e.name === "周赛二");
+check("并队：选手挪过去、赛程里换掉且不重复、队徽跟过去、记下来", r.location === "/players?ok=merged"
+  && P().find((p) => p.name === "Ahao").team === "HABNW" && JSON.stringify(week2.teams) === JSON.stringify(["HABNW", "星火"])
+  && env.DATA.json("manual/teams.json").items.HABNW?.logo === "aaaaaaaaaaaaaaaa.png" && !env.DATA.json("manual/teams.json").items.全新队
+  && logTexts()[0] === "战队「全新队」并进「HABNW」（1 位选手，赛程里 1 场跟着改了，队徽用「全新队」的）");
+r = await editor.post("/teams/rename", { from: "星火", to: "HABNW" });
+check("改队名改成已有的队 → 提示可以并队", r.status === 400 && r.text.includes("并到另一支队"));

@@ -145,15 +145,73 @@ export async function deletePlayer(bucket, by, id, now) {
   await writeLog(bucket, by, now, `删除选手 ${playerText(gone)}`);
 }
 
+function teamName(text, what = "队名") {
+  const name = squash(text);
+  if (!name) throw new Refuse(`${what}不能空着`);
+  if ([...name].length > 40) throw new Refuse(`${what}最多 40 个字`);
+  return name;
+}
+
+// 选手换队（2026-11-19 用户要的：原来只能删了再加，HAB / HABNW 就是这么来的）：只改他的战队，赛程不动。
+// 换到一个选手库里还没有的队名，就是新建一支队
+export async function movePlayer(bucket, by, id, team, rev, now) {
+  const to = teamName(team, "要换去的队");
+  const diff = await updateDoc(bucket, PLAYERS, emptyList, (list) => {
+    const item = findItem(list, id, "选手");
+    checkRev(item, rev, `「${item.name}」`);
+    if (item.team === to) throw new Refuse(`「${item.name}」已经在「${to}」了`);
+    const from = item.team;
+    item.team = to;
+    stamp(item, by, now);
+    return { name: item.name, from, to, emptied: !list.items.some((p) => p.team === from) };
+  });
+  await writeLog(bucket, by, now, `选手 ${diff.name} 换队：${diff.from} → ${diff.to}${diff.emptied ? `（「${diff.from}」没人了）` : ""}`);
+  return diff;
+}
+
+// 两支队并成一支（2026-11-19 用户要的）：from 的选手都挪到 to，赛程里的 from 换成 to（同一场里两支都有的只留一个），
+// to 没有队徽时用 from 的
+export async function mergeTeam(bucket, by, from, to, now) {
+  const oldName = teamName(from);
+  const newName = teamName(to, "要并进去的队");
+  if (oldName === newName) throw new Refuse("选另一支队");
+  const count = await updateDoc(bucket, PLAYERS, emptyList, (list) => {
+    if (!list.items.some((p) => p.team === newName)) throw new Refuse(`选手库里没有叫「${newName}」的队（只是想改名的话用"改队名"）`);
+    const members = list.items.filter((p) => p.team === oldName);
+    if (!members.length) throw new Refuse(`没有叫「${oldName}」的队（可能刚被别人改了）`);
+    for (const p of members) {
+      p.team = newName;
+      stamp(p, by, now);
+    }
+    return members.length;
+  });
+  const changed = await updateDoc(bucket, EVENTS, emptyList, (list) => {
+    let n = 0;
+    for (const e of list.items) {
+      if (!e.teams.includes(oldName)) continue;
+      e.teams = [...new Set(e.teams.map((t) => (t === oldName ? newName : t)))];
+      stamp(e, by, now);
+      n++;
+    }
+    return n;
+  });
+  const logo = await updateDoc(bucket, "manual/teams.json", () => ({ items: {} }), (data) => {  // 队徽（logos.js）
+    const moved = Boolean(data.items[oldName] && !data.items[newName]);
+    if (moved) data.items[newName] = data.items[oldName];
+    delete data.items[oldName];
+    return moved;
+  });
+  await writeLog(bucket, by, now, `战队「${oldName}」并进「${newName}」（${count} 位选手${changed ? `，赛程里 ${changed} 场跟着改了` : ""}`
+    + `${logo ? `，队徽用「${oldName}」的` : ""}）`);
+}
+
 // 战队改名：选手库和赛程里一起改
 export async function renameTeam(bucket, by, from, to, now) {
   const oldName = squash(from);
-  const newName = squash(to);
-  if (!newName) throw new Refuse("新队名不能空着");
-  if ([...newName].length > 40) throw new Refuse("队名最多 40 个字");
+  const newName = teamName(to, "新队名");
   if (oldName === newName) return;
   const count = await updateDoc(bucket, PLAYERS, emptyList, (list) => {
-    if (list.items.some((p) => p.team === newName)) throw new Refuse(`已经有一支叫「${newName}」的队了`);
+    if (list.items.some((p) => p.team === newName)) throw new Refuse(`已经有一支叫「${newName}」的队了（想把两支队并成一支，用"并到另一支队"）`);
     const members = list.items.filter((p) => p.team === oldName);
     if (!members.length) throw new Refuse(`没有叫「${oldName}」的队（可能刚被别人改了）`);
     for (const p of members) {

@@ -25,7 +25,7 @@ import { APP_JS, homePage, invitePage, layout, loginPage, membersPage, messagePa
 import { eventsPage, logPage, playersPage, publishPage } from "./pages_esports.js";
 import { importEvents, importPlayers } from "./esports.js";
 import {
-  addEvent, addPlayer, deleteEvent, deletePlayer, events, importEventRows, importPlayerRows, players, published, recentLog,
+  addEvent, addPlayer, deleteEvent, deletePlayer, events, importEventRows, importPlayerRows, mergeTeam, movePlayer, players, published, recentLog,
   renameTeam, saveEvent, savePlayer, teamsOf,
 } from "./data.js";
 import { preview, publish, setPlatform, unpublished } from "./publish.js";
@@ -102,6 +102,8 @@ async function readFields(request) {
 // 改好以后回到列表页上显示的那句话（地址里只放代号，不放原话）
 const OK = {
   added: "加好了", saved: "保存好了", deleted: "删掉了", renamed: "队名改好了，赛程里也跟着改了",
+  moved: "换好队了（赛程没动）", moved_emptied: "换好队了。原来那支队没人了：赛程里还写着它的话，在赛程里换掉，或者用\"并到另一支队\"",
+  merged: "并好了：选手都挪过去了，赛程里也跟着改了",
   test: "测试文件发好了（写进去以后读回来核对过，一字不差）", official: "正式文件发好了：玩家下次打开 Evo 的赛事页就能看到",
   platform: "平台开关改好了",
   tracked: "收录了：几分钟内开始抓（每 3 分钟抓一步）", untracked: "不再收录了", refresh: "排上了：几分钟内开始新的一轮",
@@ -226,7 +228,7 @@ export async function handle(request, env, now = Date.now()) {
   }
 
   // ---------- 选手库 ----------
-  if (path === "/players" || path.startsWith("/players/") || path === "/teams/rename") {
+  if (path === "/players" || path.startsWith("/players/") || path === "/teams/rename" || path === "/teams/merge") {
     const show = async (options = {}, status = 200) => {
       const [items, logos, changed] = await Promise.all([players(bucket), teamLogos(bucket), unpublished(env, now)]);
       return respond(playersPage(me, items, { now, logos, banner: publishBanner(me, changed, now), ...options }), { status });
@@ -251,8 +253,16 @@ export async function handle(request, env, now = Date.now()) {
         await renameTeam(bucket, me, form.from, form.to, now);
         return redirect("/players?ok=renamed");
       }
-      const action = path.match(/^\/players\/([0-9a-f]{8})\/(save|delete)$/);
+      if (path === "/teams/merge") {
+        await mergeTeam(bucket, me, form.from, form.to, now);
+        return redirect("/players?ok=merged");
+      }
+      const action = path.match(/^\/players\/([0-9a-f]{8})\/(save|delete|move)$/);
       if (!action) return notFound();
+      if (action[2] === "move") {
+        const moved = await movePlayer(bucket, me, action[1], form.team, form.rev, now);
+        return redirect(`/players?ok=${moved.emptied ? "moved_emptied" : "moved"}`);
+      }
       if (action[2] === "save") await savePlayer(bucket, me, action[1], form, now);
       else await deletePlayer(bucket, me, action[1], now);
       return redirect(`/players?ok=${action[2] === "save" ? "saved" : "deleted"}`);
