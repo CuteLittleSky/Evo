@@ -65,8 +65,8 @@ SECTIONS = [
         "code/sounds.py",
         "code/webview2.py", "code/update_check.py", "code/update_patch.py", "code/updater.py", "code/mirrorchyan.py",
         "code/telemetry.py", "code/notice_check.py", "code/net_route.py",
-        ("server/stats/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总，schema.sql 建表，"
-                          "wrangler.toml 部署配置"),
+        ("server/stats/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总（按天增量算），schema.sql 建表，"
+                          "test.mjs 汇总的测试（node server/stats/test.mjs），wrangler.toml 部署配置"),
         ("server/team/", "Evo 后台 team.evotracker.cn（原来叫赛事数据的协作网页；Cloudflare Worker + 不公开的 R2）：worker.js 路由，"
                          "auth.js 成员、邀请链接、登录，store.js 读写存储桶里的 JSON，data.js 选手库、赛程、改动记录（换队、并队、批量填直播间），"
                          "esports.js 检查和生成 esports.json（照 tools/esports.py），publish.js 发布、平台开关、有改动还没发布的提醒，"
@@ -92,7 +92,7 @@ SECTIONS = [
         "tools/feature_cards.py", "tools/window_shots.py"]),
     ("开发用的脚本（tools/）", "查问题、看数据", [
         "tools/ocr_probe.py", "tools/frame_capture.py", "tools/legend_capture.py", "tools/log_speed.py",
-        "tools/diag_report.py", "tools/tester_preview.py", "tools/stats_report.py", "tools/demo_data.py", "tools/demo_seasons.py",
+        "tools/diag_report.py", "tools/tester_preview.py", "tools/stats_report.py", "tools/summary_check.py", "tools/demo_data.py", "tools/demo_seasons.py",
         "tools/rec_probe.py", "tools/rec_audio.py",
         "tools/code_map.py"]),
     ("测试（tests/）", None, [

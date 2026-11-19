@@ -6,8 +6,8 @@
 //   日活按（编号, 日期）存一行，每局、每局的占用按（编号, 对局编号）存一行，再发同一个就覆盖
 // - POST /v1/delete：{"id": 匿名编号}：删掉这个编号发过的所有数据（Evo 0.3.7、0.3.8 设置页的"关闭并删除已发送的数据"；
 //   之后的版本去掉了这个按钮，2026-10-24 用户决定。老版本还在用，这里留着）
-// - GET /v1/summary：全体玩家的汇总（Evo 数据页"全体玩家"，2026-10-24 用户决定；格式见 makeSummary）。
-//   定时任务每天算一次存进 summary 表（有新数据或换了一天才重算），这里只读出来；还没算过就现算一次。
+// - GET /v1/summary：全体玩家的汇总（Evo 数据页"全体玩家"，2026-10-24 用户决定；格式见"全体玩家的汇总"那一节）。
+//   定时任务每天出一次存进 summary 表（每小时增量更新各天的部分和，见 refreshSummary），这里只读出来；还没算过就现算一次。
 //   只有汇总的数字，没有任何一个编号的数据。Evo 里只有开了匿名统计的人才下载（限制在 Evo 那边，这个地址本身是公开的）
 // - GET /v1/maps：地图轮换（Evo 总览页，2026-10-28 用户决定）：匹配、排位、轮换模式现在 / 下一张是什么图、什么时候换。
 //   数据来自 Apex Legends Status 的接口（用户自己申请的 API Key，是 Worker 的机密变量 ALS_API_KEY：
@@ -217,8 +217,17 @@ async function remove(body, env) {
     env.DB.prepare("DELETE FROM pings WHERE id = ?").bind(body.id),
     env.DB.prepare("DELETE FROM matches WHERE id = ?").bind(body.id),
     env.DB.prepare("DELETE FROM usage WHERE id = ?").bind(body.id),
+    // 全体玩家汇总的中间结果（summary_pairs）里这个编号的也删掉，先记下他打过哪几天：那几天的部分和下一个小时重建（见 refreshSummary）。
+    // 要重建的日子和之前没重建完的合在一起
+    env.DB.prepare(
+      `INSERT INTO summary (name, body, made_at)
+       SELECT ?1, json_group_array(day), ?2 FROM (SELECT DISTINCT day FROM summary_pairs WHERE id = ?3) WHERE true
+       ON CONFLICT (name) DO UPDATE SET made_at = excluded.made_at, body = (SELECT json_group_array(value)
+         FROM (SELECT value FROM json_each(summary.body) UNION SELECT value FROM json_each(excluded.body)))`,
+    ).bind(DAYS_DIRTY, new Date().toISOString(), body.id),
+    env.DB.prepare("DELETE FROM summary_pairs WHERE id = ?").bind(body.id),
   ]);
-  return reply({ ok: true, deleted: results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0) });
+  return reply({ ok: true, deleted: results.slice(0, 3).reduce((n, r) => n + (r.meta?.changes ?? 0), 0) });
 }
 
 // ---------- 全体玩家的汇总（GET /v1/summary）----------
@@ -245,11 +254,30 @@ async function remove(body, env) {
 // "近 7 天"按用户电脑上的日期，从 UTC 的今天往前数 6 天算起（recent_from）
 // "本赛季"（2026-11-03 加的）也按用户电脑上的日期（Evo 只发日期，不发几点、不发赛季），从开赛后第一个整天算起（SEASON.from）：
 // 开赛那天一半是上赛季的局（开赛在太平洋时间上午 10 点，国内是第二天凌晨 2 点），所以那天不算
-// 读数据库：每算一次大约把 matches 表读 9 遍（D1 免费额度每天读 500 万行）。2026-10-29 一万多局、每小时都算时一天读了 380 万行，
-// 改成每 6 小时算一次（用户同意）。2026-11-08 约 5 万局时超了上限（实测算一次约 83 万行，是表的约 17 倍），改成每天一次（用户决定）；
-// 局数再多几倍要换算法（每局进来时累加）或者开付费版
+//
+// 读数据库（2026-11-19 改成按天增量算，用户同意）：原来每次从头扫 matches 表约 20 遍，随局数一起涨（2026-11-08 约 5 万局时一次
+// 83 万行，超过一次 D1 免费额度（整个账号一天读 500 万行），之后改成每天算一次；11-19 约 11 万局时一次 224 万行）。现在先按人、按天存好部分和：
+// - summary_pairs：每名玩家每天一行，那天他每一局里汇总用得到的几项（snapshot），按对局编号 k 存
+// - summary_days：每天一行，那天全体的部分和（pairParts 加起来：传奇、组合、武器按"模式|段位组"分；每名玩家的和、英雄池；段位）
+// 定时任务每小时只读这一小时收到的局（received_at 有索引）和这些局所在的那几行（catchUp）：重发的局换掉旧的那一项，那一天的
+// 部分和减去这名玩家原来的、加上新的（都是整数，加减没有误差）。每天第一次运行时把各天的部分和加起来，得到"全部 / 近 7 天 /
+// 本赛季"（assemble）：每一项的算法和原来的 SQL 一样，结果一模一样（2026-11-19 用线上数据的副本核对过，见 docs/底座.md"匿名统计"）。
+// 每天还挑一天从 matches 从头重算、和存着的比（verifyDay），对不上就换成重算的、记在状态里：万一增量算漏了什么，也会自己纠正。
+// 第一次、DAYS_VERSION 改了时从头重建（rebuildDays，每小时建 REBUILD_DAYS 天，建完以前照旧给上一次的汇总）；
+// /v1/delete 删了数据时只重建这个编号打过的那几天
 const SUMMARY_NAME = "v1";
-const SUMMARY_CRON = "7 0 * * *";  // 重算汇总的定时任务（wrangler.toml 的 crons 里也写着；另一个 "* * * * *" 是地图轮换）
+// 定时任务（wrangler.toml 的 crons 里也写着；另一个 "* * * * *" 是地图轮换）：每小时第 7 分钟一次。汇总每个 UTC 日子只出一次
+const SUMMARY_CRON = "7 * * * *";
+const DAYS_STATE = "v1_days";  // summary 表里记增量算到哪了的那一行（body 见 refreshSummary）
+const DAYS_DIRTY = "v1_dirty";  // /v1/delete 删过数据：body 是要重建的日子（JSON 数组），下一个小时重建
+const DAYS_VERSION = 1;  // summary_pairs、summary_days 的格式或者算法改了就加 1：部署以后下一个小时从头重建
+const OVERLAP = 10 * 60 * 1000;  // 每次往前多读 10 分钟收到的局，和正在写进来的请求错开（同一局再算一遍，结果不变）
+// 一次最多读这么多新收到的局（Evo 出新版本、大家重发旧局时会多），剩下的下一个小时接着读，读完才出汇总。
+// 一个请求的局收到时间都一样（最多 100 局），所以每次都能往前读
+const MAX_CHANGED = 10000;
+const REBUILD_DAYS = 4;  // 重建时每小时建几天（一天约 5 千局；建的这一次不做别的，免得一次算太久）
+const VERIFY_HOUR = 12;  // 每天 UTC 几点以后核对（和出汇总错开，每次运行算的东西少一些）
+const PARAM_SIZE = 500 * 1024;  // 一句 SQL 带的 JSON 最长多少（写 summary_pairs 时分成几句）
 const RECENT_DAYS = 7;
 // 本赛季：第几赛季、从哪天算起。新赛季开始时和 Evo 的 config/seasons.json 一起改，再 wrangler deploy
 const SEASON = { number: 31, from: "2026-11-04" };
@@ -259,14 +287,18 @@ const MIN_PLAYER_GAMES = 3;
 const MAX_POINTS = 201;
 const POOL_SHARE = 0.05;  // 英雄池：局数占这么多以上的传奇才算（和 Evo 的 radar.POOL_SHARE 一样）
 const TIER_ORDER = ["菜鸟", "青铜", "白银", "黄金", "白金", "钻石", "大师", "Apex 猎杀者"];
-const MODE = "CASE WHEN mode = 'ranked' THEN 'ranked' ELSE 'pubs' END";
-const TIER_GROUP = `CASE WHEN tier IN ('菜鸟', '青铜', '白银', '黄金', '白金') THEN 'low' WHEN tier = '钻石' THEN 'diamond'
-  WHEN tier IN ('大师', 'Apex 猎杀者') THEN 'master' END`;
-// 表现：不算待确认的局
-const PERFORMANCE = `SUM(review = 0 AND placement IS NOT NULL) AS np, SUM(CASE WHEN review = 0 THEN placement END) AS sp,
-  SUM(review = 0 AND placement = 1) AS wins`;
-// 击杀参与率算哪些局：三个人的击杀和自己的助攻都读到了（队友的击杀 0.3.8 之后的 Evo 才发）
-const KP_GAME = "review = 0 AND kills IS NOT NULL AND assists IS NOT NULL AND mate1_kills IS NOT NULL AND mate2_kills IS NOT NULL";
+const LOW_TIERS = new Set(["菜鸟", "青铜", "白银", "黄金", "白金"]);
+// 段位组："low" 白金及以下、"diamond"、"master" 大师以上，没有段位或认不出是 ""（原来 SQL 里的 NULL）
+function tierGroup(tier) {
+  if (LOW_TIERS.has(tier)) return "low";
+  if (tier === "钻石") return "diamond";
+  return tier === "大师" || tier === "Apex 猎杀者" ? "master" : "";
+}
+// 部分和里每个数组各位是什么（和原来 SQL 查出来的列一样；PEOPLE_FIELDS 也是 assemble 里 p[0]、p[1]…… 的意思）
+const LEGEND_FIELDS = ["n", "np", "sp", "wins", "top5", "nk", "sk", "nd", "sd"];
+const COMBO_FIELDS = ["n", "np", "sp"];
+const WEAPON_FIELDS = ["n", "s"];
+const PEOPLE_FIELDS = ["n", "np", "sp", "wins", "top5", "nk", "sk", "na", "sa", "nd", "sd", "nkp", "kpa", "kps"];
 
 function round(value, digits) {
   const f = 10 ** digits;
@@ -295,8 +327,24 @@ function emptySlices() {
 
 const enough = (n) => n >= MIN_PLAYER_GAMES;  // 每名玩家的场均：打了这么多局以上才算
 
-function addTo(target, row, fields) {
-  for (const f of fields) target[f] = (target[f] ?? 0) + (row[f] ?? 0);
+// {键: 数组} 逐位加进 target（target 里没有的键放一份拷贝）
+function mergeVectors(target, source) {
+  for (const [key, v] of Object.entries(source)) {
+    const t = target[key];
+    if (!t) target[key] = v.slice();
+    else for (let i = 0; i < v.length; i++) t[i] += v[i];
+  }
+}
+
+// 一名玩家的 {s, l} 加进 target[id]
+function mergePerson(target, id, P) {
+  const Q = target[id];
+  if (!Q) {
+    target[id] = { s: P.s.slice(), l: { ...P.l } };
+    return;
+  }
+  for (let i = 0; i < P.s.length; i++) Q.s[i] += P.s[i];
+  for (const [name, n] of Object.entries(P.l)) Q.l[name] = (Q.l[name] ?? 0) + n;
 }
 
 function points(values, digits) {
@@ -305,170 +353,461 @@ function points(values, digits) {
   return Array.from({ length: MAX_POINTS }, (_, i) => sorted[Math.round((i * (sorted.length - 1)) / (MAX_POINTS - 1))]);
 }
 
-async function makeSummary(env, now) {
+// 一局里汇总用得到的几项，存进 summary_pairs（顺序见 pairParts）
+const GAME_COLUMNS = `id, k, day, mode, tier, review, placement, legend, mate1, mate2, kills, assists, damage, mate1_kills, mate1_damage,
+  mate2_kills, mate2_damage, weapons`;
+function snapshot(r) {
+  return [r.mode === "ranked" ? 1 : 0, r.tier, r.review, r.placement, r.legend, r.mate1, r.mate2, r.kills, r.assists, r.damage,
+          r.mate1_kills, r.mate1_damage, r.mate2_kills, r.mate2_damage, r.weapons === null ? null : JSON.parse(r.weapons)];
+}
+
+const newGroup = () => ({ l: {}, c: {}, w: {}, wg: 0 });
+const emptyDay = () => ({ g: {}, p: {}, t: {} });
+
+// 一名玩家一天的局（{k: snapshot}）→ 部分和，每一项和原来的 SQL 一样算（见上面的说明：表现只算不是待确认的局，击杀、伤害只算读到了的……）：
+// - g（全体的）：按"模式|段位组"（如 "ranked|diamond"、"pubs|"）分，l 传奇 {名字: LEGEND_FIELDS}（全队三个人都算）、
+//   c 组合 {"a|b|z": COMBO_FIELDS}、w 武器 {编号: WEAPON_FIELDS}、wg 记下了武器的局数
+// - p（这名玩家的）：按"模式|段位组"分，s 自己的 PEOPLE_FIELDS、l 自己每个传奇用了几局（英雄池）
+// - t：这一天排位局里的段位（排好序）
+function pairParts(games) {
+  const g = {};
+  const p = {};
+  const t = new Set();
+  for (const [ranked, tier, review, place, legend, mate1, mate2, kills, assists, damage, k1, d1, k2, d2, weapons]
+    of Object.values(games)) {
+    const mg = `${ranked ? "ranked" : "pubs"}|${tierGroup(tier)}`;
+    const ok = review === 0;  // 不是待确认的局（SQL 里 review = 0）
+    const placed = ok && place !== null;
+    const G = (g[mg] ??= newGroup());
+    for (const [name, k, d] of [[legend, kills, damage], [mate1, k1, d1], [mate2, k2, d2]]) {
+      if (name === null) continue;
+      const v = (G.l[name] ??= [0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      v[0] += 1;
+      if (placed) {
+        v[1] += 1;
+        v[2] += place;
+        if (place === 1) v[3] += 1;
+        if (place <= 5) v[4] += 1;
+      }
+      if (ok && k !== null) { v[5] += 1; v[6] += k; }
+      if (ok && d !== null) { v[7] += 1; v[8] += d; }
+    }
+    // 组合：三个传奇都认出、互不相同；按名字排好（JS 按 UTF-16 比、SQL 的 min、max 按 UTF-8 比，常用汉字两种比法一样）
+    if (legend !== null && mate1 !== null && mate2 !== null && legend !== mate1 && legend !== mate2 && mate1 !== mate2) {
+      const v = (G.c[[legend, mate1, mate2].sort().join("|")] ??= [0, 0, 0]);
+      v[0] += 1;
+      if (placed) { v[1] += 1; v[2] += place; }
+    }
+    if (weapons !== null) {
+      G.wg += 1;
+      for (const [w, seconds] of Object.entries(weapons)) {
+        const v = (G.w[w] ??= [0, 0]);
+        v[0] += 1;
+        v[1] += seconds;
+      }
+    }
+    const P = (p[mg] ??= { s: new Array(PEOPLE_FIELDS.length).fill(0), l: {} });
+    const s = P.s;
+    s[0] += 1;
+    if (placed) {
+      s[1] += 1;
+      s[2] += place;
+      if (place === 1) s[3] += 1;
+      if (place <= 5) s[4] += 1;
+    }
+    if (ok && kills !== null) { s[5] += 1; s[6] += kills; }
+    if (ok && assists !== null) { s[7] += 1; s[8] += assists; }
+    if (ok && damage !== null) { s[9] += 1; s[10] += damage; }
+    // 击杀参与率算哪些局：三个人的击杀和自己的助攻都读到了（队友的击杀 0.3.8 之后的 Evo 才发）
+    if (ok && kills !== null && assists !== null && k1 !== null && k2 !== null) {
+      s[11] += 1;
+      s[12] += kills + assists;
+      s[13] += kills + k1 + k2;
+    }
+    if (legend !== null) P.l[legend] = (P.l[legend] ?? 0) + 1;
+    if (ranked && tier !== null) t.add(tier);
+  }
+  return { g, p, t: [...t].sort() };
+}
+
+// 把一名玩家一天的 g 加进（sign = 1）或减出（sign = -1）那一天全体的；减到 0 局的项删掉（和从头算时没有这一项一样）
+function addGroups(day, groups, sign) {
+  for (const [mg, G] of Object.entries(groups)) {
+    const D = (day.g[mg] ??= newGroup());
+    for (const f of ["l", "c", "w"]) {
+      for (const [key, values] of Object.entries(G[f])) {
+        const d = (D[f][key] ??= values.map(() => 0));
+        for (let i = 0; i < values.length; i++) d[i] += sign * values[i];
+        if (d[0] === 0) delete D[f][key];
+      }
+    }
+    D.wg += sign * G.wg;
+    if (!D.wg && [D.l, D.c, D.w].every((o) => !Object.keys(o).length)) delete day.g[mg];
+  }
+}
+
+// 那一天里这名玩家的部分和从 before 换成 after（第一次出现时 before 是 null）
+function putPair(day, id, before, after) {
+  if (before) addGroups(day, before.g, -1);
+  addGroups(day, after.g, 1);
+  if (Object.keys(after.p).length) day.p[id] = after.p;
+  else delete day.p[id];
+  if (after.t.length) day.t[id] = after.t;
+  else delete day.t[id];
+}
+
+// 从 matches 里一天的局从头算：{pairs: {编号: {k: snapshot}}, body: 那一天的部分和}
+function buildDay(rows) {
+  const pairs = {};
+  for (const r of rows) (pairs[r.id] ??= {})[r.k] = snapshot(r);
+  const body = emptyDay();
+  for (const [id, games] of Object.entries(pairs)) putPair(body, id, null, pairParts(games));
+  return { pairs, body };
+}
+
+const isEmptyDay = (body) => !Object.keys(body.g).length && !Object.keys(body.p).length && !Object.keys(body.t).length;
+
+// 两份部分和是不是一样（不管键的先后）
+function same(a, b) {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => Object.hasOwn(b, k) && same(a[k], b[k]));
+}
+
+// 原来 SQL 里 GROUP BY 出来的行的先后（段位组 NULL、diamond、low、master；近 7 天、本赛季 NULL、0、1）：
+// 组合的局数、场均名次都一样时按这个先后排（原来的 sort 是稳定的，一样的就照 SQL 出来的先后），所以要照样排才能一模一样
+const G_ORDER = { "": 0, diamond: 1, low: 2, master: 3 };
+const flagOrder = (v) => (v === null ? 0 : v + 1);
+function compareNames(a, b) {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  return 0;
+}
+
+// 各天的部分和（Map 日期 → body，没有日期的局是 ""）→ 全体玩家的汇总
+function assemble(days, now) {
   const today = Date.parse(now.toISOString().slice(0, 10) + "T00:00:00Z");
   const recentFrom = new Date(today - (RECENT_DAYS - 1) * 86400000).toISOString().slice(0, 10);
-  const [legendRows, comboRows, peopleRows, tierRows, weaponRows, weaponGameRows, poolRows] = (await env.DB.batch([
-    env.DB.prepare(
-      `WITH s AS (
-         SELECT mode, tier, day, review, placement, legend, kills, damage FROM matches
-         UNION ALL SELECT mode, tier, day, review, placement, mate1, mate1_kills, mate1_damage FROM matches
-         UNION ALL SELECT mode, tier, day, review, placement, mate2, mate2_kills, mate2_damage FROM matches)
-       SELECT ${MODE} AS m, ${TIER_GROUP} AS g, day >= ?1 AS recent, day >= ?2 AS season, legend, COUNT(*) AS n, ${PERFORMANCE},
-         SUM(review = 0 AND placement <= 5) AS top5,
-         SUM(review = 0 AND kills IS NOT NULL) AS nk, SUM(CASE WHEN review = 0 THEN kills END) AS sk,
-         SUM(review = 0 AND damage IS NOT NULL) AS nd, SUM(CASE WHEN review = 0 THEN damage END) AS sd
-       FROM s WHERE legend IS NOT NULL GROUP BY m, g, recent, season, legend`,
-    ).bind(recentFrom, SEASON.from),
-    // 三个传奇按名字排好：最小、中间、最大（三个都不一样，中间那个就是既不是最小也不是最大的）
-    env.DB.prepare(
-      `WITH c AS (
-         SELECT mode, tier, day, review, placement, legend, mate1, mate2,
-           min(legend, mate1, mate2) AS a, max(legend, mate1, mate2) AS z FROM matches
-         WHERE legend IS NOT NULL AND mate1 IS NOT NULL AND mate2 IS NOT NULL AND legend <> mate1 AND legend <> mate2
-           AND mate1 <> mate2)
-       SELECT ${MODE} AS m, ${TIER_GROUP} AS g, day >= ?1 AS recent, day >= ?2 AS season, a,
-         CASE WHEN legend NOT IN (a, z) THEN legend WHEN mate1 NOT IN (a, z) THEN mate1 ELSE mate2 END AS b, z,
-         COUNT(*) AS n, ${PERFORMANCE}
-       FROM c GROUP BY m, g, recent, season, a, b, z`,
-    ).bind(recentFrom, SEASON.from),
-    env.DB.prepare(
-      `SELECT id, ${MODE} AS m, ${TIER_GROUP} AS g, day >= ?1 AS recent, day >= ?2 AS season, COUNT(*) AS n, ${PERFORMANCE},
-         SUM(review = 0 AND placement <= 5) AS top5,
-         SUM(review = 0 AND kills IS NOT NULL) AS nk, SUM(CASE WHEN review = 0 THEN kills END) AS sk,
-         SUM(review = 0 AND assists IS NOT NULL) AS na, SUM(CASE WHEN review = 0 THEN assists END) AS sa,
-         SUM(review = 0 AND damage IS NOT NULL) AS nd, SUM(CASE WHEN review = 0 THEN damage END) AS sd,
-         SUM(${KP_GAME}) AS nkp, SUM(CASE WHEN ${KP_GAME} THEN kills + assists END) AS kpa,
-         SUM(CASE WHEN ${KP_GAME} THEN kills + mate1_kills + mate2_kills END) AS kps
-       FROM matches GROUP BY id, m, g, recent, season`,
-    ).bind(recentFrom, SEASON.from),
-    env.DB.prepare(
-      `SELECT id, tier, MAX(day) AS last FROM matches WHERE mode = 'ranked' AND tier IS NOT NULL AND day IS NOT NULL
-       GROUP BY id, tier`,
-    ),
-    env.DB.prepare(
-      `SELECT ${MODE} AS m, ${TIER_GROUP} AS g, day >= ?1 AS recent, day >= ?2 AS season, w.key AS weapon, COUNT(*) AS n, SUM(w.value) AS s
-       FROM matches, json_each(matches.weapons) AS w WHERE matches.weapons IS NOT NULL GROUP BY m, g, recent, season, weapon`,
-    ).bind(recentFrom, SEASON.from),
-    env.DB.prepare(
-      `SELECT ${MODE} AS m, ${TIER_GROUP} AS g, day >= ?1 AS recent, day >= ?2 AS season, COUNT(*) AS n FROM matches
-       WHERE weapons IS NOT NULL GROUP BY m, g, recent, season`,
-    ).bind(recentFrom, SEASON.from),
-    // 英雄池：每个编号每个传奇用了几局（自己的局）
-    env.DB.prepare(
-      `SELECT id, ${MODE} AS m, ${TIER_GROUP} AS g, day >= ?1 AS recent, day >= ?2 AS season, legend, COUNT(*) AS n FROM matches
-       WHERE legend IS NOT NULL GROUP BY id, m, g, recent, season, legend`,
-    ).bind(recentFrom, SEASON.from),
-  ])).map((r) => r.results);
-
+  // 先把"近 7 天、本赛季"两个标记一样的日子加在一起（它们算进的汇总份数一样），再分到各份汇总里，少做很多遍加法
+  const classes = new Map();  // "近 7 天|本赛季" → {recent, season, g: {模式|段位组: 全体的}, p: {模式|段位组: {编号: 这名玩家的}}}
+  const latestTier = {};  // 编号 → [最近一局排位的日期, 那天的段位]
+  for (const [day, body] of days) {
+    // 和原来 SQL 里的 day >= ? 一样：没有日期的局两样都是 NULL（只算进"全部"）
+    const recent = day === "" ? null : day >= recentFrom ? 1 : 0;
+    const season = day === "" ? null : day >= SEASON.from ? 1 : 0;
+    const name = `${recent}|${season}`;
+    if (!classes.has(name)) classes.set(name, { recent, season, g: {}, p: {} });
+    const C = classes.get(name);
+    for (const [mg, G] of Object.entries(body.g)) {
+      const D = (C.g[mg] ??= newGroup());
+      mergeVectors(D.l, G.l);
+      mergeVectors(D.c, G.c);
+      mergeVectors(D.w, G.w);
+      D.wg += G.wg;
+    }
+    for (const [id, groups] of Object.entries(body.p)) {
+      for (const [mg, P] of Object.entries(groups)) mergePerson((C.p[mg] ??= {}), id, P);
+    }
+    if (day !== "") {
+      for (const [id, list] of Object.entries(body.t)) if (!latestTier[id] || day > latestTier[id][0]) latestTier[id] = [day, list];
+    }
+  }
+  // 每份汇总的和（数组，各位见 LEGEND_FIELDS 等）；组合多记一个 order：原来 SQL 出来的先后（见 G_ORDER）
   const legends = emptySlices();
-  for (const row of legendRows) {
-    for (const key of sliceKeys(row)) {
-      addTo((legends[key][row.legend] ??= {}), row, ["n", "np", "sp", "wins", "top5", "nk", "sk", "nd", "sd"]);
-    }
-  }
   const combos = emptySlices();
-  for (const row of comboRows) {
-    for (const key of sliceKeys(row)) addTo((combos[key][`${row.a}|${row.b}|${row.z}`] ??= {}), row, ["n", "np", "sp"]);
-  }
-  const people = emptySlices();
-  for (const row of peopleRows) {
-    for (const key of sliceKeys(row)) {
-      addTo((people[key][row.id] ??= {}), row,
-            ["n", "np", "sp", "wins", "top5", "nk", "sk", "na", "sa", "nd", "sd", "nkp", "kpa", "kps"]);
-    }
-  }
-  const pools = emptySlices();
-  for (const row of poolRows) {
-    for (const key of sliceKeys(row)) {
-      const counts = (pools[key][row.id] ??= {});
-      counts[row.legend] = (counts[row.legend] ?? 0) + row.n;
-    }
-  }
-  // 每个编号的英雄池（用了几个传奇，局数太少的编号不算）
-  const poolSizes = (key) => Object.values(pools[key]).map(Object.values)
-    .filter((ns) => enough(ns.reduce((a, b) => a + b, 0)))
-    .map((ns) => {
-      const total = ns.reduce((a, b) => a + b, 0);
-      return ns.filter((n) => n / total >= POOL_SHARE).length;
-    });
   const weapons = emptySlices();
-  for (const row of weaponRows) {
-    for (const key of sliceKeys(row)) addTo((weapons[key][row.weapon] ??= {}), row, ["n", "s"]);
-  }
+  const people = emptySlices();
   const weaponGames = {};
-  for (const row of weaponGameRows) {
-    for (const key of sliceKeys(row)) weaponGames[key] = (weaponGames[key] ?? 0) + row.n;
+  for (const C of classes.values()) {
+    for (const mg of new Set([...Object.keys(C.g), ...Object.keys(C.p)])) {
+      const [m, g] = mg.split("|");
+      const order = (G_ORDER[g] * 3 + flagOrder(C.recent)) * 3 + flagOrder(C.season);
+      const G = C.g[mg];
+      const P = C.p[mg] ?? {};
+      for (const key of sliceKeys({ m, g: g || null, recent: C.recent, season: C.season })) {
+        if (G) {
+          mergeVectors(legends[key], G.l);
+          mergeVectors(weapons[key], G.w);
+          weaponGames[key] = (weaponGames[key] ?? 0) + G.wg;
+          const target = combos[key];
+          for (const [names, v] of Object.entries(G.c)) {
+            const c = target[names];
+            if (!c) target[names] = [v[0], v[1], v[2], order];
+            else {
+              c[0] += v[0];
+              c[1] += v[1];
+              c[2] += v[2];
+              if (order < c[3]) c[3] = order;
+            }
+          }
+        }
+        for (const [id, Q] of Object.entries(P)) mergePerson(people[key], id, Q);
+      }
+    }
   }
 
+  // 下面每一项的算法和原来一样（原来是带名字的一行，现在是数组：n = v[0]……见 LEGEND_FIELDS 等）
   const slices = {};
   for (const key of Object.keys(legends)) {
-    const picks = Object.values(legends[key]).reduce((sum, l) => sum + l.n, 0);
-    const squads = Object.values(combos[key]).reduce((sum, c) => sum + c.n, 0);
-    const ids = Object.values(people[key]);
-    const held = Object.values(weapons[key]).reduce((sum, w) => sum + w.s, 0);
+    const picks = Object.values(legends[key]).reduce((sum, l) => sum + l[0], 0);
+    const squads = Object.values(combos[key]).reduce((sum, c) => sum + c[0], 0);
+    const ids = Object.values(people[key]).map((p) => p.s);
+    const held = Object.values(weapons[key]).reduce((sum, w) => sum + w[1], 0);
+    // 组合：局数多的在前，一样多时场均名次小的在前，再一样时照原来 SQL 出来的先后（order、再按名字）
+    const comboList = Object.entries(combos[key]).map(([names, c]) => [names, c, ratio(c[2], c[1], 2)]);
+    comboList.sort(([a, x, pa], [b, y, pb]) => y[0] - x[0] || (pa ?? 99) - (pb ?? 99) || x[3] - y[3]
+      || compareNames(a.split("|"), b.split("|")));
     slices[key] = {
       players: ids.length,
-      matches: ids.reduce((sum, p) => sum + p.n, 0),
+      matches: ids.reduce((sum, p) => sum + p[0], 0),
       legends: Object.entries(legends[key])
-        .sort(([a, x], [b, y]) => y.n - x.n || (a < b ? -1 : 1))
+        .sort(([a, x], [b, y]) => y[0] - x[0] || (a < b ? -1 : 1))
         .map(([name, l]) => ({
-          name, n: l.n, pick: ratio(l.n, picks, 4), win: ratio(l.wins, l.np, 4), top5: ratio(l.top5, l.np, 4),
-          place: ratio(l.sp, l.np, 2), kills: ratio(l.sk, l.nk, 2), damage: ratio(l.sd, l.nd, 0),
+          name, n: l[0], pick: ratio(l[0], picks, 4), win: ratio(l[3], l[1], 4), top5: ratio(l[4], l[1], 4),
+          place: ratio(l[2], l[1], 2), kills: ratio(l[6], l[5], 2), damage: ratio(l[8], l[7], 0),
         })),
-      combos: Object.entries(combos[key])
-        .map(([names, c]) => ({ legends: names.split("|"), n: c.n, rate: ratio(c.n, squads, 4), place: ratio(c.sp, c.np, 2) }))
-        .sort((x, y) => y.n - x.n || (x.place ?? 99) - (y.place ?? 99))
-        .slice(0, TOP_COMBOS),
+      combos: comboList.slice(0, TOP_COMBOS)
+        .map(([names, c, place]) => ({ legends: names.split("|"), n: c[0], rate: ratio(c[0], squads, 4), place })),
+      // 每名玩家的场均：s = [n, np, sp, wins, top5, nk, sk, na, sa, nd, sd, nkp, kpa, kps]
       people: {
-        place: points(ids.filter((p) => enough(p.np)).map((p) => p.sp / p.np), 2),
-        win: points(ids.filter((p) => enough(p.np)).map((p) => p.wins / p.np), 4),
-        kills: points(ids.filter((p) => enough(p.nk)).map((p) => p.sk / p.nk), 2),
-        damage: points(ids.filter((p) => enough(p.nd)).map((p) => p.sd / p.nd), 0),
-        assists: points(ids.filter((p) => enough(p.na)).map((p) => p.sa / p.na), 2),
-        top5: points(ids.filter((p) => enough(p.np)).map((p) => p.top5 / p.np), 4),
-        kp: points(ids.filter((p) => enough(p.nkp) && p.kps > 0).map((p) => Math.min(1, p.kpa / p.kps)), 4),
-        pool: points(poolSizes(key), 0),
+        place: points(ids.filter((p) => enough(p[1])).map((p) => p[2] / p[1]), 2),
+        win: points(ids.filter((p) => enough(p[1])).map((p) => p[3] / p[1]), 4),
+        kills: points(ids.filter((p) => enough(p[5])).map((p) => p[6] / p[5]), 2),
+        damage: points(ids.filter((p) => enough(p[9])).map((p) => p[10] / p[9]), 0),
+        assists: points(ids.filter((p) => enough(p[7])).map((p) => p[8] / p[7]), 2),
+        top5: points(ids.filter((p) => enough(p[1])).map((p) => p[4] / p[1]), 4),
+        kp: points(ids.filter((p) => enough(p[11]) && p[13] > 0).map((p) => Math.min(1, p[12] / p[13])), 4),
+        // 英雄池：每个编号用了几个传奇（局数占 POOL_SHARE 以上的），局数太少的编号不算
+        pool: points(Object.values(people[key]).map((p) => Object.values(p.l))
+          .filter((ns) => enough(ns.reduce((a, b) => a + b, 0)))
+          .map((ns) => {
+            const total = ns.reduce((a, b) => a + b, 0);
+            return ns.filter((n) => n / total >= POOL_SHARE).length;
+          }), 0),
       },
       weapon_games: weaponGames[key] ?? 0,
       weapons: Object.entries(weapons[key])
-        .sort(([a, x], [b, y]) => y.s - x.s || (a < b ? -1 : 1))
-        .map(([name, w]) => ({ key: name, n: w.n, share: ratio(w.s, held, 4), rate: ratio(w.n, weaponGames[key], 4) })),
+        .sort(([a, x], [b, y]) => y[1] - x[1] || (a < b ? -1 : 1))
+        .map(([name, w]) => ({ key: name, n: w[0], share: ratio(w[1], held, 4), rate: ratio(w[0], weaponGames[key], 4) })),
     };
   }
 
-  // 段位分布：每个编号最近一局排位的段位（同一天有两个段位时算高的那个）
+  // 段位分布：每个编号最近一局排位的段位（同一天有两个段位时算高的那个）。原来 SQL 按编号排好出来，counts 里段位的先后照它
   const rank = (tier) => TIER_ORDER.indexOf(tier);
+  const tierIds = Object.keys(latestTier).sort();
   const tiers = {};
   for (const [range, from] of [["all", ""], ["7d", recentFrom], ["season", SEASON.from]]) {
-    const latest = {};
-    for (const row of tierRows) {
-      if (row.last < from) continue;
-      const best = latest[row.id];
-      if (!best || row.last > best.last || (row.last === best.last && rank(row.tier) > rank(best.tier))) latest[row.id] = row;
-    }
     const counts = {};
-    for (const row of Object.values(latest)) counts[row.tier] = (counts[row.tier] ?? 0) + 1;
-    tiers[range] = { players: Object.keys(latest).length, counts };
+    let players = 0;
+    for (const id of tierIds) {
+      const [day, list] = latestTier[id];
+      if (day < from) continue;
+      let best = null;
+      for (const tier of list) if (best === null || rank(tier) > rank(best)) best = tier;  // 一样高（认不出的段位）取排在前面的
+      players += 1;
+      counts[best] = (counts[best] ?? 0) + 1;
+    }
+    tiers[range] = { players, counts };
   }
   return { v: 1, made_at: now.toISOString(), recent_from: recentFrom, season: SEASON.number, season_from: SEASON.from,
            slices, tiers };
 }
 
-// 算一次汇总存起来。force 为 false 时（定时任务）：没有新数据、也没换天，就不重算（少读数据库）
-async function refreshSummary(env, force) {
-  const now = new Date();
-  const newest = (await env.DB.prepare("SELECT MAX(received_at) AS t FROM matches").first())?.t ?? null;
-  if (!force) {
-    const last = await env.DB.prepare("SELECT made_at, data_at FROM summary WHERE name = ?").bind(SUMMARY_NAME).first();
-    if (last && last.data_at === newest && last.made_at.slice(0, 10) === now.toISOString().slice(0, 10)) return null;
-  }
-  const body = JSON.stringify(await makeSummary(env, now));
-  await env.DB.prepare(
+function saveRow(db, name, body, madeAt, dataAt) {
+  return db.prepare(
     `INSERT INTO summary (name, body, made_at, data_at) VALUES (?, ?, ?, ?)
      ON CONFLICT (name) DO UPDATE SET body = excluded.body, made_at = excluded.made_at, data_at = excluded.data_at`,
-  ).bind(SUMMARY_NAME, body, now.toISOString(), newest).run();
-  return body;
+  ).bind(name, body, madeAt, dataAt);
+}
+
+const saveState = (db, state, now) => saveRow(db, DAYS_STATE, JSON.stringify(state), now.toISOString(), null);
+
+function saveDay(db, day, body) {
+  return isEmptyDay(body)
+    ? db.prepare("DELETE FROM summary_days WHERE day = ?").bind(day)
+    : db.prepare("INSERT INTO summary_days (day, body) VALUES (?, ?) ON CONFLICT (day) DO UPDATE SET body = excluded.body")
+      .bind(day, JSON.stringify(body));
+}
+
+// matches 里一天的局（没有日期的局是 ""）：用 day 的索引，只读那一天的行
+function dayRows(db, day) {
+  return db.prepare(`SELECT ${GAME_COLUMNS} FROM matches WHERE day IS ?1`).bind(day === "" ? null : day);
+}
+
+// 写 summary_pairs：[[日期, 编号, {k: snapshot}], ...]，几百行合成一句（一句带的 JSON 不超过 PARAM_SIZE）
+function savePairs(db, rows) {
+  const out = [];
+  let chunk = [];
+  let size = 0;
+  const flush = () => {
+    if (!chunk.length) return;
+    out.push(db.prepare(
+      `INSERT INTO summary_pairs (day, id, games)
+       SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?1) WHERE true
+       ON CONFLICT (day, id) DO UPDATE SET games = excluded.games`,
+    ).bind(`[${chunk.join(",")}]`));
+    chunk = [];
+    size = 0;
+  };
+  for (const [day, id, games] of rows) {
+    const item = JSON.stringify([day, id, JSON.stringify(games)]);
+    if (size + item.length > PARAM_SIZE) flush();
+    chunk.push(item);
+    size += item.length + 1;
+  }
+  flush();
+  return out;
+}
+
+// 从 matches 重建一天：summary_pairs 里那一天的整个换掉、summary_days 那一行换掉（返回要写的几句）
+function replaceDay(db, day, rows) {
+  const { pairs, body } = buildDay(rows);
+  return [db.prepare("DELETE FROM summary_pairs WHERE day = ?").bind(day),
+          ...savePairs(db, Object.entries(pairs).map(([id, games]) => [day, id, games])), saveDay(db, day, body)];
+}
+
+// 读 summary_pairs 里这几名玩家这几天的行：[[日期, 编号], ...] → Map("日期\t编号" → {k: snapshot})。按主键一行一行找
+async function loadPairs(db, keys) {
+  const reads = [];
+  for (let i = 0; i < keys.length; i += 500) {
+    reads.push(db.prepare(
+      `SELECT p.day, p.id, p.games FROM json_each(?1) AS j CROSS JOIN summary_pairs AS p
+       ON p.day = json_extract(j.value, '$[0]') AND p.id = json_extract(j.value, '$[1]')`,
+    ).bind(JSON.stringify(keys.slice(i, i + 500))));
+  }
+  const out = new Map();
+  if (reads.length) {
+    for (const r of await db.batch(reads)) for (const row of r.results) out.set(`${row.day}\t${row.id}`, JSON.parse(row.games));
+  }
+  return out;
+}
+
+// 读 summary_days 里这几天：Map(日期 → 部分和)
+async function loadDays(db, days) {
+  if (!days.length) return new Map();
+  const rows = (await db.prepare("SELECT day, body FROM summary_days WHERE day IN (SELECT value FROM json_each(?1))")
+    .bind(JSON.stringify(days)).all()).results;
+  return new Map(rows.map((r) => [r.day, JSON.parse(r.body)]));
+}
+
+// 从头重建的开始：清掉两张表，记下现在最新一局的收到时间（之后收到的局，建完再增量读）和要建哪几天
+async function startRebuild(db, now) {
+  const [newest, days, undated] = (await db.batch([
+    db.prepare("SELECT MAX(received_at) AS t FROM matches"),
+    // 一天一天跳着找（每次只读索引里的一两行），不用把 matches 读一遍
+    db.prepare(`WITH RECURSIVE d(day) AS (SELECT MIN(day) FROM matches
+       UNION ALL SELECT (SELECT MIN(day) FROM matches WHERE day > d.day) FROM d WHERE d.day IS NOT NULL)
+     SELECT day FROM d WHERE day IS NOT NULL`),
+    db.prepare("SELECT 1 AS x FROM matches WHERE day IS NULL LIMIT 1"),
+  ])).map((r) => r.results);
+  const state = { v: DAYS_VERSION, mark: newest[0]?.t ?? "", more: false, todo: [...(undated.length ? [""] : []),
+                  ...days.map((r) => r.day)], checked: null, verified: "", fixed: 0 };
+  await db.batch([db.prepare("DELETE FROM summary_pairs"), db.prepare("DELETE FROM summary_days"), saveState(db, state, now)]);
+  return state;
+}
+
+// 重建 state.todo 里前 n 天
+async function rebuildDays(db, state, n, now) {
+  const todo = state.todo.slice(0, n);
+  const results = await db.batch(todo.map((day) => dayRows(db, day)));
+  state.todo = state.todo.slice(todo.length);
+  await db.batch([...todo.flatMap((day, i) => replaceDay(db, day, results[i].results)), saveState(db, state, now)]);
+}
+
+// 增量：读上次以后收到的局（往前多读 OVERLAP；上次没读完时从停下的地方接着读，一次最多 MAX_CHANGED 局），
+// 换掉 summary_pairs 里这几名玩家这几天的，更新那几天的部分和。received_at 有索引，只读这几行
+async function catchUp(db, state, now) {
+  const before = JSON.stringify(state);
+  const since = state.more || !state.mark ? state.mark : new Date(Date.parse(state.mark) - OVERLAP).toISOString();
+  const changed = (await db.prepare(
+    `SELECT ${GAME_COLUMNS}, received_at FROM matches WHERE received_at >= ?1 ORDER BY received_at LIMIT ?2`,
+  ).bind(since, MAX_CHANGED).all()).results;
+  state.more = changed.length === MAX_CHANGED;
+  const last = changed[changed.length - 1]?.received_at ?? "";
+  if (last > state.mark) state.mark = last;
+  const groups = new Map();  // "日期\t编号" → {day, id, games: 新收到的局 {k: snapshot}}
+  for (const r of changed) {
+    const day = r.day ?? "";
+    const key = `${day}\t${r.id}`;
+    if (!groups.has(key)) groups.set(key, { day, id: r.id, games: {} });
+    groups.get(key).games[r.k] = snapshot(r);
+  }
+  const old = await loadPairs(db, [...groups.values()].map((g) => [g.day, g.id]));
+  const changes = [...groups].filter(([key, g]) => {
+    const stored = old.get(key);
+    return !stored || !Object.entries(g.games).every(([k, s]) => same(stored[k], s));  // 和存着的一样（重发了没改的局）就不用动
+  });
+  const days = await loadDays(db, [...new Set(changes.map(([, g]) => g.day))]);
+  const pairs = [];
+  for (const [key, g] of changes) {
+    const stored = old.get(key) ?? null;
+    const after = { ...stored, ...g.games };
+    if (!days.has(g.day)) days.set(g.day, emptyDay());
+    putPair(days.get(g.day), g.id, stored && pairParts(stored), pairParts(after));
+    pairs.push([g.day, g.id, after]);
+  }
+  if (!pairs.length && JSON.stringify(state) === before) return;
+  await db.batch([...savePairs(db, pairs), ...[...days].map(([day, body]) => saveDay(db, day, body)), saveState(db, state, now)]);
+}
+
+// 核对：两天以前的日子轮着挑一天（最近两天一直在变），从 matches 从头算，和增量算出来的比；对不上就换成重算的
+async function verifyDay(db, state, now) {
+  const today = now.toISOString().slice(0, 10);
+  const until = new Date(Date.parse(today) - 2 * 86400000).toISOString().slice(0, 10);
+  const next = "SELECT day FROM summary_days WHERE day > ?1 AND day < ?2 ORDER BY day LIMIT 1";
+  const pick = (await db.prepare(next).bind(state.checked, until).first())?.day
+    ?? (await db.prepare(next).bind("\u0000", until).first())?.day  // 轮完一遍：从头（没有日期的 "" 也在内）
+    ?? (await db.prepare("SELECT day FROM summary_days WHERE day = ''").first())?.day;
+  state.verified = today;
+  const writes = [];
+  if (pick !== undefined) {
+    const [rows, stored] = await db.batch([dayRows(db, pick), db.prepare("SELECT body FROM summary_days WHERE day = ?").bind(pick)]);
+    if (!same(buildDay(rows.results).body, JSON.parse(stored.results[0]?.body ?? "null") ?? emptyDay())) {
+      state.fixed += 1;
+      writes.push(...replaceDay(db, pick, rows.results));
+    }
+    state.checked = pick;
+  }
+  await db.batch([...writes, saveState(db, state, now)]);
+}
+
+// 定时任务（每小时）、还没算过时的 GET /v1/summary 叫它。force：一次做完（不分几个小时）、不管今天出过没有。
+// 返回新出的汇总（这次没出是 null）。
+// 状态（summary 表 DAYS_STATE 那一行的 body）：{v: DAYS_VERSION, mark: 读到哪一局的收到时间, more: 上次没读完,
+//   todo: 还要重建的日子, checked: 上次核对的是哪天, verified: 哪天核对过, fixed: 核对时对不上、换掉的次数（正常一直是 0）}
+async function refreshSummary(env, force) {
+  const db = env.DB;
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const head = Object.fromEntries((await db.prepare(
+    `SELECT name, made_at, CASE WHEN name = ?1 THEN NULL ELSE body END AS body FROM summary WHERE name IN (?1, ?2, ?3)`,
+  ).bind(SUMMARY_NAME, DAYS_STATE, DAYS_DIRTY).all()).results.map((r) => [r.name, r]));
+  let state = head[DAYS_STATE] ? JSON.parse(head[DAYS_STATE].body) : null;
+  if (state?.v !== DAYS_VERSION) state = await startRebuild(db, now);
+  const dirty = head[DAYS_DIRTY];
+  if (dirty) {
+    // /v1/delete 删过数据：那几天加进要重建的日子（只删读到的这一个标记：这一会儿又有人删了的话，标记还在，下次再加）
+    state.todo = [...new Set([...state.todo, ...JSON.parse(dirty.body)])];
+    await db.batch([saveState(db, state, now),
+                    db.prepare("DELETE FROM summary WHERE name = ? AND made_at = ?").bind(DAYS_DIRTY, dirty.made_at)]);
+  }
+  if (state.todo.length) {
+    await rebuildDays(db, state, force ? state.todo.length : REBUILD_DAYS, now);
+    if (!force) return null;  // 这一次只重建；建完以后下一个小时接着增量读、出汇总
+  }
+  do {
+    await catchUp(db, state, now);
+  } while (force && state.more);
+  if (state.more) return null;  // 新收到的局没读完：下一个小时接着读，读完再出汇总
+  if (!force && head[SUMMARY_NAME]?.made_at.slice(0, 10) === today) {
+    if (now.getUTCHours() >= VERIFY_HOUR && state.verified !== today) await verifyDay(db, state, now);
+    return null;
+  }
+  // 每天第一次：各天的部分和加起来，出汇总
+  const rows = (await db.prepare("SELECT day, body FROM summary_days").all()).results;
+  const made = JSON.stringify(assemble(new Map(rows.map((r) => [r.day, JSON.parse(r.body)])), now));
+  await saveRow(db, SUMMARY_NAME, made, now.toISOString(), state.mark || null).run();
+  return made;
 }
 
 async function summary(env) {
@@ -578,7 +917,7 @@ export default {
     }
   },
 
-  // 定时任务（wrangler.toml 的 crons）：每天 UTC 0 点第 7 分钟（D1 额度刚恢复的时候）重算全体玩家的汇总；每分钟看一眼地图轮换要不要重新取
+  // 定时任务（wrangler.toml 的 crons）：每小时第 7 分钟增量更新全体玩家的汇总（见 refreshSummary）；每分钟看一眼地图轮换要不要重新取
   async scheduled(event, env, ctx) {
     ctx.waitUntil(event.cron === SUMMARY_CRON ? refreshSummary(env, false) : refreshMaps(env));
   },

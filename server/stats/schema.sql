@@ -73,10 +73,26 @@ CREATE INDEX IF NOT EXISTS matches_day ON matches (day);
 CREATE INDEX IF NOT EXISTS matches_received ON matches (received_at);  -- 汇总前看有没有新数据（只读一行）
 CREATE INDEX IF NOT EXISTS usage_day ON usage (day);  -- 后台「数据」页按天算占用（server/team/statsroll.js，2026-11-19 加的）
 
--- 全体玩家的汇总（Evo 数据页"全体玩家"下载的就是 body；worker.js 每天算一次，有新数据或换了一天才重算）
+-- 全体玩家的汇总（Evo 数据页"全体玩家"下载的就是 v1 那一行的 body；worker.js 每天出一次）。
+-- 另外几行也放在这里：maps_v1 地图轮换，v1_days 汇总增量算到哪了，v1_dirty /v1/delete 删过数据、要重建的日子（见 worker.js）
 CREATE TABLE IF NOT EXISTS summary (
   name TEXT PRIMARY KEY,  -- 汇总的版本（v1）；格式改了换个名字，老版本的 Evo 照样读老的
-  body TEXT NOT NULL,  -- JSON，格式见 worker.js 的 makeSummary
+  body TEXT NOT NULL,  -- JSON，格式见 worker.js 的"全体玩家的汇总"
   made_at TEXT NOT NULL,  -- 算的时间（UTC）
-  data_at TEXT  -- 算的时候最新一局的收到时间：没变（也没换天）就不重算
+  data_at TEXT  -- v1：算的时候读到的最新一局的收到时间
+);
+
+-- 全体玩家汇总的中间结果（2026-11-19 改成按天增量算，见 worker.js 的"全体玩家的汇总"）。都由 worker.js 从 matches 算出来。
+-- 要从头重建：把 summary 表里 v1_days 那一行删掉，下一个小时的定时任务清空这两张表、从头建（只清空这两张表不行）
+-- 每名玩家每天一行：那天他每一局里汇总用得到的几项（JSON {对局编号 k: [...]}，见 worker.js 的 snapshot）
+CREATE TABLE IF NOT EXISTS summary_pairs (
+  day TEXT NOT NULL,  -- 对局的日期（没有日期的局是 ''）
+  id TEXT NOT NULL,
+  games TEXT NOT NULL,
+  PRIMARY KEY (day, id)
+);
+-- 每天一行：那天全体的部分和（JSON，见 worker.js 的 pairParts）
+CREATE TABLE IF NOT EXISTS summary_days (
+  day TEXT PRIMARY KEY,
+  body TEXT NOT NULL
 );
