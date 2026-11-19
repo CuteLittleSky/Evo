@@ -54,6 +54,7 @@ dist/
 
 # ===== 个人设置 =====
 .claude/settings.local.json
+.claude/launch.json
 
 # ===== Windows 系统文件 =====
 Thumbs.db

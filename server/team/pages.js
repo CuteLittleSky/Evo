@@ -211,7 +211,7 @@ details.note > summary .help { color: inherit; opacity: .85; }
 .tabs a[aria-current="page"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
 .bulk-team { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .bulk-team h3 { margin: 0 0 8px; color: var(--text); font-size: 16px; }
-.bulk-row { display: grid; grid-template-columns: 7.5em 1fr; gap: 6px 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--row-border); }
+.bulk-row { display: grid; grid-template-columns: 9.5em 1fr; gap: 6px 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--row-border); }
 .bulk-row:first-child { border-top: 0; padding-top: 0; }
 .bulk-who { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; overflow-wrap: anywhere; }
 @media (min-width: 720px) {
