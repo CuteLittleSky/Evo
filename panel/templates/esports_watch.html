@@ -576,6 +576,43 @@
         if (fields.txt) shoot(cell, douyuValue(fields.txt), DOUYU_COLORS[fields.col] || "");
       }
     }
+    // B站：包头 16 个字节（大端）：总长 4、头长 2（= 16）、版本 2、操作 4、序号 4。先发认证（操作 7），每 30 秒发心跳（操作 2）；
+    // 收到操作 5 是通知：版本 2 的正文是 zlib 压过的（里面又是一个个包），版本 0 是 JSON，cmd 是 DANMU_MSG 的就是一条弹幕
+    function biliPacket(op, text) {
+      var body = new TextEncoder().encode(text || ""), packet = new Uint8Array(16 + body.length), view = new DataView(packet.buffer);
+      view.setUint32(0, packet.length);
+      view.setUint16(4, 16);
+      view.setUint16(6, 1);
+      view.setUint32(8, op);
+      view.setUint32(12, 1);
+      packet.set(body, 16);
+      return packet;
+    }
+    function biliRead(cell, chat, bytes, depth) {
+      var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), offset = 0, decoder = new TextDecoder();
+      while (offset + 16 <= bytes.length) {
+        var length = view.getUint32(offset), head = view.getUint16(offset + 4), version = view.getUint16(offset + 6), op = view.getUint32(offset + 8);
+        if (length < head || head < 16 || offset + length > bytes.length) break;
+        var body = bytes.subarray(offset + head, offset + length);
+        offset += length;
+        if (op !== 5) continue;
+        if (version === 2 && depth < 2 && window.DecompressionStream) {
+          (function (packed) {
+            new Response(new Blob([packed]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer()
+              .then(function (plain) { if (cell.chat === chat) biliRead(cell, chat, new Uint8Array(plain), depth + 1); })
+              .catch(function () {});
+          })(body.slice());
+        } else if (version === 0 || version === 1) {
+          try {
+            var note = JSON.parse(decoder.decode(body));
+            if (typeof note.cmd === "string" && note.cmd.indexOf("DANMU_MSG") === 0 && Array.isArray(note.info)) {
+              var color = Array.isArray(note.info[0]) ? note.info[0][3] : 0;
+              shoot(cell, String(note.info[1] || ""), color > 0 && color !== 16777215 ? "#" + ("000000" + Number(color).toString(16)).slice(-6) : "");
+            }
+          } catch (e) {}
+        }
+      }
+    }
     function stopDanmaku(cell) {
       var live = cell.chat;
       cell.chat = null;
@@ -601,15 +638,27 @@
       var chat = cell.chat = { id: p.id, socket: null, beat: null, retry: null, tries: 0 };
       function connect(found) {
         if (cell.chat !== chat) return;
-        var socket = chat.socket = new WebSocket(found.url);
+        var bili = found.platform === "bilibili";
+        // B站给了几个弹幕服务器：连不上就换下一个
+        var socket = chat.socket = new WebSocket(bili ? found.urls[chat.tries % found.urls.length] : found.url);
         socket.binaryType = "arraybuffer";
         socket.onopen = function () {
-          chat.tries = 0;
-          socket.send(douyuPacket("type@=loginreq/roomid@=" + found.room + "/"));
-          socket.send(douyuPacket("type@=joingroup/rid@=" + found.room + "/gid@=-9999/"));
-          chat.beat = setInterval(function () { if (socket.readyState === 1) socket.send(douyuPacket("type@=mrkl/")); }, 45000);
+          if (bili) {
+            // 游客身份（uid 0）；protover 2 = 压过的通知用 zlib（浏览器自己能解），不要 3（brotli）
+            socket.send(biliPacket(7, JSON.stringify({ uid: 0, roomid: found.room, protover: 2, buvid: found.buvid, platform: "web", type: 2, key: found.token })));
+            socket.send(biliPacket(2, ""));
+            chat.beat = setInterval(function () { if (socket.readyState === 1) socket.send(biliPacket(2, "")); }, 30000);
+          } else {
+            socket.send(douyuPacket("type@=loginreq/roomid@=" + found.room + "/"));
+            socket.send(douyuPacket("type@=joingroup/rid@=" + found.room + "/gid@=-9999/"));
+            chat.beat = setInterval(function () { if (socket.readyState === 1) socket.send(douyuPacket("type@=mrkl/")); }, 45000);
+          }
         };
-        socket.onmessage = function (e) { if (cell.chat === chat && e.data instanceof ArrayBuffer) douyuRead(cell, e.data); };
+        socket.onmessage = function (e) {
+          if (cell.chat !== chat || !(e.data instanceof ArrayBuffer)) return;
+          chat.tries = 0;  // 收到过东西才算连上了
+          if (bili) biliRead(cell, chat, new Uint8Array(e.data), 0); else douyuRead(cell, e.data);
+        };
         socket.onclose = function () {  // 断了：过一会儿再连，最多连 5 次（弹幕连不上不影响看直播，不提示）
           clearInterval(chat.beat);
           if (cell.chat !== chat || ++chat.tries > 5) return;
@@ -617,7 +666,9 @@
         };
       }
       fetch(p.danmaku, { cache: "no-store" }).then(function (r) { return r.json(); })
-        .then(function (found) { if (found.ok && found.platform === "douyu") connect(found); })
+        .then(function (found) {
+          if (found.ok && (found.platform === "douyu" || (found.platform === "bilibili" && found.urls && found.urls.length))) connect(found);
+        })
         .catch(function () {});
     }
     function syncAllDanmaku() { cells.forEach(syncDanmaku); }
