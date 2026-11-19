@@ -9,6 +9,11 @@
   参考项目 DTV 记着国内 FLV 直连 404、HLS 直连 200，有的服务器还要求请求带来源页（2026-11-19 实测 d1--ov-gotcha05：
   不带来源页 403）。所以改成：**优先 HLS（TS）**，Evo 的后台去取、带上 B站自己网页那样的来源页，接成一条流转给页面
   （hls_relay.py）；这个房间没有 HLS 才用 FLV（flv_relay.py，同样经过中转）。几个服务器按顺序试，名字带 mcdn 的排最后
+- **开播前先试一下 HLS 通不通（2026-11-19 晚上加的）**：用户录介绍视频时发现大部分 B站房间"很久才打开、自带的播放器播不了"。
+  实测（瑞士，登录着）：官方赛事台的 HLS 播放列表 1 秒就回；普通主播的房间 B站照样给了 HLS 的地址，播放列表却一直不回
+  （等 45 秒也不回），同一个房间的 FLV 2–5 秒出第一块数据。原来只要 B站给了 HLS 就死等它，等到超时才退回官方播放器。
+  现在取到地址以后同时问一下几个播放列表（hls_alive()，最多等 PROBE_SECONDS 秒）：通的排前面；都不通就这一次改用 FLV，
+  并记住这个房间 HLS_DEAD_SECONDS 秒以内不再试。没有 FLV 可退时照旧用 HLS
 - 登录凭证只在这里向 B站要地址时用，不交给页面；视频地址里是 B站签好的参数，不带登录凭证
 - 房间号写短号也行（B站自己会换成真实房间号）
 接口地址在 config/watch.json 的 bilibili 里。
@@ -33,7 +38,10 @@ TIMEOUT = live_status.CONFIG["timeout"]
 BEST = 10000        # 没选过清晰度时要这一档（原画）
 REUSE_SECONDS = 20  # 刚取过的地址这么久以内直接用（页面先问有哪些清晰度，紧接着就要开播）
 MAX_SEGMENT = 64 * 1024 * 1024  # HLS 的一段最多读这么多（原画 3 秒一段约 3 MB）
+PROBE_SECONDS = 3   # 开播前试 HLS 的播放列表，最多等这么久（通的时候 1 秒左右就回）
+HLS_DEAD_SECONDS = 600  # 试过 HLS 不通的房间，这么久以内直接用 FLV，不再试
 _recent = {}
+_dead = {}  # 房间号 → 什么时候试出来 HLS 不通的
 _lock = threading.Lock()
 
 
@@ -56,9 +64,10 @@ def _urls(codec):
     return sorted(urls, key=lambda url: "mcdn" in urllib.parse.urlsplit(url).netloc)
 
 
-def parse(body):
+def parse(body, hls=True):
     """getRoomPlayInfo 的回包 → {"hls": [播放列表地址], "flv": [FLV 地址], "kind": 页面的播放器要按哪种放（"mpegts" / "flv"），
-    "rate", "qualities", "ttl"}。只看 H.264 的。没开播、两种地址都没有抛 BiliPlayError。"""
+    "rate", "qualities", "ttl"}。只看 H.264 的。没开播、两种地址都没有抛 BiliPlayError。
+    hls=False：不要 HLS（试过不通），只看 FLV。"""
     if not isinstance(body, dict) or body.get("code") != 0:
         raise BiliPlayError(f"B站的取流接口回了 code={body.get('code') if isinstance(body, dict) else body}"
                             f"（{body.get('message') if isinstance(body, dict) else ''}）")
@@ -74,6 +83,8 @@ def parse(body):
             for codec in kind.get("codec") or []:
                 if key and key not in found and codec.get("codec_name") == "avc" and _urls(codec):
                     found[key] = codec
+    if not hls:
+        found.pop("hls", None)
     if not found:
         raise BiliPlayError("B站没给 H.264 的视频地址")
     chosen = found.get("hls") or found["flv"]  # 清晰度看实际要用的那一种
@@ -83,9 +94,44 @@ def parse(body):
             "qualities": [{"id": str(qn), "name": names.get(qn) or str(qn)} for qn in dict.fromkeys(accept)]}
 
 
-def resolve(room, rate=None, ask=None, cookie=None, reuse=False, now=None):
+def _playlist(url, wait):
+    """取一次播放列表（试通不通用，超时比平常短）。"""
+    with urllib.request.urlopen(_request(url), timeout=wait) as response:
+        return response.read(1_000_000)
+
+
+def hls_alive(urls, wait=PROBE_SECONDS, get=None, clock=time.monotonic, sleep=time.sleep):
+    """同时问这几个播放列表地址，返回 wait 秒以内回了、里面有视频段的那些（照原来的先后）；一个都没有返回 []。
+    有一个通了就再多等一小会儿收齐别的，不等满 wait 秒。get：测试时换掉联网的函数（url, 最多等几秒）→ 字节。"""
+    get = get or _playlist
+    good, done = [], []
+
+    def run(url):
+        try:
+            if b"#EXTINF" in get(url, wait):
+                good.append(url)
+        except Exception:  # noqa: BLE001, S110  连不上、超时、不是 200：就是不通
+            pass
+        done.append(url)
+
+    for url in urls:
+        threading.Thread(target=run, args=(url,), daemon=True).start()
+    began, first = clock(), None
+    while len(done) < len(urls) and clock() - began < wait:
+        if good and first is None:
+            first = clock()
+        if first is not None and clock() - first > 0.3:
+            break
+        sleep(0.02)
+    alive = list(good)
+    return [url for url in urls if url in alive]
+
+
+def resolve(room, rate=None, ask=None, cookie=None, reuse=False, now=None, probe=None):
     """取地址。rate：清晰度编号（None = 要原画）。返回 parse() 的结果（"rate" 是实际给的那一档）。
-    reuse：REUSE_SECONDS 秒以内 remember() 过同一个（房间, 清晰度）就直接用（只用一次）。"""
+    reuse：REUSE_SECONDS 秒以内 remember() 过同一个（房间, 清晰度）就直接用（只用一次）。
+    probe：试 HLS 通不通的函数（地址列表 → 通的那些）。None = 真的去问 B站时用 hls_alive()，测试里换了 ask 时不试；
+    False = 不试（中转途中重新要地址时）。都不通、又有 FLV：这一次只用 FLV，结果里多一项 "note" 说明原因。"""
     wanted = _number(rate)
     wanted = wanted if wanted and wanted > 0 else BEST
     moment = time.time() if now is None else now
@@ -99,7 +145,22 @@ def resolve(room, rate=None, ask=None, cookie=None, reuse=False, now=None):
         body, _ = (ask or bili_login.request)(url, bili_login.cookie() if cookie is None else cookie)
     except bili_login.BiliError as e:
         raise BiliPlayError(str(e)) from e
-    return parse(body)
+    found = parse(body)
+    check = (hls_alive if ask is None else None) if probe is None else probe
+    if not found["hls"] or not found["flv"] or not check:  # 只有一种地址：没得选
+        return found
+    with _lock:
+        dead = 0 <= moment - _dead.get(str(room), -HLS_DEAD_SECONDS - 1) < HLS_DEAD_SECONDS
+    if dead:
+        return {**parse(body, hls=False), "note": "这个房间的 HLS 刚才试过不通，用 FLV"}
+    alive = check(found["hls"])
+    if alive:
+        return {**found, "hls": alive}
+    with _lock:
+        _dead[str(room)] = moment
+        for key in [key for key, at in _dead.items() if moment - at > HLS_DEAD_SECONDS]:
+            del _dead[key]
+    return {**parse(body, hls=False), "note": f"HLS 的播放列表 {PROBE_SECONDS} 秒没取到，改用 FLV"}
 
 
 def remember(room, rate, found, now=None):
@@ -139,7 +200,7 @@ def open_relay(room, rate=None, on_event=None):
     pending = [first]  # 第一次用刚取到的，之后（地址过期、断了）重新要同一档
 
     def again():
-        return pending.pop() if pending else resolve(room, first["rate"])
+        return pending.pop() if pending else resolve(room, first["rate"], probe=False)  # 途中重新要地址：不再试，照开头定的那一种接
 
     if first["hls"]:
         return hls_relay.HlsRelay(lambda: again()["hls"], fetch, on_event=on_event)

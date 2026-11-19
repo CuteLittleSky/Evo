@@ -298,6 +298,8 @@ def play(player_id):
         return jsonify(ok=False, reason="upstream", detail=str(e))
     if getattr(module, "DIRECT", False):  # 页面直接连平台的视频服务器
         return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], stream=found["url"], kind="flv")
+    if found.get("note"):  # 取地址的模块临时换了做法（B站：HLS 不通改用 FLV）：记一笔，玩家反馈时好查
+        log.info("看直播：%s 房间 %s %s", player["platform"], player["room"], found["note"])
     module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
     return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], kind=found.get("kind", "flv"),
                    stream=url_for("esports.stream", player_id=player_id, q=found["rate"], t=current_app.config["TOKEN"]))

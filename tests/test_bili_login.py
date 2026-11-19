@@ -249,6 +249,60 @@ def play_checks(out):
     out["中转：有 HLS 接 HLS（接成 TS 流），没有才接 FLV；开头用刚取到的地址，不再问一遍"] = (
         isinstance(relay, hls_relay.HlsRelay) and relay.mimetype == "video/mp2t"
         and isinstance(flv, flv_relay.Relay) and flv.mimetype == "video/x-flv" and len(asked) == 5)
+    # ---- 开播前先试 HLS 通不通（2026-11-19：普通主播的房间 B站给了 HLS 的地址，播放列表却一直不回）----
+    def get(url, wait):
+        if "a.bilivideo" in url:
+            raise OSError("timed out")
+        if "b.bilivideo" in url:
+            return b"#EXTM3U\n#EXTINF:3.0,\nx.ts\n"
+        return b"#EXTM3U\n"  # 回了，但里面没有视频段
+
+    alive = watch_bilibili.hls_alive(found["hls"], wait=2, get=get)
+    out["试 HLS 通不通：几个播放列表一起问，只留回了、里面有视频段的（照原来的先后）；都不通是空的"] = (
+        alive == [found["hls"][1]] and watch_bilibili.hls_alive(found["hls"][:1], wait=2, get=get) == []
+        and watch_bilibili.hls_alive([], wait=2, get=get) == [])
+    probed = []
+
+    def dead(urls):
+        probed.append(list(urls))
+        return []
+
+    def half(urls):
+        probed.append(list(urls))
+        return urls[1:2]
+
+    watch_bilibili._dead.clear()
+    gone = watch_bilibili.resolve("8", None, ask, cookie="", probe=dead, now=1000)
+    soon = watch_bilibili.resolve("8", None, ask, cookie="", probe=dead, now=1000 + watch_bilibili.HLS_DEAD_SECONDS - 1)
+    count = len(probed)
+    later = watch_bilibili.resolve("8", None, ask, cookie="", probe=half, now=1000 + watch_bilibili.HLS_DEAD_SECONDS + 1)
+    out["HLS 都不通、又有 FLV：这一次改用 FLV（页面按 FLV 放），说明原因；这个房间 10 分钟以内不再试，过了再试"] = (
+        gone["hls"] == [] and gone["kind"] == "flv" and gone["flv"] == found["flv"] and "改用 FLV" in gone["note"]
+        and soon["hls"] == [] and soon["kind"] == "flv" and count == 1
+        and later["hls"] == [found["hls"][1]] and later["kind"] == "mpegts" and "note" not in later and len(probed) == 2)
+    before = len(probed)
+
+    def only_hls(url, cookie="", form=None):
+        reply = play_reply(10000)
+        reply["data"]["playurl_info"]["playurl"]["stream"].pop(1)
+        return reply, {}
+
+    def only_flv_ask(url, cookie="", form=None):
+        return no_hls, {}
+
+    kept = watch_bilibili.resolve("9", None, only_hls, cookie="", probe=dead)
+    plain = watch_bilibili.resolve("10", None, only_flv_ask, cookie="", probe=dead)
+    quiet = watch_bilibili.resolve("11", None, ask, cookie="", probe=False)
+    out["只有 HLS 或只有 FLV 时不试（没得选）；中转途中重新要地址时不试；测试里换掉了问 B站的函数时也不试"] = (
+        kept["hls"] and kept["kind"] == "mpegts" and plain["kind"] == "flv" and quiet["kind"] == "mpegts" and len(probed) == before
+        and best["kind"] == "mpegts" and "note" not in best)
+    flv_only = watch_bilibili.parse(play_reply(), hls=False)
+    watch_bilibili.remember("12", None, gone)
+    fallback = watch_bilibili.open_relay("12")
+    out["改用 FLV 时清晰度按 FLV 那一种算；中转接的是 FLV"] = (
+        flv_only["hls"] == [] and flv_only["kind"] == "flv" and flv_only["rate"] == "250"
+        and isinstance(fallback, flv_relay.Relay) and fallback.mimetype == "video/x-flv")
+    watch_bilibili._dead.clear()
     request = watch_bilibili._request("https://a.bilivideo.com/x.ts")
     out["向 B站的视频服务器取视频时带 B站自己网页那样的来源页（有的服务器不带就拒绝），不带登录凭证"] = (
         request.get_header("Referer") == "https://live.bilibili.com/" and request.get_header("Cookie") is None)
