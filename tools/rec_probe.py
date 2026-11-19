@@ -414,10 +414,13 @@ def record(args, label=None, audio_pid=None, on_ready=None):
         log_file.write(text + "\n")
         log_file.flush()
 
+    import game_aspect
+    aspect, aspect_how = game_aspect.current()  # 游戏自己的画面比例（拉伸分辨率时和截图不一样），ocr 子命令要用
     t0_us, t0_qpc = time.time_ns() // 1000, time.perf_counter()
     meta = {"t0_us": t0_us, "t0_qpc": t0_qpc, "ffmpeg": ffmpeg, "encoder": args.encoder, "source": args.source,
             "capture_size": list(size), "video_size": [width, height], "fps": args.fps, "bitrate": args.bitrate,
-            "frames": args.frames, "ocr_every": args.ocr_every, "started": datetime.now().isoformat(timespec="seconds")}
+            "frames": args.frames, "ocr_every": args.ocr_every, "game_aspect": aspect, "game_aspect_how": aspect_how,
+            "started": datetime.now().isoformat(timespec="seconds")}
     (run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
     log(f"录像文件夹：{run_dir}")
     log(f"抓屏 {args.source} {size[0]}×{size[1]} → 录 {width}×{height} {args.fps} 帧，{args.encoder}，"
@@ -466,7 +469,10 @@ def record(args, label=None, audio_pid=None, on_ready=None):
                 if now - last_save >= args.save_every:
                     last_save = now
                     import cv2
-                    cv2.imwrite(str(frames_dir / f"t{round(when * 1000):09d}.png"), image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+                    # 不用 cv2.imwrite：路径里有中文（如 --label 对局1）时它存不下、也不报错（2026-11-19 一局一张都没存下）
+                    ok, png = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+                    if ok:
+                        png.tofile(str(frames_dir / f"t{round(when * 1000):09d}.png"))
                 if engine is not None and now - last_ocr >= args.ocr_every:  # 模拟读结算页：引擎读整张图，要好几秒
                     last_ocr = now
                     a = rec.since_t0()
@@ -889,6 +895,25 @@ def frame_at(ffmpeg, segs, t):
     return None
 
 
+def set_aspect(wanted, run_dir):
+    """按游戏自己的画面比例找界面（layout.py）：不设的话，拉伸分辨率（如 2560×1600 拉到 2560×1440 的屏幕）时
+    右上角、左下角的位置都对不上，原图也读不出（2026-11-19 踩过）。wanted：auto = 录的时候记下的（没记就看现在的），
+    或 16:9 / 16:10 / 4:3。"""
+    import game_aspect
+    import layout
+    if wanted != "auto":
+        aspect, how = game_aspect.ASPECTS[wanted], f"手动指定 {wanted}"
+    else:
+        meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+        if "game_aspect" in meta:
+            aspect, how = meta["game_aspect"], f"录的时候记下的：{meta.get('game_aspect_how')}"
+        else:
+            aspect, how = game_aspect.current()
+            how = f"录的时候没记，用现在的：{how}"
+    layout.set_game_aspect(aspect)
+    print(f"游戏画面比例：{aspect and round(aspect, 3)}（{how}）")
+
+
 def cmd_ocr(args):
     import cv2
     import hud
@@ -899,12 +924,13 @@ def cmd_ocr(args):
     shots = sorted((run_dir / "frames").glob("t*.png"))
     if not shots:
         sys.exit("这个文件夹里没有原图（frames/），录的时候要送原图（不加 --no-frames）")
+    set_aspect(args.aspect, run_dir)
     reader = hud.Hud(ocr.create_engine(ocr.SMALL_CROP_PARAMS), lang=args.lang)  # 和 Evo 读右上角时一样的参数
     same = differ = 0
     rows = []
     for shot in shots:
         t = int(shot.stem[1:]) / 1000
-        raw = cv2.imread(str(shot))
+        raw = cv2.imdecode(np.fromfile(str(shot), np.uint8), cv2.IMREAD_COLOR)  # cv2.imread 读不了中文路径
         video = frame_at(ffmpeg, segs, t)
         if video is None:
             continue
@@ -1056,6 +1082,8 @@ def main():
     o = sub.add_parser("ocr", help="录像里的右上角和原图读出来一样吗")
     o.add_argument("run")
     o.add_argument("--lang", default=None, help="游戏语言（不给 = 默认，简体中文）")
+    o.add_argument("--aspect", default="auto", choices=["auto", "16:9", "16:10", "4:3"],
+                   help="游戏自己的画面比例（auto = 录的时候记下的）")
     k = sub.add_parser("clip", help="剪一段看看")
     k.add_argument("run")
     k.add_argument("--last", type=float, default=30)
