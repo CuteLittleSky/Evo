@@ -15,6 +15,7 @@
 
 import http.server
 import hashlib
+import gzip
 import json
 import os
 import subprocess
@@ -216,6 +217,13 @@ BILI = {"code": 0, "message": "OK", "data": {"by_uids": {}, "by_room_ids": {
 DOUYIN_PAGE = b'<html>...self.__pace_f.push([1,"{\\"state\\":{\\"roomStore\\":{\\"roomInfo\\":{\\"roomId\\":\\"7708905317966400307\\",\\"web_rid\\":\\"800\\"}}}}"])</html>'
 DOUYIN_ROOM = {"status_code": 0, "data": {"room": {"id_str": "7708905317966400307", "status": 2, "title": "示例标题", "create_time": 1794869424,
                                                    "owner": {"nickname": "示例主播", "avatar_thumb": {"url_list": ["https://p3.douyinpic.com/a.jpeg"]}}}}}
+# 抖音 room/web/enter 的回包：在播、没开播过（没有房间，只有主播）、房间不存在
+DOUYIN_ENTER = {"status_code": 0, "data": {"room_status": 0, "user": {"nickname": "示例主播"}, "data": [
+    {"id_str": "7708905317966400307", "status": 2, "title": "示例标题",
+     "owner": {"nickname": "示例主播", "avatar_thumb": {"url_list": ["https://p3.douyinpic.com/a.jpeg"]}}}]}}
+DOUYIN_ENTER_OFF = {"status_code": 0, "data": {"room_status": 2, "data": [], "user": {
+    "nickname": "没开播的", "avatar_thumb": {"url_list": ["https://p3.douyinpic.com/b.jpeg"]}}}}
+DOUYIN_ENTER_GONE = {"status_code": 4001038, "data": {"prompts": "该内容暂时无法无法查看"}}
 
 
 def raw(data):
@@ -258,6 +266,23 @@ def parse_checks(out):
         and live_status.parse_douyin_page(b"<html>nothing here</html>") is None
         and (room["state"], room["name"], room["avatar"]) == ("live", "示例主播", "https://p3.douyinpic.com/a.jpeg")
         and ended["state"] == "offline" and blocked is not None and "拦" in blocked)
+    entered, inner = live_status.parse_douyin_enter(raw(DOUYIN_ENTER))
+    off, off_inner = live_status.parse_douyin_enter(raw(DOUYIN_ENTER_OFF))
+    ended_room = {**DOUYIN_ENTER["data"]["data"][0], "status": 4}
+    over, over_inner = live_status.parse_douyin_enter(raw({"status_code": 0, "data": {"data": [ended_room], "user": {}}}))
+    odd = None
+    try:
+        live_status.parse_douyin_enter(raw({"status_code": 10011, "data": {"message": "Request params error"}}))
+    except live_status.StatusError as e:
+        odd = str(e)
+    out["抖音的 enter 接口：在播（带这一场的内部房间号，没有开播时间）、没开播（主播名和头像照样有）、这一场结束了、"
+        "房间不存在；别的状态码当作没查到"] = (
+        (entered["state"], entered["name"], entered["title"], entered["avatar"], entered["since"], inner)
+        == ("live", "示例主播", "示例标题", "https://p3.douyinpic.com/a.jpeg", None, "7708905317966400307")
+        and (off["state"], off["name"], off["avatar"], off_inner) == ("offline", "没开播的", "https://p3.douyinpic.com/b.jpeg", None)
+        and (over["state"], over_inner) == ("offline", None)
+        and live_status.parse_douyin_enter(raw(DOUYIN_ENTER_GONE)) == (live_status.result("missing"), None)
+        and odd is not None and "10011" in odd)
     errors = 0
     for parser, body in ((live_status.parse_douyu, b"<html>502</html>"), (live_status.parse_huya, b"[]"),
                          (live_status.parse_huya, raw({"status": 500})), (live_status.parse_douyin_room, raw({"data": {}})),
@@ -271,8 +296,10 @@ def parse_checks(out):
 
 def query_checks(out):
     calls, lock, running, peak = [], threading.Lock(), [0], [0]
-    reply = {"douyin": DOUYIN_ROOM}  # 抖音查房间的接口现在回什么
+    reply = {"douyin": DOUYIN_ROOM, "enter": DOUYIN_ENTER}  # 抖音的两个接口现在回什么（enter 是 None：连不上）
     live_status._douyin_inner.clear()
+    live_status._douyin_since.clear()
+    live_status._douyin_enter_skip[0] = 0.0
 
     def get(url, headers, limit=None, until=None, cookies=False):
         with lock:
@@ -290,6 +317,10 @@ def query_checks(out):
             raise live_status.StatusError("连不上（超时）")
         if "bilibili.com" in url:
             return raw(BILI)
+        if "web/enter" in url:
+            if reply["enter"] is None:
+                raise live_status.StatusError("连不上（超时）")
+            return gzip.compress(raw(reply["enter"])) if headers.get("Accept-Encoding") == "gzip" else raw(reply["enter"])
         if "live.douyin.com" in url:
             return DOUYIN_PAGE
         return raw(reply["douyin"])
@@ -315,22 +346,41 @@ def query_checks(out):
     signed = next(u for u in urls if "reflow" in u)
     cookie_use = {("douyin" in url or "amemv" in url): cookies for url, _, cookies in calls}
     agents = {headers["User-Agent"] for _, headers, _ in calls}
-    out["抖音：先开网页、再带着内部房间号和签名问接口；游客 Cookie 只给抖音用；请求里没有 Evo 的标识"] = (
-        "room_id=7708905317966400307" in signed and "&a_bogus=" in signed and "msToken=" in signed
+    entered = next(u for u in urls if "web/enter" in u)
+    out["抖音：先要游客 Cookie、问 enter（带房间号，不签名），在播的再带着内部房间号和签名问一次开播时间；"
+        "游客 Cookie 只给抖音用；请求里没有 Evo 的标识"] = (
+        "web_rid=800" in entered and "a_bogus" not in entered and "msToken=" in entered
+        and "room_id=7708905317966400307" in signed and "&a_bogus=" in signed and "msToken=" in signed
+        and found["tt"]["since"] == DOUYIN_ROOM["data"]["room"]["create_time"]
         and cookie_use == {True: True, False: False} and not any("Evo" in agent for agent in agents))
     tiktok = [player("tt", platform="douyin", room="800")]
+    home = live_status.PLATFORMS["douyin"]["home_url"]
 
     def ask():
         start = len(calls)
         state = live_status.query(tiktok, get)["tt"]["state"]
-        return state, ["网页" if "live.douyin.com" in url else "接口" for url, _, _ in calls[start:]]
+        return state, ["首页" if url == home else "enter" if "web/enter" in url else "网页" if "live.douyin.com" in url else "接口"
+                       for url, _, _ in calls[start:]]
 
-    again = ask()
+    again = ask()  # 这一场的开播时间问过了：只问 enter
+    reply["enter"] = DOUYIN_ENTER_OFF
+    off = ask()
+    reply["enter"] = DOUYIN_ENTER
+    back = ask()  # 又开播了（新的一场也算）：再问一次开播时间
+    out["抖音：每次只问 enter（约 9 KB，没开播 1–80 KB），不开 1 MB 的网页；同一场的开播时间只问一次"] = (
+        again == ("live", ["首页", "enter"]) and off == ("offline", ["首页", "enter"]) and back == ("live", ["首页", "enter", "接口"])
+        and live_status.douyin_known("800") == "7708905317966400307")
+    reply["enter"] = None  # enter 连不上：走原来的办法，一阵子不再试它
+    fallback, quiet = ask(), ask()
     reply["douyin"] = {"data": {"room": {**DOUYIN_ROOM["data"]["room"], "status": 4}}}
     ended, later = ask(), ask()
-    out["抖音在播的房间下次只问接口，不再开 1 MB 的网页；这一场结束了算没开播，再下次重新开网页找新的一场"] = (
-        again == ("live", ["接口"]) and ended == ("offline", ["接口"]) and later == ("offline", ["网页", "接口"]))
+    out["抖音的 enter 没问到：走原来的办法（在播的只问接口；这一场结束了算没开播，再下次开网页找新的一场），一阵子不再试 enter"] = (
+        fallback == ("live", ["首页", "enter", "接口"]) and quiet == ("live", ["接口"])
+        and ended == ("offline", ["接口"]) and later == ("offline", ["网页", "接口"])
+        and live_status._douyin_enter_skip[0] > time.time() + 60)
     live_status._douyin_inner.clear()
+    live_status._douyin_since.clear()
+    live_status._douyin_enter_skip[0] = 0.0
     out["直播间地址只按配置拼，房间号不对就没有地址"] = (
         live_status.room_url("bilibili", "6") == "https://live.bilibili.com/6"
         and live_status.room_url("douyu", "9/../x") is None and live_status.room_url("kuaishou", "1") is None

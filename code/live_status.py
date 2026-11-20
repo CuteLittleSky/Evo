@@ -4,7 +4,8 @@
 （用户定的：要克制），B站一次查多个房间。请求和浏览器打开直播间时发的一样（带浏览器的 User-Agent，不带 Evo 的版本号、
 不发送任何战绩或电脑信息）；抖音给的游客 Cookie（ttwid）只留在内存里，不存盘，不登录任何平台账号。
 接口地址、请求头都在 config/watch.json（平台改了接口先改那里）；怎么查是照 DTV（https://github.com/chen-zeong/DTV ）
-的流程写的，每个平台回什么见 watch.json 里的说明。
+的流程写的，每个平台回什么见 watch.json 里的说明。抖音 2026-11-20 起照 PureLive（https://github.com/wzgrx/PureLive ）
+先问 room/web/enter（省流量），问不到再走 DTV 那两步。
 
 每个房间的结果：{"state": "live" 在播 / "offline" 没开播 / "missing" 房间不存在 / "error" 没查到,
                 "loop": 是不是在轮播（算没开播）, "name": 平台上的主播名, "title": 直播标题, "avatar": 头像地址,
@@ -15,6 +16,7 @@ esports.json 被人改了也只能让 Evo 去问这几个平台的直播间，�
 用法：python code/live_status.py 斗鱼 9999 B站 6   → 查这几个房间并打印
 """
 
+import gzip
 import http.cookiejar
 import json
 import re
@@ -23,6 +25,7 @@ import string
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -209,6 +212,30 @@ def parse_douyin_page(body):
     return None
 
 
+def parse_douyin_enter(body):
+    """抖音 room/web/enter 的回包 → (结果, 这一场的内部房间号)；没在播时内部房间号是 None。回包里没有开播时间。
+    房间不存在（status_code 4001038）是 MISSING；别的不认识的抛 StatusError。"""
+    data = _json(body, "抖音")
+    code = _int(data.get("status_code"))
+    if code == 4001038:
+        return result(MISSING), None
+    inner = _dict(data.get("data"))
+    rooms = inner.get("data")
+    if code != 0 or not isinstance(rooms, list):
+        raise StatusError(f"抖音没给房间数据（status_code={data.get('status_code')}）")
+    room = _dict(rooms[0]) if rooms else {}
+    owner, user = _dict(room.get("owner")), _dict(inner.get("user"))
+
+    def avatar(person):
+        urls = _dict(person.get("avatar_thumb")).get("url_list")
+        return urls[0] if isinstance(urls, list) and urls else ""
+
+    live = _int(room.get("status")) == 2
+    found = result(LIVE if live else OFFLINE, name=owner.get("nickname") or user.get("nickname"), title=room.get("title"),
+                   avatar=avatar(owner) or avatar(user))
+    return found, (str(room.get("id_str") or "") or None) if live else None
+
+
 def parse_douyin_room(body):
     data = _json(body, "抖音")
     room = _dict(_dict(data.get("data")).get("room"))
@@ -249,27 +276,78 @@ def check_bilibili(rooms, get):
 
 
 _douyin_inner = {}  # 抖音房间号 → 正在播的那一场的内部房间号（只在内存里）
+_douyin_since = {}  # 抖音房间号 → (内部房间号, 这一场的开播时刻)：enter 接口不给开播时间，每一场问一次 reflow 记下
+_douyin_enter_skip = [0.0]  # 这个时刻以前不问 enter 接口（刚才没问到：连不上、空回包），先走原来开网页的办法
 
 
 def check_douyin(rooms, get):
-    """在播的房间记着它这一场的内部房间号，下次只问接口（约 70 KB）；没在播的每次都要开直播间网页（约 1 MB，
-    内部房间号在网页的最后）才知道有没有开新的一场。记着的那一场结束了：这次算没开播，下次再开网页。"""
+    """先问 room/web/enter（2026-11-20，照 PureLive 的办法：在播约 9 KB，没开播 1–80 KB）；没问到（连不上、空回包、
+    回的不认识）这个房间走原来的两步（_douyin_by_page），连不上、空回包时 enter_retry_seconds 秒以内不再试 enter。"""
     out = {}
     for room in rooms:
-        inner = _douyin_inner.pop(room, None)
-        if inner is not None:
-            out[room] = _douyin_room(inner, get)
-            if out[room]["state"] == LIVE:
-                _douyin_inner[room] = inner
-            continue
+        if time.time() >= _douyin_enter_skip[0]:
+            try:
+                out[room] = _douyin_by_enter(room, get)
+                continue
+            except StatusError:
+                pass
+        out[room] = _douyin_by_page(room, get)
+    return out
+
+
+def _douyin_by_enter(room, get):
+    try:
+        body = douyin_enter(room, get)
+    except StatusError:
+        _douyin_enter_skip[0] = time.time() + (_int(PLATFORMS["douyin"].get("enter_retry_seconds")) or 600)
+        raise
+    found, inner = parse_douyin_enter(body)
+    if found["state"] != LIVE or inner is None:
+        _douyin_inner.pop(room, None)
+        _douyin_since.pop(room, None)
+        return found
+    _douyin_inner[room] = inner
+    if _douyin_since.get(room, (None, None))[0] != inner:  # 新的一场：问一次开播时间（问不到就先不写，下次再问）
+        try:
+            _douyin_since[room] = (inner, _douyin_room(inner, get)["since"])
+        except StatusError:
+            _douyin_since.pop(room, None)
+    found["since"] = _douyin_since.get(room, (None, None))[1]
+    return found
+
+
+def _douyin_by_page(room, get):
+    """原来的办法（enter 问不到时用）：在播的房间记着它这一场的内部房间号，下次只问接口（约 70 KB）；没在播的每次都要
+    开直播间网页（约 1 MB，内部房间号在网页的最后）才知道有没有开新的一场。记着的那一场结束了：这次算没开播，下次再开网页。"""
+    inner = _douyin_inner.pop(room, None)
+    if inner is None:
         inner = douyin_inner(room, get)
         if inner is None:
-            out[room] = result(MISSING)
-            continue
-        out[room] = _douyin_room(inner, get)
-        if out[room]["state"] == LIVE:
-            _douyin_inner[room] = inner
-    return out
+            return result(MISSING)
+    found = _douyin_room(inner, get)
+    if found["state"] == LIVE:
+        _douyin_inner[room] = inner
+    return found
+
+
+def douyin_enter(room, get=None):
+    """问抖音的 room/web/enter（这个房间现在在不在播），返回回包（解开 gzip 以后的）。要先有游客 Cookie（ttwid）：
+    没有就开一下首页，读到响应头就停。连不上、空回包（被拦）抛 StatusError。"""
+    cfg, get = PLATFORMS["douyin"], get or fetch
+    if not any(cookie.name == "ttwid" for cookie in _cookies):
+        get(cfg["home_url"], {**_headers("douyin"), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+            limit=1, cookies=True)
+    token = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(107))
+    query = urllib.parse.urlencode([*map(tuple, cfg["enter_params"]), ("web_rid", room), ("msToken", token)])
+    body = get(f"{cfg['enter_url']}?{query}", {**_headers("douyin"), "Accept-Encoding": "gzip"}, cookies=True)
+    if body[:2] == b"\x1f\x8b":
+        try:
+            body = gzip.decompress(body)
+        except (OSError, EOFError) as e:
+            raise StatusError("抖音回的东西解不开") from e
+    if not body:
+        raise StatusError("抖音没回东西（可能被拦住了）")
+    return body
 
 
 def douyin_known(room):
