@@ -36,7 +36,7 @@ FFMPEG_BUILD = ROOT / "dist" / "ffmpeg"  # tools/build_ffmpeg.py 编好的
 FFMPEG_NOTE = """
 - ffmpeg\\ffmpeg.exe（录像用，只在测试版里）：FFmpeg（https://ffmpeg.org），GNU LGPL 2.1 或更新版本，
   按 LGPL 的要求单独一个程序、没有改过源码；是 Evo 的 tools/build_ffmpeg.py 编的精简版，源码地址和编译参数见
-  ffmpeg\\BUILD.txt，它和静态链进去的库（dav1d、libvpl 等）的许可证见 ffmpeg\\licenses
+  ffmpeg\\BUILD.txt，它和静态链进去的库（libvpl 等）的许可证见 ffmpeg\\licenses
 """
 # 微软的 WebView2 常青版引导程序（Evergreen Bootstrapper），微软允许随软件分发
 WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
@@ -108,7 +108,7 @@ def add_ffmpeg():
     with open(DIST / "licenses" / "README.txt", "a", encoding="utf-8") as f:
         f.write(FFMPEG_NOTE)
     size = (DIST / "ffmpeg" / "ffmpeg.exe").stat().st_size
-    print(f"录像用的 ffmpeg：{size / 1024 ** 2:.1f} MB（{APP_VERSION} 是测试版）")
+    print(f"录像用的 ffmpeg：{size / 1024 ** 2:.1f} MB（WITH_FFMPEG = {WITH_FFMPEG!r}，版本 {APP_VERSION}）")
 
 
 def main():

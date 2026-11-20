@@ -9,7 +9,8 @@
 - 录像文件支持拖动（Range 请求回 206）；缩略图；网址不能指到录像文件夹以外、分段文件夹里的文件
 - 删除：MP4、.json、.jpg 一起删；没有口令不让删
 - 战绩页：有录像的局多一个"看录像"按钮，指到那个录像；没录像的局没有
-- 设置页"录像"一栏（假的 ffmpeg 和编码器检测，这台电脑"编不了 AV1"）：没有 ffmpeg 时整栏不显示、打不开（正式版）；
+- 设置页"录像"一栏（假的 ffmpeg 和编码器检测）：没有 ffmpeg 时整栏不显示、打不开（正式版）；只有 H.264 时不显示编码格式；
+  配置里有几种编码格式时（以后加回 AV1，假装这台电脑"编不了 AV1"）：编不了的不能选、不保存；
   打开时检测编码器、记住；画质四项一起保存，选了编不了的 AV1、乱填的不保存；估一局多大；硬盘上限的范围；
   保存位置（不是完整路径、在程序文件夹里的不行，填的留在输入框里；换了以后说原来的录像还在哪；改回默认）；关掉
 
@@ -117,20 +118,19 @@ def settings_checks(client, token, base):
         ffmpeg["path"] = "ffmpeg.exe"
         box, said = note(client, "/settings/recording", {"on": "1"}, token)
         check = app_settings.get(panel_recordings.CHECK_KEY) or {}
-        out[f"有 ffmpeg 时显示这一栏，标着\"实验\"；打开：检测了 H.264、AV1 的编码器、记住了；写着用 NVIDIA 显卡；显示画质、上限、位置（{said}）"] = (
+        out[f"有 ffmpeg 时显示这一栏，标着\"实验\"；打开：检测了编码器、记住了；写着用 NVIDIA 显卡；显示画质、上限、位置（{said}）"] = (
             app_settings.get("recording_enabled") is True and said.startswith("status:打开了") and ">实验<" in box
-            and check == {"ffmpeg": "ffmpeg.exe", "h264": "h264_nvenc", "av1": None}
+            and check == {"ffmpeg": "ffmpeg.exe", "h264": "h264_nvenc"}
             and "NVIDIA 显卡" in box and 'aria-checked="true"' in box and 'id="rec-size"' in box
             and "硬盘上限" in box and "保存位置" in box)
         tried.clear()
         client.get("/settings")
         out["记住了就不再检测（打开设置页不跑 ffmpeg）"] = tried == []
-        codec = re.findall(r'<option value="av1"[^>]*>[^<]*</option>', box)
-        out[f"编不了 AV1：那一项不能选、写着原因（{codec}）"] = (
-            len(codec) == 1 and "disabled" in codec[0] and "编不了" in codec[0])
+        out["只有 H.264（AV1 先拿掉了）：不显示编码格式那一项，提交时带着 h264"] = (
+            'id="rec-codec"' not in box and '<input type="hidden" name="codec" value="h264">' in box)
         out["默认：1080p、60 帧、标准、H.264；画质四档按很高、高、标准、省空间排"] = all(re.search(p, box) for p in (
             r'<option value="1080p" selected>1080p（推荐）', r'<option value="60" selected>',
-            r'<option value="standard" selected>标准（推荐）', r'<option value="h264" selected>')) and (
+            r'<option value="standard" selected>标准（推荐）')) and (
             re.findall(r'<option value="(best|high|standard|small)"', box) == ["best", "high", "standard", "small"])
 
         rules = recorder.load_rules()
@@ -151,9 +151,21 @@ def settings_checks(client, token, base):
             said.startswith("status:保存了") and app_settings.get("recording_size") == "720p"
             and app_settings.get("recording_fps") == 30 and app_settings.get("recording_quality") == "small"
             and '<option value="720p" selected>' in box and '<option value="30" selected>' in box)
-        _, said = note(client, "/settings/recording/quality", {**good, "size": "720p", "codec": "av1"}, token)
-        out[f"选了编不了的 AV1：不保存（{said}）"] = (
-            said.startswith("alert:没保存") and app_settings.get("recording_codec") == "h264")
+        _, said = note(client, "/settings/recording/quality", {**good, "codec": "av1"}, token)
+        out[f"配置里没有的 AV1：不保存（{said}）"] = (
+            said.startswith("alert:没保存：选项不对") and app_settings.get("recording_codec") == "h264")
+        real_rules = recorder.load_rules
+        two = {**real_rules(), "encoders": {**real_rules()["encoders"], "av1": ["av1_nvenc"]}}
+        recorder.load_rules = lambda: two  # 以后加回 AV1 时：这台电脑编不了 AV1
+        try:
+            box = section(client.get("/settings").get_data(as_text=True))
+            codec = re.findall(r'<option value="av1"[^>]*>[^<]*</option>', box)
+            _, said = note(client, "/settings/recording/quality", {**good, "codec": "av1"}, token)
+        finally:
+            recorder.load_rules = real_rules
+        out[f"配置里有几种编码格式时显示那一项：显卡编不了的 AV1 不能选、写着原因，提交了也不保存（{codec}，{said}）"] = (
+            'id="rec-codec"' in box and len(codec) == 1 and "disabled" in codec[0] and "编不了" in codec[0]
+            and said.startswith("alert:没保存：这台电脑的显卡编不了 AV1") and app_settings.get("recording_codec") == "h264")
         bad = [{**good, "size": "4k"}, {**good, "fps": "144"}, {**good, "quality": "ultra"}, {**good, "fps": "abc"}]
         results = [note(client, "/settings/recording/quality", b, token)[1] for b in bad]
         out["乱填的（4k、144 帧、ultra、abc）都不保存"] = (

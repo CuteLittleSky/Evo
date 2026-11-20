@@ -15,10 +15,9 @@
   "_说明_restart_wait_seconds": "连续重开时每次之前等多久（第一次马上重开常被拒：Windows 还没切换完，2026-11-19 实测），用完了就一直按最后一个数等",
 
   "encoders": {
-    "h264": ["h264_nvenc", "h264_amf", "h264_qsv"],
-    "av1": ["av1_nvenc", "av1_amf", "av1_qsv"]
+    "h264": ["h264_nvenc", "h264_amf", "h264_qsv"]
   },
-  "_说明_encoders": "每种编码格式按这个顺序试，用第一个能用的：NVIDIA > AMD > Intel（Overwolf 的建议）。没有硬件编码器的电脑不开放录像（不用 CPU 软编）",
+  "_说明_encoders": "每种编码格式按这个顺序试，用第一个能用的：NVIDIA > AMD > Intel（Overwolf 的建议）。没有硬件编码器的电脑不开放录像（不用 CPU 软编）。只列一种时设置页不显示\"编码格式\"那一项。AV1 2026-11-20 先拿掉了（用户定的）：录的时候分段写成 MPEG-TS，ffmpeg 9.0.2 的 TS 读写里没有 AV1（写进去读不回来，完整版也一样），要换了分段格式才能加回来：加一行 \"av1\": [\"av1_nvenc\", \"av1_amf\", \"av1_qsv\"]，精简版 ffmpeg 也要加回 AV1 的部分（tools/build_ffmpeg.py）",
 
   "sizes": {"native": null, "1080p": [1920, 1080], "720p": [1280, 720]},
   "_说明_sizes": "设置页的分辨率：native = 和游戏窗口一样大；别的是 Windows Graphics Capture 抓的时候就缩成这么大",

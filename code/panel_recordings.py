@@ -16,7 +16,8 @@
 设置页的"录像"一栏（_settings_recording.html，模板里调 recording_settings()）：找不到 ffmpeg、也没开着时整栏不显示（正式版不带
 ffmpeg，只有测试版有这一栏，2026-11-20 用户定的内测发法）。开关（默认关，原则 2）；打开以后才显示画质
 （分辨率、帧数、画质、编码格式，下面估一局多大）、硬盘上限、保存位置。打开时检测一次这台电脑能用哪些显卡硬件编码器
-（CHECK_KEY，记在 settings.json），没有 ffmpeg、没有硬件编码器时打不开；编不了 AV1 时 AV1 那一项不能选。
+（CHECK_KEY，记在 settings.json），没有 ffmpeg、没有硬件编码器时打不开。编码格式只有一种（现在只有 H.264，AV1 2026-11-20
+先拿掉了）时不显示那一项；有几种时显卡编不了的那种不能选。
 改了从下一局开始生效（match_recording 每局开录时才读设置）。保存的结果写在那一项下面（NOTE_KEY），不用页面最上面的提示
 （保存完跳回这一栏，最上面看不到）
 这个文件不加载识别用的库。规则见 docs/面板.md"录像页"。
@@ -54,7 +55,7 @@ DEFAULT_LIMIT_GB = 30  # 和 match_recording.DEFAULT_LIMIT_GB 一样（那个文
 
 # ---- 设置页"录像"一栏 ----
 ENABLED_KEY = "recording_enabled"  # 和 match_recording.SETTING 一样
-CHECK_KEY = "recording_check"  # {"ffmpeg": 路径, "h264": 能用的编码器或 None, "av1": …}：打开录像时检测，ffmpeg 换了重新检测
+CHECK_KEY = "recording_check"  # {"ffmpeg": 路径, "h264": 能用的编码器或 None, …（config 里每种编码格式一项）}：打开录像时检测，ffmpeg 换了重新检测
 NOTE_KEY = "recording_note"  # 刚保存的结果 {"where": 哪一项, "text": …, "error": 是不是出错}，显示在那一项下面一次
 CHECK_SOURCE = "lavfi:color=black:s=640x360:r=30"  # 检测编码器用的测试画面（不用抓屏、不用开着游戏，约 0.5 秒）
 SIZE_NAMES = {"native": "原画面", "1080p": "1080p（推荐）", "720p": "720p"}

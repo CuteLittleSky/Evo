@@ -88,7 +88,7 @@ class Options:
     source: str = "window"  # window = 只抓游戏窗口（Windows Graphics Capture）；desktop = 桌面复制；lavfi:… = 测试用的画面
     size: str = "1080p"  # config 里 sizes 的一项：native / 1080p / 720p（默认 1080p 60 帧标准：2026-11-20 用户看样片选的）
     fps: int = 60
-    codec: str = "h264"  # config 里 encoders 的一项：h264 / av1
+    codec: str = "h264"  # config 里 encoders 的一项：现在只有 h264（AV1 2026-11-20 先拿掉了，见 config）
     quality: str = "standard"  # config 里 bits_per_pixel 的一项：best / high / standard / small
     audio: bool = True
     extra: dict = field(default_factory=dict)  # 测试用：直接指定 encoder、bitrate
@@ -208,7 +208,7 @@ def pick_encoder(ffmpeg, options, rules, hwnd=None):
     key = (ffmpeg, options.source, options.codec)
     if key not in _encoder_cache:
         _encoder_cache[key] = None
-        for encoder in rules["encoders"][options.codec]:
+        for encoder in rules["encoders"].get(options.codec, []):  # 配置里没有这种格式：当作编不了
             graph = source_filter(options, rules, hwnd=hwnd) + gpu_chain(encoder, options.source)
             code, _ = run_ffmpeg(ffmpeg, ["-loglevel", "error", "-filter_complex", graph, "-frames:v", "20",
                                           *encoder_args(encoder, 30, 4_000_000, 2), "-f", "null", "-"], timeout=20)

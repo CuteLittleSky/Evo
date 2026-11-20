@@ -56,6 +56,7 @@
         {% for one in rec.qualities %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.quality }}>{{ one.name }}</option>{% endfor %}
       </select>
     </div>
+    {% if rec.codecs | length > 1 %}
     <div class="setting">
       <div class="setting-text">
         <label class="setting-name" for="rec-codec">编码格式</label>
@@ -67,6 +68,9 @@
         {% endfor %}
       </select>
     </div>
+    {% else %}{# 只有一种（现在只有 H.264）：不让选，提交时带上它 #}
+    <input type="hidden" name="codec" value="{{ rec.codecs[0].value }}">
+    {% endif %}
     <div class="setting">
       <div class="setting-text">
         <div class="setting-desc" id="rec-estimate" aria-live="polite">{{ rec.estimate or '' }}</div>
