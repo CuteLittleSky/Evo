@@ -1,12 +1,14 @@
-"""只录一个程序（连同它的子进程）发出的声音（开发工具，录屏第 0 步实测用，见 docs/录屏实测.md）：Windows 的"按进程录音"。
+"""只录一个程序（连同它的子进程）发出的声音：Windows 的"按进程录音"（录像用，见 recorder.py、docs/录像.md）。
 
 用的是 Windows 10 2004 / Windows 11 起有的 ActivateAudioInterfaceAsync + VAD\\Process_Loopback（和 OBS 的
-"应用程序音频捕获"同一个接口）。只给 Windows 一个进程号，不打开、不碰那个进程（原则 1）。
+"应用程序音频捕获"同一个接口）。只给 Windows 一个进程号，不打开、不碰那个进程（原则 1）。2026-11-19 实测：
+EA 反作弊在运行时也录得到 Apex 的声音。
 
 每一包声音带着 Windows 给的时刻（QPC，和 time.perf_counter 同一个钟），写进 WAV 的同时记下"第几个采样 ↔ 什么时刻"，
-之后对齐画面用（rec_probe.py）。程序没出声的那几段 Windows 可能不给数据：按时刻补上静音，WAV 的长度始终和真实时间对得上。
+之后对齐画面用。程序没出声的那几段 Windows 可能不给数据：按时刻补上静音，WAV 的长度始终和真实时间对得上。
+录音在自己的线程里（COM 用多线程模式初始化），不管主线程有没有先 import 过 comtypes（dxcam 会）都能用。
 
-单独试：python tools/rec_audio.py <进程号> <秒数> <输出.wav>
+单独试：python code/process_audio.py <进程号> <秒数> <输出.wav>
 """
 
 import ctypes
@@ -17,7 +19,7 @@ import wave
 from ctypes import POINTER, Structure, byref, c_int, c_longlong, c_uint32, c_uint64, c_ubyte, c_ulong, c_ushort, c_void_p
 from ctypes import wintypes
 
-sys.coinit_flags = 0  # COINIT_MULTITHREADED：Windows 在别的线程里回调，接口要能跨线程用（要在 import comtypes 之前设）
+sys.coinit_flags = 0  # 主线程也用多线程模式（只在还没 import 过 comtypes 时有用；录音线程自己会再初始化一次）
 import comtypes  # noqa: E402
 from comtypes import COMMETHOD, COMObject, GUID, HRESULT, IUnknown  # noqa: E402
 

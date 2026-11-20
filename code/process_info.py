@@ -150,6 +150,45 @@ def logical_cpus():
     return os.cpu_count() or 1
 
 
+class _BASIC_LIMIT(ctypes.Structure):
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong), ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+
+class _EXTENDED_LIMIT(ctypes.Structure):
+    _fields_ = [("BasicLimitInformation", _BASIC_LIMIT), ("IoInfo", ctypes.c_ulonglong * 6),
+                ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+_kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+_kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+_kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+_kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+_job = None
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+
+def kill_with_me(proc):
+    """把子进程（subprocess.Popen）放进"本程序一退出就全部结束"的作业对象：本程序崩了、被强行结束，子进程也跟着退
+    （录像用：不然 ffmpeg 会一直往硬盘写，见 recorder.py）。成功返回 True。"""
+    global _job
+    if _job is None:
+        job = _kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return False
+        info = _EXTENDED_LIMIT()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not _kernel32.SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info),
+                                                 ctypes.sizeof(info)):
+            return False
+        _job = job  # 一直不关：本程序退出时 Windows 关掉它，里面的进程跟着结束
+    return bool(_kernel32.AssignProcessToJobObject(_job, int(proc._handle)))
+
+
 def set_low_priority():
     """把本程序设为"低于正常"优先级，CPU 紧张时让游戏优先。"""
     _kernel32.SetPriorityClass(_kernel32.GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS)

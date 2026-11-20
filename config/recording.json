@@ -1,0 +1,32 @@
+{
+  "_说明": "录像（整局录像，见 code/recorder.py、docs/录像.md）的规则。玩家能在设置页改的（开关、分辨率、帧数、画质、编码格式、硬盘上限）存在 settings.json，这里是默认值和各档的数",
+
+  "window_exe": "r5apex",
+  "_说明_window_exe": "Windows Graphics Capture 只抓这个程序的窗口（程序名的正则，r5apex.exe 和 r5apex_dx12.exe 都匹配）",
+
+  "keyframe_seconds": 2,
+  "_说明_keyframe_seconds": "每隔几秒一个关键帧：播放时拖进度条能跳到的最小间隔",
+
+  "stall_seconds": 5,
+  "stall_seconds_window": 30,
+  "_说明_stall_seconds": "ffmpeg 这么久没出新帧就算卡住，结束它重开（切窗口、切显示模式、管理员确认框时桌面复制会失效，ffmpeg 直接退出，见 docs/录屏实测.md）。只抓游戏窗口时画面不动就没有新帧（游戏最小化、停在不动的画面），门槛放宽到 stall_seconds_window",
+
+  "restart_wait_seconds": [0, 0.5, 1, 2, 5],
+  "_说明_restart_wait_seconds": "连续重开时每次之前等多久（第一次马上重开常被拒：Windows 还没切换完，2026-11-19 实测），用完了就一直按最后一个数等",
+
+  "encoders": {
+    "h264": ["h264_nvenc", "h264_amf", "h264_qsv"],
+    "av1": ["av1_nvenc", "av1_amf", "av1_qsv"]
+  },
+  "_说明_encoders": "每种编码格式按这个顺序试，用第一个能用的：NVIDIA > AMD > Intel（Overwolf 的建议）。没有硬件编码器的电脑不开放录像（不用 CPU 软编）",
+
+  "sizes": {"native": null, "1080p": [1920, 1080], "720p": [1280, 720]},
+  "_说明_sizes": "设置页的分辨率：native = 和游戏窗口一样大；别的是 Windows Graphics Capture 抓的时候就缩成这么大",
+
+  "bits_per_pixel": {"high": 0.1, "medium": 0.07, "low": 0.045},
+  "codec_factor": {"h264": 1.0, "av1": 0.6},
+  "_说明_bits_per_pixel": "码率 = 宽 × 高 × 帧数 × 每像素的位数 × 编码格式的系数。H.264 高画质：2560×1440 60 帧约 22 Mbps（11-19 实测游戏里码率用满，读右上角和原图 99% 一样），1080p 60 帧约 12 Mbps。AV1 同样画质约省四成",
+
+  "audio": true,
+  "_说明_audio": "录游戏声音（只录 Apex 这个程序的，见 process_audio.py）"
+}

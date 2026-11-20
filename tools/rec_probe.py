@@ -16,7 +16,6 @@
 
 import argparse
 import csv
-import ctypes
 import glob
 import json
 import os
@@ -26,7 +25,6 @@ import subprocess
 import sys
 import threading
 import time
-from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
@@ -135,40 +133,6 @@ def grab_size(ffmpeg, source):
         return int(m[1]), int(m[2])
     lines = [line for line in (r.stderr or "").splitlines() if line.strip()]
     return lines[-1].strip() if lines else f"退出码 {r.returncode}"
-
-
-# ---------- Evo 崩了 ffmpeg 跟着退：Windows 的"作业对象" ----------
-
-class _BASIC_LIMIT(ctypes.Structure):
-    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong), ("PerJobUserTimeLimit", ctypes.c_longlong),
-                ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
-
-
-class _EXTENDED_LIMIT(ctypes.Structure):
-    _fields_ = [("BasicLimitInformation", _BASIC_LIMIT), ("IoInfo", ctypes.c_ulonglong * 6),
-                ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
-
-
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-_kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-_kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
-_kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
-_kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-_job = None
-
-
-def tie_to_me(proc):
-    """把子进程放进一个"本程序退出就全部结束"的作业对象：本程序崩了、被结束，ffmpeg 也跟着退，不会一直往硬盘写。"""
-    global _job
-    if _job is None:
-        _job = _kernel32.CreateJobObjectW(None, None)
-        info = _EXTENDED_LIMIT()
-        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        _kernel32.SetInformationJobObject(_job, 9, ctypes.byref(info), ctypes.sizeof(info))  # 9 = 扩展限制
-    return bool(_kernel32.AssignProcessToJobObject(_job, int(proc._handle)))
 
 
 # ---------- 录 ----------
@@ -286,7 +250,7 @@ class Recorder:
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE if self.args.frames else None,
                                      stderr=err, bufsize=0, creationflags=CREATE_NEW_PROCESS_GROUP)
         err.close()
-        if not tie_to_me(self.proc):
+        if not process_info.kill_with_me(self.proc):
             self.log("⚠ 没能把 ffmpeg 放进作业对象：本程序被强行结束时它不会跟着退")
         if self.args.frames:
             self.feed = FrameFeed(self.proc.stdout, start)
@@ -442,8 +406,8 @@ def record(args, label=None, audio_pid=None, on_ready=None):
 
     audio = None
     if audio_pid:
-        import rec_audio
-        audio = rec_audio.ProcessAudio(audio_pid, run_dir / "audio.wav")
+        import process_audio
+        audio = process_audio.ProcessAudio(audio_pid, run_dir / "audio.wav")
         audio.start()
         audio.ready.wait(15)
         if audio.error:
@@ -680,8 +644,8 @@ def cmd_check(args):
 
     print("\n只录一个程序的声音（Windows 的按进程录音）：", end="")
     try:
-        import rec_audio
-        test = rec_audio.ProcessAudio(os.getpid(), RUNS.parent / "rec_probe_audio_check.wav")
+        import process_audio
+        test = process_audio.ProcessAudio(os.getpid(), RUNS.parent / "rec_probe_audio_check.wav")
         RUNS.parent.mkdir(exist_ok=True)
         test.start()
         test.ready.wait(15)
@@ -713,7 +677,7 @@ def cmd_jobtest(_args):
     ffmpeg = find_ffmpeg()
     proc = subprocess.Popen([ffmpeg, "-hide_banner", "-loglevel", "error", "-filter_complex", "ddagrab=framerate=5",
                              "-f", "null", "-"], stdin=subprocess.DEVNULL)
-    tie_to_me(proc)
+    process_info.kill_with_me(proc)
     print(proc.pid, flush=True)
     time.sleep(60)
 
