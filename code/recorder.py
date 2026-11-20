@@ -9,7 +9,8 @@
 
 怎么录（2026-11-19、20 实测定的，踩过的坑见 docs/录屏实测.md）：
 - 抓画面：默认 Windows Graphics Capture 只抓 Apex 的窗口（ffmpeg 的 gfxcapture，抓的时候就能缩放）；抓不到换桌面复制
-  （ddagrab，只能录原画面）。两种都是 Windows 的被动接口，不碰游戏（原则 1）
+  （ddagrab，只能录原画面）。两种都是 Windows 的被动接口，不碰游戏（原则 1）。Apex 的窗口由 find_window 按进程号找，
+  只问 Windows 窗口归哪个进程，不打开游戏进程
 - 编码：显卡硬件编码（NVENC / AMF / QSV），画面不出显卡；没有硬件编码器就不录
 - 时间：每一帧的时间戳 = 抓到它时电脑的时钟 − 开始的时刻 t0（微秒；-enc_time_base filter 不取整，取整会丢帧），
   TS 里原样保存（-mpegts_copyts 1）。事件、声音用同一个起点，所以都能直接对上画面
@@ -22,6 +23,7 @@
   （记录程序自己是"低于正常"，子进程默认跟着低，CPU 紧张时会掉帧）
 """
 
+import ctypes
 import glob
 import json
 import os
@@ -29,6 +31,7 @@ import re
 import shutil
 import subprocess
 import time
+from ctypes import wintypes
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -85,23 +88,60 @@ class Options:
     codec: str = "h264"  # config 里 encoders 的一项：h264 / av1
     quality: str = "high"  # config 里 bits_per_pixel 的一项：high / medium / low
     audio: bool = True
-    window_exe: str = "r5apex"
     extra: dict = field(default_factory=dict)  # 测试用：直接指定 encoder、bitrate
 
 
-def source_filter(options, rules, size=None):
-    """抓画面的滤镜（ffmpeg filter_complex 的开头）。size=(宽, 高)：Windows Graphics Capture 抓的时候缩放。"""
+_user32 = ctypes.WinDLL("user32")
+_ENUM_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+_user32.EnumWindows.argtypes = [_ENUM_PROC, wintypes.LPARAM]
+_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+_user32.IsWindowVisible.argtypes = [wintypes.HWND]
+_user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+
+
+def find_window(pid):
+    """pid 这个进程最大的那个看得见的顶层窗口（窗口句柄），没有返回 None。
+
+    只问 Windows"这个窗口归哪个进程"（GetWindowThreadProcessId），不打开那个进程（原则 1）。不用 ffmpeg 的
+    window_exe：它要对每个窗口的进程（包括 Apex）打开一个查询句柄读程序名（2026-11-20 看 ffmpeg 源码发现的）。
+    进程号由记录程序给（game_detect 从进程列表里找的，也不打开进程）。"""
+    if not pid:
+        return None
+    found = []
+
+    def visit(hwnd, _):
+        owner = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and _user32.IsWindowVisible(hwnd):
+            rect = wintypes.RECT()
+            if _user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                area = (rect.right - rect.left) * (rect.bottom - rect.top)
+                if area > 0:
+                    found.append((area, hwnd))
+        return True
+
+    _user32.EnumWindows(_ENUM_PROC(visit), 0)
+    return max(found)[1] if found else None
+
+
+def source_filter(options, rules, size=None, hwnd=None):
+    """抓画面的滤镜（ffmpeg filter_complex 的开头）。size=(宽, 高)：Windows Graphics Capture 抓的时候缩放。
+    只抓游戏窗口要给窗口句柄 hwnd（find_window），没有返回 None。"""
     if options.source.startswith("lavfi:"):
         return options.source[len("lavfi:"):] + ",format=nv12"
     if options.source == "desktop":
         return f"ddagrab=framerate={options.fps}:draw_mouse=0"
+    if not hwnd:
+        return None
     scale = f":width={size[0]}:height={size[1]}:resize_mode=scale_aspect:scale_mode=bicubic" if size else ""
-    return f"gfxcapture=window_exe={options.window_exe}:max_framerate={options.fps}:capture_cursor=0{scale}"
+    return f"gfxcapture=hwnd={hwnd}:max_framerate={options.fps}:capture_cursor=0{scale}"
 
 
-def capture_size(ffmpeg, options, rules):
+def capture_size(ffmpeg, options, rules, hwnd=None):
     """这种抓法抓到的画面多大：(宽, 高)，抓不到返回 (None, 错误信息)。"""
-    graph = source_filter(options, rules)
+    graph = source_filter(options, rules, hwnd=hwnd)
+    if graph is None:
+        return None, "找不到游戏的窗口"
     if not options.source.startswith("lavfi:"):
         graph += ",hwdownload,format=bgra"
     code, err = run_ffmpeg(ffmpeg, ["-filter_complex", graph + ",showinfo", "-frames:v", "1", "-f", "null", "-"])
@@ -141,13 +181,13 @@ def gpu_chain(encoder, source):
 _encoder_cache = {}
 
 
-def pick_encoder(ffmpeg, options, rules):
+def pick_encoder(ffmpeg, options, rules, hwnd=None):
     """这台电脑上这种编码格式能用的硬件编码器（按 config 里的顺序试，结果记住），都不能用返回 None。"""
     key = (ffmpeg, options.source, options.codec)
     if key not in _encoder_cache:
         _encoder_cache[key] = None
         for encoder in rules["encoders"][options.codec]:
-            graph = source_filter(options, rules) + gpu_chain(encoder, options.source)
+            graph = source_filter(options, rules, hwnd=hwnd) + gpu_chain(encoder, options.source)
             code, _ = run_ffmpeg(ffmpeg, ["-loglevel", "error", "-filter_complex", graph, "-frames:v", "20",
                                           *encoder_args(encoder, 30, 4_000_000, 2), "-f", "null", "-"], timeout=20)
             if code == 0:
@@ -232,18 +272,20 @@ class Recording:
         if not self.ffmpeg:
             raise RecordingUnavailable("找不到 ffmpeg")
         opts = self.options
+        self.pid = apex_pid
         size = self.rules["sizes"][opts.size]
         if size and opts.source == "desktop":
             self.log("录像：桌面复制不能在抓的时候缩放，按原画面录")
             size = None
-        grabbed, why = capture_size(self.ffmpeg, opts, self.rules)
+        hwnd = find_window(apex_pid) if opts.source == "window" else None
+        grabbed, why = capture_size(self.ffmpeg, opts, self.rules, hwnd)
         if grabbed is None and opts.source == "window":
             self.log(f"录像：只抓游戏窗口抓不到（{why}），改用桌面复制")
             opts.source, size = "desktop", None
             grabbed, why = capture_size(self.ffmpeg, opts, self.rules)
         if grabbed is None:
             raise RecordingUnavailable(f"抓不到画面：{why}")
-        self.encoder = opts.extra.get("encoder") or pick_encoder(self.ffmpeg, opts, self.rules)
+        self.encoder = opts.extra.get("encoder") or pick_encoder(self.ffmpeg, opts, self.rules, hwnd)
         if not self.encoder:
             raise RecordingUnavailable("这台电脑上没有能用的显卡硬件编码器")
         self.size = tuple(size) if size and opts.source == "window" else grabbed
@@ -276,10 +318,14 @@ class Recording:
         return self.clock() - self.t0_us / 1e6
 
     def _command(self):
+        """开 ffmpeg 的命令；只抓游戏窗口而窗口现在找不到（游戏切换显示模式时会重建窗口）返回 None。"""
         n = self.parts
         opts = self.options
         size = self.size if opts.source == "window" and self.rules["sizes"][opts.size] else None
-        graph = (source_filter(opts, self.rules, size) + f",settb=AVTB,setpts=RTCTIME-{self.t0_us}"
+        source = source_filter(opts, self.rules, size, find_window(self.pid) if opts.source == "window" else None)
+        if source is None:
+            return None
+        graph = (source + f",settb=AVTB,setpts=RTCTIME-{self.t0_us}"
                  + gpu_chain(self.encoder, opts.source) + "[v]")
         return [self.ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostats", "-stats_period", "1",
                 "-progress", str(self.work / f"progress_{n}.txt"), "-filter_complex", graph, "-map", "[v]",
@@ -289,6 +335,15 @@ class Recording:
 
     def _launch(self):
         cmd = self._command()
+        if cmd is None:  # 窗口还没出来：当成断了，过一会儿再试
+            self.proc = None
+            if self._down_since is None:
+                self._down_since = self.since_t0()
+                self.log("录像：找不到游戏的窗口，等它出来")
+            waits = self.rules["restart_wait_seconds"]
+            self._next_try = time.monotonic() + waits[min(self.restarts, len(waits) - 1)]
+            self.restarts += 1
+            return
         with open(self.work / f"ffmpeg_{self.parts}.log", "wb") as err:
             self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=err,
                                          creationflags=CREATE_NEW_PROCESS_GROUP | NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW)
@@ -315,6 +370,8 @@ class Recording:
                 return False
             self._next_try = None
             self._launch()
+            return False
+        if self.proc is None:
             return False
         frames = int(read_progress(self.progress).get("frame", 0) or 0)
         if frames != self._last_frames[0]:

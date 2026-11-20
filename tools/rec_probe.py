@@ -102,12 +102,17 @@ def encoder_args(encoder, fps, bitrate):
 SIZES = {"native": None, "1080p": (1920, 1080), "720p": (1280, 720)}  # 录多大：None = 和抓到的一样
 
 
-def source_filter(source, fps, output_idx=0, window="r5apex", size=None):
+def source_filter(source, fps, output_idx=0, size=None):
     """抓画面的滤镜。size=(宽, 高)：Windows Graphics Capture 在抓的时候就缩放（显卡上做，CPU 和录原画面差不多；
-    2026-11-20 实测）。桌面复制不能这样缩，要另外缩（scale_d3d11，这台电脑上用不了）。"""
+    2026-11-20 实测）。桌面复制不能这样缩，要另外缩（scale_d3d11，这台电脑上用不了）。
+    只抓 Apex 的窗口：Evo 按进程号找到窗口、把窗口句柄交给 ffmpeg（recorder.find_window），不用 ffmpeg 的 window_exe
+    （它要对每个窗口的进程、包括 Apex 打开查询句柄读程序名，原则 1）。找不到窗口时给一个无效的句柄：ffmpeg 报错退出，
+    record 会过一会儿重开，等窗口出来。"""
     scale = f":width={size[0]}:height={size[1]}:resize_mode=scale_aspect:scale_mode=bicubic" if size else ""
     if source == "gfxcapture":
-        return f"gfxcapture=window_exe={window}:max_framerate={fps}:capture_cursor=0{scale}"
+        import recorder
+        hwnd = recorder.find_window(find_pid(APEX_EXES)) or 1
+        return f"gfxcapture=hwnd={hwnd}:max_framerate={fps}:capture_cursor=0{scale}"
     if source == "gfxcapture-monitor":
         return f"gfxcapture=monitor_idx={output_idx}:max_framerate={fps}:capture_cursor=0{scale}"
     return f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=0"
@@ -221,7 +226,7 @@ class Recorder:
         size = SIZES[a.size]
         in_capture = a.source.startswith("gfxcapture")  # Windows Graphics Capture 抓的时候就缩放
         width, height = size if size and not in_capture else (None, None)
-        source = source_filter(a.source, a.fps, a.output_idx, a.window, size if in_capture else None)
+        source = source_filter(a.source, a.fps, a.output_idx, size if in_capture else None)
         stamp = f"settb=AVTB,setpts=RTCTIME-{self.t0_us}"  # 时间戳 = 抓到这一帧时电脑的时钟 - t0（微秒）
         # 送图用 fps 滤镜每 0.3 秒挑一帧，round=up = 挑这一刻之前的最后一帧（晚 0–33 毫秒）。默认的 round=near
         # 挑的是这一刻前后 0.15 秒里最后一帧，比标的时间晚 150–180 毫秒（2026-11-19 第二局实测，用 testsrc2 核对过）
@@ -374,7 +379,7 @@ def record(args, label=None, audio_pid=None, on_ready=None):
     """录 args.minutes 分钟（或 Ctrl+C）。返回录像文件夹。on_ready()：开始录以后调用一次（avsync 用来开始闪）。"""
     ffmpeg = find_ffmpeg() or sys.exit("找不到 ffmpeg.exe（见 docs/录屏实测.md 第 1 步）")
     args.encoder = pick_encoder(ffmpeg, args.encoder, args)
-    size = grab_size(ffmpeg, source_filter(args.source, args.fps, args.output_idx, args.window))
+    size = grab_size(ffmpeg, source_filter(args.source, args.fps, args.output_idx))
     if isinstance(size, str):
         sys.exit(f"抓不到画面：{size}")
     if SIZES[args.size] and not args.source.startswith("gfxcapture"):
@@ -805,7 +810,7 @@ def cmd_avsync(args):
                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
     print(f"左上角会出现一个黑方块，每 2 秒闪白、嘀一声，共 {args.seconds} 秒。期间别把别的窗口拖到它上面。")
     rec_args = argparse.Namespace(minutes=(args.seconds + 4) / 60, encoder=args.encoder, fps=60, size="native",
-                                  source="ddagrab", output_idx=args.output_idx, window="", bitrate=None, frames=False,
+                                  source="ddagrab", output_idx=args.output_idx, bitrate=None, frames=False,
                                   ocr_every=0, save_every=10 ** 9, label="avsync")
 
     def go():  # 开始录了才开始闪
@@ -1075,7 +1080,6 @@ def main():
     r.add_argument("--bitrate", type=int, default=None, help="码率（bps），不给就按分辨率估")
     r.add_argument("--source", choices=["ddagrab", "gfxcapture", "gfxcapture-monitor"], default="ddagrab",
                    help="ddagrab = 桌面复制（推荐）；gfxcapture = 只抓 Apex 的窗口")
-    r.add_argument("--window", default="r5apex", help="gfxcapture 抓哪个程序的窗口（程序名的正则）")
     r.add_argument("--output-idx", type=int, default=0, help="抓哪个屏幕（check 里列的）")
     r.add_argument("--no-frames", dest="frames", action="store_false", help="不给 Evo 送原图（只录屏，量纯录屏的开销）")
     r.add_argument("--ocr-every", type=float, default=0,

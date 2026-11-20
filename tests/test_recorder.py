@@ -7,6 +7,7 @@
 - 声音：假录音在第 2 秒"嘀"一声，MP4 里嘀声的位置对得上画面（30 毫秒以内）
 - 上次崩了没拼的分段文件：拼成"_未完成"的 MP4
 - 作业对象：开 ffmpeg 的程序被强行结束，ffmpeg 也跟着退
+- 找窗口：按进程号找到一个测试窗口（不打开那个进程），只抓这个窗口抓得到
 - 接进记录程序（match_recording.py）：开关默认关；一局开始开录、事件（倒地、被扶起、成盒、被复活、冠军）、右上角变了的时刻、
   结束再录 3 秒、同一局不重开、靶场也录、录不了只说一次
 要 ffmpeg（找法见 recorder.find_ffmpeg）和显卡硬件编码器；没有就只跑不用 ffmpeg 的那些。
@@ -80,11 +81,14 @@ def pure_checks(tmp):
         round(recorder.bitrate(rules, 2560, 1440, 60, "h264", "high") / 1e6) == 22
         and round(recorder.bitrate(rules, 1920, 1080, 60, "h264", "high") / 1e6) == 12
         and recorder.bitrate(rules, 1920, 1080, 60, "av1", "high") == int(1920 * 1080 * 60 * 0.1 * 0.6))
-    window = recorder.source_filter(recorder.Options(source="window", size="1080p"), rules, (1920, 1080))
+    window = recorder.source_filter(recorder.Options(source="window", size="1080p"), rules, (1920, 1080), hwnd=123)
+    no_window = recorder.source_filter(recorder.Options(source="window"), rules)
     desktop = recorder.source_filter(recorder.Options(source="desktop"), rules)
-    out["抓屏滤镜：只抓游戏窗口时按 r5apex 找窗口、抓的时候缩放；桌面复制不缩放"] = (
-        window.startswith("gfxcapture=window_exe=r5apex") and "width=1920:height=1080" in window
-        and "resize_mode=scale_aspect" in window and desktop.startswith("ddagrab=") and "width" not in desktop)
+    out["抓屏滤镜：只抓游戏窗口时用窗口句柄（不按程序名找：ffmpeg 会打开每个窗口的进程）、抓的时候缩放；"
+        "找不到窗口不抓；桌面复制不缩放"] = (
+        window.startswith("gfxcapture=hwnd=123:") and "window_exe" not in window and "width=1920:height=1080" in window
+        and "resize_mode=scale_aspect" in window and no_window is None
+        and desktop.startswith("ddagrab=") and "width" not in desktop)
     packets = [(0, 100.0), (48000, 101.0), (96000, 102.002)]  # 第三包比按采样数算的晚 2 毫秒（声卡时钟慢）
     out["对齐声音：用最近的一包算（声卡时钟和电脑时钟差开也对），画面比声音晚开始是正数、早开始是负数"] = (
         abs(recorder.audio_offset(packets, 48000, 100.5) - 0.5) < 1e-9
@@ -356,6 +360,34 @@ def match_checks(tmp):
     return out
 
 
+WINDOW_CHILD = r"""
+import tkinter as tk
+root = tk.Tk()
+root.title("Evo 录像测试窗口")
+root.geometry("400x300+40+40")
+root.configure(bg="#3060c0")
+root.after(8000, root.destroy)
+print("ready", flush=True)
+root.mainloop()
+"""
+
+
+def window_checks(ffmpeg):
+    """开一个测试窗口：按进程号找到它（不打开那个进程），只抓这个窗口抓得到。"""
+    base = getattr(sys, "_base_executable", sys.executable)  # 虚拟环境的 python.exe 会再开一个真正的 Python：窗口在那个进程里
+    child = subprocess.Popen([base, "-c", WINDOW_CHILD], stdout=subprocess.PIPE, text=True)
+    try:
+        child.stdout.readline()
+        time.sleep(0.5)
+        hwnd = recorder.find_window(child.pid)
+        size, why = recorder.capture_size(ffmpeg, recorder.Options(source="window"), recorder.load_rules(), hwnd)
+        nobody = recorder.find_window(4)  # System 进程：没有窗口
+    finally:
+        child.kill()
+    return {f"找窗口：按进程号找到测试窗口（{hwnd}），只抓这个窗口抓得到（{size or why}）；没有窗口的进程返回空":
+            bool(hwnd) and size is not None and size[0] >= 390 and nobody is None}
+
+
 JOB_CHILD = r"""
 import subprocess, sys, time
 sys.path.insert(0, sys.argv[1])
@@ -393,6 +425,7 @@ def main():
         if not recorder.pick_encoder(ffmpeg, recorder.Options(source=TEST_SOURCE), recorder.load_rules()):
             print("  （这台电脑上没有能用的显卡硬件编码器：跳过真的录的那些）")
             return report(checks)
+        checks.update(window_checks(ffmpeg))
         checks.update(record_checks(ffmpeg, tmp))
     return report(checks)
 
