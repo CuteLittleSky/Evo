@@ -57,8 +57,8 @@ ENABLED_KEY = "recording_enabled"  # 和 match_recording.SETTING 一样
 CHECK_KEY = "recording_check"  # {"ffmpeg": 路径, "h264": 能用的编码器或 None, "av1": …}：打开录像时检测，ffmpeg 换了重新检测
 NOTE_KEY = "recording_note"  # 刚保存的结果 {"where": 哪一项, "text": …, "error": 是不是出错}，显示在那一项下面一次
 CHECK_SOURCE = "lavfi:color=black:s=640x360:r=30"  # 检测编码器用的测试画面（不用抓屏、不用开着游戏，约 0.5 秒）
-SIZE_NAMES = {"native": "原画面", "1080p": "1080p", "720p": "720p"}
-QUALITY_NAMES = {"high": "高", "medium": "中", "low": "低"}
+SIZE_NAMES = {"native": "原画面", "1080p": "1080p（推荐）", "720p": "720p"}
+QUALITY_NAMES = {"best": "很高", "high": "高", "standard": "标准（推荐）", "small": "省空间"}
 CODEC_NAMES = {"h264": "H.264", "av1": "AV1"}
 FAMILY_NAMES = {"nvenc": "NVIDIA", "amf": "AMD", "qsv": "Intel"}
 MATCH_MINUTES = 20  # 估一局多大时按多少分钟算（打满一局约 20 分钟）
@@ -319,12 +319,10 @@ def encoders(ffmpeg, run=False):
     return check_encoders(ffmpeg) if run and ffmpeg else None
 
 
-def current_options():
-    """设置里现在的画质（没设过的用 recorder.Options 的默认，和 match_recording.options_from 一样）。"""
-    return {"size": app_settings.get("recording_size", recorder.Options.size),
-            "fps": int(app_settings.get("recording_fps", recorder.Options.fps)),
-            "quality": app_settings.get("recording_quality", recorder.Options.quality),
-            "codec": app_settings.get("recording_codec", recorder.Options.codec)}
+def current_options(rules=None):
+    """设置里现在的画质（和开录时一样按 recorder.options_from：没设过的、配置里已经没有的那一档用默认）。"""
+    opts = recorder.options_from(app_settings.load(), rules)
+    return {"size": opts.size, "fps": opts.fps, "quality": opts.quality, "codec": opts.codec}
 
 
 def limit_gb():
@@ -340,8 +338,8 @@ def estimate(rules, native, size, fps, quality, codec, limit):
     rate = recorder.bitrate(rules, width, height, fps, codec, quality)
     per_match = rate / 8 * MATCH_MINUTES * 60
     keep = int(limit * 2 ** 30 // per_match)
-    return (f"按 {width} × {height} 算约 {rate / 1e6:.0f} Mbps，一局（{MATCH_MINUTES} 分钟）约 "
-            f"{per_match / 2 ** 30:.1f} GB，{limit:g} GB 能存约 {keep} 局")
+    return (f"按 {width} × {height} 算约 {rate / 1e6:.1f} Mbps，一局（{MATCH_MINUTES} 分钟）约 "
+            f"{size_text(per_match)}，{limit:g} GB 能存约 {keep} 局")
 
 
 def folder_problem(raw):
@@ -384,7 +382,7 @@ def settings_view():
     encoder = found.get(recorder.FALLBACK_CODEC) if found else None
     native = screen_size() or (1920, 1080)  # 原画面按屏幕分辨率估（全屏时游戏窗口就这么大）
     limit = limit_gb()
-    opts = current_options()
+    opts = current_options(rules)
     estimates = {f"{size}|{fps}|{quality}|{codec}": estimate(rules, native, size, fps, quality, codec, limit)
                  for size in rules["sizes"] for fps in rules["fps"]
                  for quality in rules["bits_per_pixel"] for codec in rules["encoders"]}

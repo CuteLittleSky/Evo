@@ -42,14 +42,9 @@ TRANSITIONS = {  # (之前的状态, 现在的状态) → 事件
 }
 
 
-def options_from(settings):
-    """设置 → recorder.Options（没设过的用默认）。"""
-    return recorder.Options(source=settings.get("recording_source", "window"),
-                            size=settings.get("recording_size", "native"),
-                            fps=int(settings.get("recording_fps", 60)),
-                            codec=settings.get("recording_codec", "h264"),
-                            quality=settings.get("recording_quality", "high"),
-                            audio=bool(settings.get("recording_audio", True)))
+def options_from(settings, rules=None):
+    """设置 → recorder.Options（没设过的、配置里已经没有的那一档用默认，见 recorder.options_from）。"""
+    return recorder.options_from(settings, rules)
 
 
 def kill_events(values, max_jump=5):

@@ -86,12 +86,31 @@ def run_ffmpeg(ffmpeg, args, timeout=30, cwd=None):
 class Options:
     """怎么录（设置页的选项，没设过的用 config/recording.json 的默认）。"""
     source: str = "window"  # window = 只抓游戏窗口（Windows Graphics Capture）；desktop = 桌面复制；lavfi:… = 测试用的画面
-    size: str = "native"  # config 里 sizes 的一项：native / 1080p / 720p
+    size: str = "1080p"  # config 里 sizes 的一项：native / 1080p / 720p（默认 1080p 60 帧标准：2026-11-20 用户看样片选的）
     fps: int = 60
     codec: str = "h264"  # config 里 encoders 的一项：h264 / av1
-    quality: str = "high"  # config 里 bits_per_pixel 的一项：high / medium / low
+    quality: str = "standard"  # config 里 bits_per_pixel 的一项：best / high / standard / small
     audio: bool = True
     extra: dict = field(default_factory=dict)  # 测试用：直接指定 encoder、bitrate
+
+
+def options_from(settings, rules=None):
+    """设置（settings.json 的内容）→ Options。没设过的、配置里已经没有的那一档（比如以前的 "low"）用默认。"""
+    rules = rules or load_rules()
+    default = Options()
+
+    def pick(key, allowed, fallback, cast=str):
+        try:
+            value = cast(settings.get(key))
+        except (TypeError, ValueError):
+            return fallback
+        return value if value in allowed else fallback
+    return Options(source=settings.get("recording_source", default.source),
+                   size=pick("recording_size", rules["sizes"], default.size),
+                   fps=pick("recording_fps", rules["fps"], default.fps, int),
+                   codec=pick("recording_codec", rules["encoders"], default.codec),
+                   quality=pick("recording_quality", rules["bits_per_pixel"], default.quality),
+                   audio=bool(settings.get("recording_audio", default.audio)))
 
 
 _user32 = ctypes.WinDLL("user32")

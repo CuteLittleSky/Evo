@@ -80,9 +80,18 @@ def pure_checks(tmp):
     out = {}
     rules = recorder.load_rules()
     out["码率：2560×1440 60 帧 H.264 高画质约 22 Mbps，1080p 约 12 Mbps，AV1 打六折"] = (
-        round(recorder.bitrate(rules, 2560, 1440, 60, "h264", "high") / 1e6) == 22
-        and round(recorder.bitrate(rules, 1920, 1080, 60, "h264", "high") / 1e6) == 12
-        and recorder.bitrate(rules, 1920, 1080, 60, "av1", "high") == int(1920 * 1080 * 60 * 0.1 * 0.6))
+        round(recorder.bitrate(rules, 2560, 1440, 60, "h264", "best") / 1e6) == 22
+        and round(recorder.bitrate(rules, 1920, 1080, 60, "h264", "best") / 1e6) == 12
+        and round(recorder.bitrate(rules, 1920, 1080, 60, "h264", "standard") / 1e5) == 56
+        and recorder.bitrate(rules, 1920, 1080, 60, "av1", "best") == int(1920 * 1080 * 60 * 0.1 * 0.6))
+    default = recorder.options_from({}, rules)
+    old = recorder.options_from({"recording_quality": "low", "recording_size": "4k", "recording_fps": "144",
+                                 "recording_codec": "h265"}, rules)
+    kept = recorder.options_from({"recording_quality": "small", "recording_size": "720p", "recording_fps": "30"}, rules)
+    out["画质设置：默认 1080p 60 帧标准；以前的、乱填的那一档用默认；设过的照用（帧数存成字符串也认）"] = (
+        (default.size, default.fps, default.quality, default.codec) == ("1080p", 60, "standard", "h264")
+        and (old.size, old.fps, old.quality, old.codec) == ("1080p", 60, "standard", "h264")
+        and (kept.size, kept.fps, kept.quality) == ("720p", 30, "small"))
     window = recorder.source_filter(recorder.Options(source="window", size="1080p"), rules, (1920, 1080), hwnd=123)
     no_window = recorder.source_filter(recorder.Options(source="window"), rules)
     desktop = recorder.source_filter(recorder.Options(source="desktop"), rules)
@@ -161,9 +170,12 @@ def record_checks(ffmpeg, tmp):
     out = {}
     rules = recorder.load_rules()
     quiet = []
+    # 画质固定"很高"，不跟着默认变：测试画面只有 640×360，默认的"标准"码率约 0.6 Mbps，下面开录 1.5 秒就结束 ffmpeg 的
+    # 那两项里 ffmpeg 还没把画面写进文件，第一段是空的（2026-11-20 默认改成标准时遇到）
+    best = {"source": TEST_SOURCE, "quality": "best"}
 
     # 1. 录 3 秒，中间记两个事件
-    rec = recorder.Recording(ffmpeg, recorder.Options(source=TEST_SOURCE, audio=False), tmp / "lib", log=quiet.append,
+    rec = recorder.Recording(ffmpeg, recorder.Options(**best, audio=False), tmp / "lib", log=quiet.append,
                              rules=rules)
     rec.start()
     time.sleep(1.0)
@@ -188,7 +200,7 @@ def record_checks(ffmpeg, tmp):
 
     # 2. 中途 ffmpeg 退出：重开，空档保留（断 11 秒：超过 ffmpeg 默认挤掉空档的 10 秒）
     long_rules = {**rules, "restart_wait_seconds": [11]}
-    rec = recorder.Recording(ffmpeg, recorder.Options(source=TEST_SOURCE, audio=False), tmp / "lib2", log=quiet.append,
+    rec = recorder.Recording(ffmpeg, recorder.Options(**best, audio=False), tmp / "lib2", log=quiet.append,
                              rules=long_rules)
     rec.start()
     time.sleep(1.5)
@@ -211,7 +223,7 @@ def record_checks(ffmpeg, tmp):
 
     # 3. 声音：假录音在第 2 秒嘀一声
     fake = FakeAudio(beep_at=2.0)
-    rec = recorder.Recording(ffmpeg, recorder.Options(source=TEST_SOURCE), tmp / "lib3", log=quiet.append, rules=rules,
+    rec = recorder.Recording(ffmpeg, recorder.Options(**best), tmp / "lib3", log=quiet.append, rules=rules,
                              audio_factory=fake)
     rec.start(apex_pid=1234)
     time.sleep(3.5)
@@ -225,7 +237,7 @@ def record_checks(ffmpeg, tmp):
         meta3.get("audio") is not None and beep is not None and want is not None and abs(beep - want) < 0.03)
 
     # 4. 上次崩了没拼的分段文件
-    rec = recorder.Recording(ffmpeg, recorder.Options(source=TEST_SOURCE, audio=False), tmp / "lib4", log=quiet.append,
+    rec = recorder.Recording(ffmpeg, recorder.Options(**best, audio=False), tmp / "lib4", log=quiet.append,
                              rules=rules)
     rec.start()
     time.sleep(1.5)
@@ -238,7 +250,7 @@ def record_checks(ffmpeg, tmp):
     # 5. 设置里选了 AV1、这块显卡编不了（这里用一个不存在的编码器假装）：改用 H.264 照样录，不是整局不录
     no_av1 = {**rules, "encoders": {**rules["encoders"], "av1": ["av1_evo_test_missing"]}}
     said = []
-    rec = recorder.Recording(ffmpeg, recorder.Options(source=TEST_SOURCE, codec="av1", audio=False), tmp / "lib5",
+    rec = recorder.Recording(ffmpeg, recorder.Options(**best, codec="av1", audio=False), tmp / "lib5",
                              log=said.append, rules=no_av1)
     rec.start()
     time.sleep(1.0)

@@ -128,24 +128,28 @@ def settings_checks(client, token, base):
         codec = re.findall(r'<option value="av1"[^>]*>[^<]*</option>', box)
         out[f"编不了 AV1：那一项不能选、写着原因（{codec}）"] = (
             len(codec) == 1 and "disabled" in codec[0] and "编不了" in codec[0])
-        out["默认：原画面、60 帧、高、H.264"] = all(re.search(p, box) for p in (
-            r'<option value="native" selected>', r'<option value="60" selected>', r'<option value="high" selected>',
-            r'<option value="h264" selected>'))
+        out["默认：1080p、60 帧、标准、H.264；画质四档按很高、高、标准、省空间排"] = all(re.search(p, box) for p in (
+            r'<option value="1080p" selected>1080p（推荐）', r'<option value="60" selected>',
+            r'<option value="standard" selected>标准（推荐）', r'<option value="h264" selected>')) and (
+            re.findall(r'<option value="(best|high|standard|small)"', box) == ["best", "high", "standard", "small"])
 
         rules = recorder.load_rules()
-        line = panel_recordings.estimate(rules, (2560, 1440), "1080p", 60, "high", "h264", 30)
-        out[f"估一局多大：1080p 60 帧高画质约 12 Mbps、一局 1.7 GB、30 GB 存 17 局（{line}）"] = (
-            "1920 × 1080" in line and "约 12 Mbps" in line and "约 1.7 GB" in line and "约 17 局" in line)
+        line = panel_recordings.estimate(rules, (2560, 1440), "1080p", 60, "best", "h264", 30)
+        out[f"估一局多大：1080p 60 帧很高约 12 Mbps、一局 1.7 GB、30 GB 存 17 局（{line}）"] = (
+            "1920 × 1080" in line and "约 12.4 Mbps" in line and "约 1.7 GB" in line and "约 17 局" in line)
+        line = panel_recordings.estimate(rules, (2560, 1440), "1080p", 60, "standard", "h264", 30)
+        out[f"默认那一档（1080p 60 帧标准）约 5.6 Mbps、一局约 800 MB、30 GB 存 38 局（{line}）"] = (
+            "约 5.6 Mbps" in line and "约 801 MB" in line and "约 38 局" in line)
         table = json.loads(re.findall(r"data-estimates='([^']*)'", box)[0].replace("&#34;", '"')) if "data-estimates" in box else {}
         out[f"每种组合都先算好了（{len(table)} 种），页面上改选项时换那一行"] = (
             len(table) == len(rules["sizes"]) * len(rules["fps"]) * len(rules["bits_per_pixel"]) * len(rules["encoders"])
             and 'id="rec-estimate"' in box)
 
-        good = {"size": "720p", "fps": "30", "quality": "low", "codec": "h264"}
+        good = {"size": "720p", "fps": "30", "quality": "small", "codec": "h264"}
         box, said = note(client, "/settings/recording/quality", good, token)
         out[f"画质四项一起保存（{said}），页面上选着刚保存的"] = (
             said.startswith("status:保存了") and app_settings.get("recording_size") == "720p"
-            and app_settings.get("recording_fps") == 30 and app_settings.get("recording_quality") == "low"
+            and app_settings.get("recording_fps") == 30 and app_settings.get("recording_quality") == "small"
             and '<option value="720p" selected>' in box and '<option value="30" selected>' in box)
         _, said = note(client, "/settings/recording/quality", {**good, "size": "720p", "codec": "av1"}, token)
         out[f"选了编不了的 AV1：不保存（{said}）"] = (
