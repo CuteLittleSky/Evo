@@ -13,21 +13,28 @@
 和战绩对上：按时间（.json 里的开始时刻 + 时长），战绩里那一局的结束时刻落在录像里（往后留 MATCH_SLACK）就算同一局。
 不改数据库。战绩页有录像的局显示一个小按钮（match_links）
 导航上的"录像"：设置里打开了录像、或者已经有录像时才显示（visible）：没打开的玩家看不到这一页（内测中）
+设置页的"录像"一栏（_settings_recording.html，模板里调 recording_settings()）：开关（默认关，原则 2）；打开以后才显示画质
+（分辨率、帧数、画质、编码格式，下面估一局多大）、硬盘上限、保存位置。打开时检测一次这台电脑能用哪些显卡硬件编码器
+（CHECK_KEY，记在 settings.json），没有 ffmpeg、没有硬件编码器时打不开；编不了 AV1 时 AV1 那一项不能选。
+改了从下一局开始生效（match_recording 每局开录时才读设置）。保存的结果写在那一项下面（NOTE_KEY），不用页面最上面的提示
+（保存完跳回这一栏，最上面看不到）
 这个文件不加载识别用的库。规则见 docs/面板.md"录像页"。
 """
 
 import json
 import os
+import shutil
 import subprocess
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, send_file, session, url_for
 
 import app_settings
+import data_move
 import recorder
 import storage
-from paths import DATA_DIR
+from paths import DATA_DIR, EXE_DIR
 
 bp = Blueprint("recordings", __name__)
 EVENTS = {  # 事件 → (显示名, 样式)：颜色以外还写着名字（时间轴上悬停、下面的列表），不只靠颜色分
@@ -42,7 +49,19 @@ EVENTS = {  # 事件 → (显示名, 样式)：颜色以外还写着名字（时
 EVENT_LEAD = 3  # 点事件时从它前几秒开始放：看得到是怎么发生的
 MATCH_SLACK = timedelta(minutes=2)  # 战绩里那一局的结束时刻比录像的结尾晚这么多以内，也算同一局（结算画面上才记下）
 MODES = {"ranked": "排位", "pubs": "匹配", "other": "其他"}
-DEFAULT_LIMIT_GB = 30
+DEFAULT_LIMIT_GB = 30  # 和 match_recording.DEFAULT_LIMIT_GB 一样（那个文件加载识别用的库，这里不导入）
+
+# ---- 设置页"录像"一栏 ----
+ENABLED_KEY = "recording_enabled"  # 和 match_recording.SETTING 一样
+CHECK_KEY = "recording_check"  # {"ffmpeg": 路径, "h264": 能用的编码器或 None, "av1": …}：打开录像时检测，ffmpeg 换了重新检测
+NOTE_KEY = "recording_note"  # 刚保存的结果 {"where": 哪一项, "text": …, "error": 是不是出错}，显示在那一项下面一次
+CHECK_SOURCE = "lavfi:color=black:s=640x360:r=30"  # 检测编码器用的测试画面（不用抓屏、不用开着游戏，约 0.5 秒）
+SIZE_NAMES = {"native": "原画面", "1080p": "1080p", "720p": "720p"}
+QUALITY_NAMES = {"high": "高", "medium": "中", "low": "低"}
+CODEC_NAMES = {"h264": "H.264", "av1": "AV1"}
+FAMILY_NAMES = {"nvenc": "NVIDIA", "amf": "AMD", "qsv": "Intel"}
+MATCH_MINUTES = 20  # 估一局多大时按多少分钟算（打满一局约 20 分钟）
+LIMIT_RANGE = (1, 10000)  # 硬盘上限能填多少（GB）
 
 
 def folder():
@@ -272,4 +291,193 @@ def show():
     else:
         os.startfile(base)
     back = request.form.get("next") or url_for("recordings.page")
-    return redirect(back if back.startswith("/recordings") else url_for("recordings.page"))
+    return redirect(back if back.startswith(("/recordings", "/settings")) else url_for("recordings.page"))
+
+
+# ---------- 设置页"录像"一栏 ----------
+
+def _ffmpeg():
+    return recorder.find_ffmpeg(app_settings.get("recording_ffmpeg"), DATA_DIR)
+
+
+def check_encoders(ffmpeg):
+    """检测这台电脑上每种编码格式能用的硬件编码器（用测试画面编 20 帧），记进设置里。"""
+    rules = recorder.load_rules()
+    found = {"ffmpeg": ffmpeg}
+    for codec in rules["encoders"]:
+        found[codec] = recorder.pick_encoder(ffmpeg, recorder.Options(source=CHECK_SOURCE, codec=codec), rules)
+    app_settings.set_value(CHECK_KEY, found)
+    return found
+
+
+def encoders(ffmpeg, run=False):
+    """记着的检测结果（ffmpeg 换了不算）；没有时 run=True 就现在检测，否则返回 None（不知道）。"""
+    found = app_settings.get(CHECK_KEY)
+    if isinstance(found, dict) and found.get("ffmpeg") == ffmpeg:
+        return found
+    return check_encoders(ffmpeg) if run and ffmpeg else None
+
+
+def current_options():
+    """设置里现在的画质（没设过的用 recorder.Options 的默认，和 match_recording.options_from 一样）。"""
+    return {"size": app_settings.get("recording_size", recorder.Options.size),
+            "fps": int(app_settings.get("recording_fps", recorder.Options.fps)),
+            "quality": app_settings.get("recording_quality", recorder.Options.quality),
+            "codec": app_settings.get("recording_codec", recorder.Options.codec)}
+
+
+def limit_gb():
+    try:
+        return float(app_settings.get("recording_limit_gb", DEFAULT_LIMIT_GB))
+    except (TypeError, ValueError):
+        return float(DEFAULT_LIMIT_GB)
+
+
+def estimate(rules, native, size, fps, quality, codec, limit):
+    """这样设大约多大：码率、一局（MATCH_MINUTES 分钟）多少 GB、上限能存几局。"""
+    width, height = rules["sizes"][size] or native
+    rate = recorder.bitrate(rules, width, height, fps, codec, quality)
+    per_match = rate / 8 * MATCH_MINUTES * 60
+    keep = int(limit * 2 ** 30 // per_match)
+    return (f"按 {width} × {height} 算约 {rate / 1e6:.0f} Mbps，一局（{MATCH_MINUTES} 分钟）约 "
+            f"{per_match / 2 ** 30:.1f} GB，{limit:g} GB 能存约 {keep} 局")
+
+
+def folder_problem(raw):
+    """选的保存位置能不能用：不能用返回原因（和"更改数据位置"一样检查：完整路径、不在程序文件夹里、能写入）。"""
+    if not raw:
+        return "请先选一个文件夹"
+    target = Path(raw)
+    if not target.is_absolute() or not target.drive:
+        return "请写完整的路径，比如 D:\\Evo 录像"
+    if data_move._inside(target, EXE_DIR):
+        return "这里在 Evo 的程序文件夹里，换新版本时会被一起删掉，请选程序文件夹外面的地方"
+    return data_move._writable(target)
+
+
+def _same(a, b):
+    return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+
+
+def _free_text(base):
+    try:
+        free = shutil.disk_usage(data_move._existing_ancestor(base)).free
+    except OSError:
+        return None
+    return f"{base.drive.rstrip(':')} 盘还剩 {size_text(free)}" if base.drive else None
+
+
+@bp.app_template_global("recording_settings")
+def settings_view():
+    """设置页"录像"一栏要显示的（_settings_recording.html）。打开着、还没检测过编码器时现在检测一次（约 0.5 秒）。"""
+    from panel_app import screen_size  # panel_app 导入本文件，放在这里才不会互相导入
+    rules = recorder.load_rules()
+    enabled = bool(app_settings.get(ENABLED_KEY))
+    ffmpeg = _ffmpeg()
+    found = encoders(ffmpeg, run=enabled) if ffmpeg else None
+    blocked = None
+    if not ffmpeg:
+        blocked = "找不到录像要用的组件（ffmpeg）"
+    elif found and not found.get(recorder.FALLBACK_CODEC):
+        blocked = "这台电脑上没有能用的显卡硬件编码器（NVIDIA、AMD、Intel 的都试过了），录不了"
+    encoder = found.get(recorder.FALLBACK_CODEC) if found else None
+    native = screen_size() or (1920, 1080)  # 原画面按屏幕分辨率估（全屏时游戏窗口就这么大）
+    limit = limit_gb()
+    opts = current_options()
+    estimates = {f"{size}|{fps}|{quality}|{codec}": estimate(rules, native, size, fps, quality, codec, limit)
+                 for size in rules["sizes"] for fps in rules["fps"]
+                 for quality in rules["bits_per_pixel"] for codec in rules["encoders"]}
+    base = folder()
+    videos = _videos(base)
+    used = sum(v.stat().st_size for v in videos)
+    note = session.pop(NOTE_KEY, None)
+    return {
+        "enabled": enabled, "blocked": blocked,
+        "encoder": f"{FAMILY_NAMES.get(encoder.rsplit('_', 1)[-1], encoder)} 显卡" if encoder else None,
+        "sizes": [{"value": k, "name": SIZE_NAMES.get(k, k)} for k in rules["sizes"]],
+        "fps": rules["fps"],
+        "qualities": [{"value": k, "name": QUALITY_NAMES.get(k, k)} for k in rules["bits_per_pixel"]],
+        "codecs": [{"value": k, "name": CODEC_NAMES.get(k, k), "ready": found is None or bool(found.get(k))}
+                   for k in rules["encoders"]],
+        "current": opts, "estimates": estimates,
+        "estimate": estimates.get(f"{opts['size']}|{opts['fps']}|{opts['quality']}|{opts['codec']}"),
+        "limit": f"{limit:g}", "limit_range": LIMIT_RANGE,
+        "count": len(videos), "used": size_text(used), "free": _free_text(base),
+        "folder": str(base), "custom_folder": bool(app_settings.get("recording_dir")),
+        "note": note if isinstance(note, dict) else None,
+    }
+
+
+def _done(where, text, error=False, **extra):
+    session[NOTE_KEY] = {"where": where, "text": text, "error": error, **extra}
+    return redirect(url_for("settings") + "#h-video")
+
+
+@bp.post("/settings/recording")
+def toggle():
+    """打开、关掉录像。打开时先看有没有 ffmpeg、检测显卡硬件编码器，都有才打开。"""
+    on = request.form.get("on") == "1"
+    if on:
+        ffmpeg = _ffmpeg()
+        if not ffmpeg:
+            return _done("toggle", "打不开：找不到录像要用的组件（ffmpeg）", error=True)
+        if not check_encoders(ffmpeg).get(recorder.FALLBACK_CODEC):
+            return _done("toggle", "打不开：这台电脑上没有能用的显卡硬件编码器", error=True)
+    app_settings.set_value(ENABLED_KEY, on)
+    if on:
+        return _done("toggle", "打开了：从下一局开始录，录好的在左边的“录像”页看")
+    if any(_videos(folder())):
+        return _done("toggle", "关掉了：以后不录。已经录好的还在，“录像”页照样能看")
+    return _done("toggle", "关掉了：以后不录")
+
+
+@bp.post("/settings/recording/quality")
+def save_quality():
+    rules = recorder.load_rules()
+    form = request.form
+    size, fps, quality, codec = form.get("size"), form.get("fps", type=int), form.get("quality"), form.get("codec")
+    if size not in rules["sizes"] or fps not in rules["fps"] or quality not in rules["bits_per_pixel"] \
+            or codec not in rules["encoders"]:
+        return _done("quality", "没保存：选项不对，刷新一下页面再试", error=True)
+    found = encoders(_ffmpeg(), run=True)
+    if found and not found.get(codec):
+        return _done("quality", f"没保存：这台电脑的显卡编不了 {CODEC_NAMES.get(codec, codec)}", error=True)
+    for key, value in (("recording_size", size), ("recording_fps", fps), ("recording_quality", quality),
+                       ("recording_codec", codec)):
+        app_settings.set_value(key, value)
+    return _done("quality", "保存了：从下一局开始按这个录")
+
+
+@bp.post("/settings/recording/limit")
+def save_limit():
+    gb = request.form.get("gb", type=float)
+    lo, hi = LIMIT_RANGE
+    if gb is None or not lo <= gb <= hi:
+        return _done("limit", f"没保存：要填 {lo} 到 {hi} 之间的数", error=True)
+    app_settings.set_value("recording_limit_gb", int(gb) if gb == int(gb) else gb)
+    used = sum(v.stat().st_size for v in _videos(folder()))
+    if used > gb * 2 ** 30:  # 现在不删（和平时一样，录完一局才删）：先说清楚
+        return _done("limit", f"保存了。现在的录像共 {size_text(used)}，超过了上限：录完下一局时会从最旧的删起")
+    return _done("limit", "保存了")
+
+
+@bp.post("/settings/recording/folder")
+def save_folder():
+    """换保存位置（reset=1：回到数据文件夹里的 recordings）。已经录好的不搬，说清楚还在哪。"""
+    old = folder()
+    if request.form.get("reset"):
+        app_settings.set_value("recording_dir", None)
+    else:
+        raw = (request.form.get("folder") or "").strip().strip('"')
+        problem = folder_problem(raw)
+        if problem:
+            return _done("folder", problem, error=True, chosen=raw)  # 填的留在输入框里，改一改再保存
+        app_settings.set_value("recording_dir", None if _same(raw, DATA_DIR / "recordings") else str(Path(raw)))
+    if _same(old, folder()):
+        return _done("folder", "保存位置没变")
+    left = len(_videos(old))
+    text = "改回默认位置了" if request.form.get("reset") else "保存了"
+    text += "：从下一局开始存到这里"
+    if left:
+        text += f"。原来的 {left} 个录像没有搬，还在 {old}；想在录像页里看，把里面按月份分的文件夹搬到新位置"
+    return _done("folder", text)

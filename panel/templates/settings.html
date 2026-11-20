@@ -3,7 +3,7 @@
 {% from "_shots.html" import usage_desc, clean_desc, clean_button %}
 {% block title %}设置 · Evo{% endblock %}
 
-{# 设置页（/settings）：常规、提示音、识别、账号、数据与隐私、匿名统计、更新、关于 Evo、支持我 #}
+{# 设置页（/settings）：常规、提示音、识别、录像、账号、数据与隐私、匿名统计、更新、关于 Evo、支持我 #}
 
 {% block content %}
 <div class="settings-layout">
@@ -203,6 +203,9 @@
       {{ import_box(season_mode(), url_for('settings'), on_settings=True) }}
       <div class="setting-desc rec-note">识别规则写在 <code>config/</code> 文件夹里，坐标按 1920 × 1080 校准，运行时按分辨率和游戏画面比例自动换算。</div>
     </section>
+
+    {# 录像（_settings_recording.html、panel_recordings.py；内测中）：开关默认关，打开以后才显示画质、硬盘上限、保存位置 #}
+    {% include "_settings_recording.html" %}
 
     {% if accounts %}
     {# 账号（2026-11-19 改成每个账号一块，玩家反馈每个名字一行、并过的名字也占一行，越堆越多）：

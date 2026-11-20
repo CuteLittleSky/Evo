@@ -40,6 +40,7 @@ import game_lang
 import process_info
 
 CONFIG_NAME = "recording.json"
+FALLBACK_CODEC = "h264"  # 选的编码格式这台电脑编不了时改用它（哪里都能放）
 WORK_DIR_NAME = "_recording"  # 录的时候的分段文件放在录像文件夹里的这个子文件夹（结束后删掉）
 CREATE_NEW_PROCESS_GROUP = 0x00000200  # 终端里按 Ctrl+C 不会直接传给 ffmpeg，由我们发 q 让它收尾
 NORMAL_PRIORITY_CLASS = 0x00000020
@@ -331,6 +332,10 @@ class Recording:
         if grabbed is None:
             raise RecordingUnavailable(f"抓不到画面：{why}")
         self.encoder = opts.extra.get("encoder") or pick_encoder(self.ffmpeg, opts, self.rules, hwnd)
+        if not self.encoder and opts.codec != FALLBACK_CODEC:  # 设置里选了 AV1、这块显卡编不了：改用 H.264，不要整局不录
+            self.log(f"录像：这台电脑编不了 {opts.codec}，改用 {FALLBACK_CODEC}")
+            opts.codec = FALLBACK_CODEC
+            self.encoder = pick_encoder(self.ffmpeg, opts, self.rules, hwnd)
         if not self.encoder:
             raise RecordingUnavailable("这台电脑上没有能用的显卡硬件编码器")
         self.size = tuple(size) if size and opts.source == "window" else grabbed
@@ -562,7 +567,7 @@ def recover_leftovers(ffmpeg, out_dir, log=print):
 
 
 def enforce_limit(out_dir, max_bytes, log=print):
-    """录像文件夹超过上限时，从最旧的录像删起（MP4 和同名 .json 一起删），直到不超过。返回删掉的 MP4。"""
+    """录像文件夹超过上限时，从最旧的录像删起（MP4 和同名的 .json、.jpg 一起删），直到不超过。返回删掉的 MP4。"""
     videos = sorted(Path(out_dir).glob("*/*.mp4"), key=lambda p: p.stat().st_mtime)
     total = sum(p.stat().st_size for p in videos)
     removed = []
@@ -572,6 +577,7 @@ def enforce_limit(out_dir, max_bytes, log=print):
         total -= video.stat().st_size
         video.unlink(missing_ok=True)
         video.with_suffix(".json").unlink(missing_ok=True)
+        video.with_suffix(".jpg").unlink(missing_ok=True)  # 缩略图（录完时截的）
         removed.append(video)
     if removed:
         log(f"录像：超过上限 {max_bytes / 2 ** 30:.0f} GB，删掉最旧的 {len(removed)} 个")

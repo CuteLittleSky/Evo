@@ -9,6 +9,9 @@
 - 录像文件支持拖动（Range 请求回 206）；缩略图；网址不能指到录像文件夹以外、分段文件夹里的文件
 - 删除：MP4、.json、.jpg 一起删；没有口令不让删
 - 战绩页：有录像的局多一个"看录像"按钮，指到那个录像；没录像的局没有
+- 设置页"录像"一栏（假的 ffmpeg 和编码器检测，这台电脑"编不了 AV1"）：关着时只有开关；没有 ffmpeg 打不开；
+  打开时检测编码器、记住；画质四项一起保存，选了编不了的 AV1、乱填的不保存；估一局多大；硬盘上限的范围；
+  保存位置（不是完整路径、在程序文件夹里的不行，填的留在输入框里；换了以后说原来的录像还在哪；改回默认）；关掉
 
 运行：python tests/test_recordings_page.py
 """
@@ -26,6 +29,7 @@ from fake_game import report  # 要在项目代码之前导入（设置临时数
 import app_settings
 import panel_app
 import panel_recordings
+import recorder
 import storage
 
 NOW = datetime.now().replace(microsecond=0)
@@ -55,12 +59,133 @@ def make_recording(base, started, name, duration, events=(), outages=(), legend=
 
 
 def main():
-    print("录像页（列表、播放、删除、战绩页的看录像按钮）")
+    print("录像页（列表、播放、删除、战绩页的看录像按钮；设置页的\"录像\"一栏）")
     try:
         return checks()
     finally:  # 全部测试在同一个临时数据文件夹里跑：留下录像、开着录像，后面几组的导航会多出"录像"
+        app_settings.set_value("recording_dir", None)
         shutil.rmtree(panel_recordings.folder(), ignore_errors=True)
+        for key in ("recording_enabled", panel_recordings.CHECK_KEY, "recording_size", "recording_fps",
+                    "recording_quality", "recording_codec", "recording_limit_gb"):
+            app_settings.set_value(key, None)
+
+
+def section(raw):
+    """设置页里"录像"那一栏的 HTML。"""
+    found = re.findall(r'<section class="card settings-card" aria-labelledby="h-video">.*?</section>', raw, re.S)
+    return found[0] if found else ""
+
+
+def note(client, path, data, token):
+    """提交设置，跟着跳回设置页，返回（"录像"那一栏，那一项下面写的结果）。"""
+    r = client.post(path, data={**data, "token": token})
+    if r.status_code != 302 or not r.headers["Location"].endswith("/settings#h-video"):
+        return "", f"没跳回设置页（{r.status_code}）"
+    box = section(client.get("/settings").get_data(as_text=True))
+    found = re.findall(r'<div class="setting-desc rec-note-line[^"]*"\s*role="(\w+)" id="rec-note-\w+">([^<]*)</div>', box)
+    return box, (f"{found[0][0]}:{found[0][1]}" if found else "")
+
+
+def settings_checks(client, token, base):
+    """设置页的"录像"一栏。base：现在的录像文件夹（里面有一个录像）。"""
+    out = {}
+    real_find, real_pick = recorder.find_ffmpeg, recorder.pick_encoder
+    ffmpeg = {"path": None}
+    recorder.find_ffmpeg = lambda *_, **__: ffmpeg["path"]
+    tried = []
+
+    def fake_pick(path, options, rules, hwnd=None):  # 这台电脑：NVIDIA，编得了 H.264、编不了 AV1
+        tried.append(options.codec)
+        return {"h264": "h264_nvenc"}.get(options.codec)
+    recorder.pick_encoder = fake_pick
+    try:
         app_settings.set_value("recording_enabled", False)
+        app_settings.set_value(panel_recordings.CHECK_KEY, None)
+        box = section(client.get("/settings").get_data(as_text=True))
+        out["关着：有\"录像\"一栏和开关（关着），没有画质、上限、位置；没有 ffmpeg 时开关点不了、写着原因"] = (
+            'aria-checked="false"' in box and "rec-size" not in box and "硬盘上限" not in box
+            and "找不到录像要用的组件" in box and "disabled" in box)
+        box, said = note(client, "/settings/recording", {"on": "1"}, token)
+        out[f"没有 ffmpeg 时打不开：还是关着，开关下面写原因（{said}）"] = (
+            said.startswith("alert:打不开") and app_settings.get("recording_enabled") is not True)
+        r = client.post("/settings/recording", data={"on": "1"})
+        out["没有口令不让改"] = r.status_code != 302 and app_settings.get("recording_enabled") is not True
+
+        ffmpeg["path"] = "ffmpeg.exe"
+        box, said = note(client, "/settings/recording", {"on": "1"}, token)
+        check = app_settings.get(panel_recordings.CHECK_KEY) or {}
+        out[f"打开：检测了 H.264、AV1 的编码器、记住了；写着用 NVIDIA 显卡；显示画质、上限、位置（{said}）"] = (
+            app_settings.get("recording_enabled") is True and said.startswith("status:打开了")
+            and check == {"ffmpeg": "ffmpeg.exe", "h264": "h264_nvenc", "av1": None}
+            and "NVIDIA 显卡" in box and 'aria-checked="true"' in box and 'id="rec-size"' in box
+            and "硬盘上限" in box and "保存位置" in box)
+        tried.clear()
+        client.get("/settings")
+        out["记住了就不再检测（打开设置页不跑 ffmpeg）"] = tried == []
+        codec = re.findall(r'<option value="av1"[^>]*>[^<]*</option>', box)
+        out[f"编不了 AV1：那一项不能选、写着原因（{codec}）"] = (
+            len(codec) == 1 and "disabled" in codec[0] and "编不了" in codec[0])
+        out["默认：原画面、60 帧、高、H.264"] = all(re.search(p, box) for p in (
+            r'<option value="native" selected>', r'<option value="60" selected>', r'<option value="high" selected>',
+            r'<option value="h264" selected>'))
+
+        rules = recorder.load_rules()
+        line = panel_recordings.estimate(rules, (2560, 1440), "1080p", 60, "high", "h264", 30)
+        out[f"估一局多大：1080p 60 帧高画质约 12 Mbps、一局 1.7 GB、30 GB 存 17 局（{line}）"] = (
+            "1920 × 1080" in line and "约 12 Mbps" in line and "约 1.7 GB" in line and "约 17 局" in line)
+        table = json.loads(re.findall(r"data-estimates='([^']*)'", box)[0].replace("&#34;", '"')) if "data-estimates" in box else {}
+        out[f"每种组合都先算好了（{len(table)} 种），页面上改选项时换那一行"] = (
+            len(table) == len(rules["sizes"]) * len(rules["fps"]) * len(rules["bits_per_pixel"]) * len(rules["encoders"])
+            and 'id="rec-estimate"' in box)
+
+        good = {"size": "720p", "fps": "30", "quality": "low", "codec": "h264"}
+        box, said = note(client, "/settings/recording/quality", good, token)
+        out[f"画质四项一起保存（{said}），页面上选着刚保存的"] = (
+            said.startswith("status:保存了") and app_settings.get("recording_size") == "720p"
+            and app_settings.get("recording_fps") == 30 and app_settings.get("recording_quality") == "low"
+            and '<option value="720p" selected>' in box and '<option value="30" selected>' in box)
+        _, said = note(client, "/settings/recording/quality", {**good, "size": "720p", "codec": "av1"}, token)
+        out[f"选了编不了的 AV1：不保存（{said}）"] = (
+            said.startswith("alert:没保存") and app_settings.get("recording_codec") == "h264")
+        bad = [{**good, "size": "4k"}, {**good, "fps": "144"}, {**good, "quality": "ultra"}, {**good, "fps": "abc"}]
+        results = [note(client, "/settings/recording/quality", b, token)[1] for b in bad]
+        out["乱填的（4k、144 帧、ultra、abc）都不保存"] = (
+            all(r.startswith("alert:没保存") for r in results) and app_settings.get("recording_size") == "720p")
+
+        results = {gb: note(client, "/settings/recording/limit", {"gb": gb}, token)[1] for gb in ("0.5", "abc", "20000")}
+        out[f"硬盘上限：不到 1、不是数、太大都不保存（{results['0.5']}）"] = (
+            all(r.startswith("alert:没保存") for r in results.values()) and app_settings.get("recording_limit_gb") is None)
+        box, said = note(client, "/settings/recording/limit", {"gb": "50"}, token)
+        out[f"硬盘上限填 50：存成 50（{said}），框里是 50，写着现在几个录像、多大"] = (
+            app_settings.get("recording_limit_gb") == 50 and said == "status:保存了" and 'value="50"' in box
+            and "2</span> 个录像" in box)
+
+        box, said = note(client, "/settings/recording/folder", {"folder": "录像"}, token)
+        out[f"保存位置不是完整路径：不保存，\"更改保存位置\"展开着，填的留在框里，原因写在框下面（{said}）"] = (
+            said.startswith("alert:请写完整的路径") and app_settings.get("recording_dir") is None
+            and re.search(r'<details class="move-data" id="rec-folder"\s+open>', box) is not None
+            and 'name="folder" value="录像"' in box and 'aria-describedby="rec-note-folder"' in box)
+        _, said = note(client, "/settings/recording/folder", {"folder": str(panel_recordings.EXE_DIR / "录像")}, token)
+        out[f"保存位置在程序文件夹里：不保存（{said}）"] = (
+            "程序文件夹" in said and app_settings.get("recording_dir") is None)
+        elsewhere = Path(tempfile.mkdtemp(prefix="evo-rec-elsewhere-"))
+        box, said = note(client, "/settings/recording/folder", {"folder": f'"{elsewhere}"'}, token)
+        out[f"换到别的文件夹：存下（带引号也行），说原来的 2 个录像没搬、还在哪（{said[:60]}…）"] = (
+            app_settings.get("recording_dir") == str(elsewhere) and said.startswith("status:保存了")
+            and "原来的 2 个录像没有搬" in said and str(base) in said and str(elsewhere) in box
+            and "改回默认位置" in box)
+        box, said = note(client, "/settings/recording/folder", {"reset": "1"}, token)
+        out[f"改回默认位置（{said}）"] = (
+            app_settings.get("recording_dir") is None and said.startswith("status:改回默认位置了")
+            and "改回默认位置（" not in box)
+        shutil.rmtree(elsewhere, ignore_errors=True)
+
+        box, said = note(client, "/settings/recording", {"on": "0"}, token)
+        out[f"关掉：只剩开关，说录好的还在（{said}）"] = (
+            app_settings.get("recording_enabled") is False and "录好的还在" in said and "rec-size" not in box)
+    finally:
+        recorder.find_ffmpeg, recorder.pick_encoder = real_find, real_pick
+    return out
 
 
 def checks():
@@ -148,6 +273,8 @@ def checks():
     out["战绩页：有录像的局多一个\"看录像\"按钮，指到那个录像；没录像的局没有"] = (
         len(link) == 1 and link[0].startswith("/recordings/watch?v=") and "rec-link" not in rows.get(other, "-")
         and "看第" in rows.get(linked, ""))
+
+    out.update(settings_checks(client, token, base))
 
     r = client.post("/recordings/delete", data={"v": rid})
     still = new.exists()

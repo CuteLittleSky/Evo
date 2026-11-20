@@ -122,13 +122,15 @@ def pure_checks(tmp):
         video = month / f"v{i}.mp4"
         video.write_bytes(b"\0" * size)
         video.with_suffix(".json").write_text("{}", encoding="utf-8")
+        video.with_suffix(".jpg").write_bytes(b"jpg")  # 缩略图
         t = time.time() - 1000 + i * 10
         import os
         os.utime(video, (t, t))
     removed = recorder.enforce_limit(lib, 350, log=lambda *_: None)
-    out["超过上限：从最旧的删起，MP4 和 .json 一起删，删到不超过就停"] = (
+    out["超过上限：从最旧的删起，MP4 和 .json、.jpg 一起删，删到不超过就停"] = (
         [p.name for p in removed] == ["v0.mp4"] and not (lib / "2026-11" / "v0.json").exists()
-        and (lib / "2026-11" / "v1.mp4").exists())
+        and not (lib / "2026-11" / "v0.jpg").exists() and (lib / "2026-11" / "v1.mp4").exists()
+        and (lib / "2026-11" / "v1.jpg").exists())
     return out
 
 
@@ -232,6 +234,18 @@ def record_checks(ffmpeg, tmp):
     out["上次崩了没拼的分段文件：拼成名字带'_未完成'的 MP4，分段文件删掉"] = (
         len(done) == 1 and done[0].name.endswith("_未完成.mp4") and done[0].stat().st_size > 0
         and not any((tmp / "lib4" / recorder.WORK_DIR_NAME).iterdir()))
+
+    # 5. 设置里选了 AV1、这块显卡编不了（这里用一个不存在的编码器假装）：改用 H.264 照样录，不是整局不录
+    no_av1 = {**rules, "encoders": {**rules["encoders"], "av1": ["av1_evo_test_missing"]}}
+    said = []
+    rec = recorder.Recording(ffmpeg, recorder.Options(source=TEST_SOURCE, codec="av1", audio=False), tmp / "lib5",
+                             log=said.append, rules=no_av1)
+    rec.start()
+    time.sleep(1.0)
+    video5 = rec.finish()
+    out[f"选了 AV1 但编不了：改用 H.264 录（{rec.encoder}），日志里写着"] = (
+        video5 is not None and rec.encoder in rules["encoders"]["h264"] and rec.options.codec == "h264"
+        and any("改用 h264" in line for line in said))
     return out
 
 

@@ -1,0 +1,144 @@
+{# 设置页的"录像"一栏（2026-11-20；panel_recordings.py 的 settings_view 和 /settings/recording…，规则见 docs/面板.md"设置页：录像"）。
+   开关默认关（原则 2）；打开以后才显示画质、硬盘上限、保存位置。改了从下一局开始生效。
+   保存的结果写在那一项下面（rec.note，只显示一次），保存完跳回这一栏（#h-video），页面最上面的提示看不到 #}
+{% set rec = recording_settings() %}
+{% macro note(rec, where) -%}
+{% if rec.note and rec.note.where == where %}<div class="setting-desc rec-note-line {{ 'update-error' if rec.note.error else 'rec-saved' }}"
+  role="{{ 'alert' if rec.note.error else 'status' }}" id="rec-note-{{ where }}">{{ rec.note.text }}</div>{% endif %}
+{%- endmacro %}
+<section class="card settings-card" aria-labelledby="h-video">
+  <h2 id="h-video" class="rec-settings-title">录像 <span class="tag-beta">内测</span></h2>
+  <div class="setting">
+    <div class="setting-text">
+      <div class="setting-name" id="rec-name">录下每一局</div>
+      <div class="setting-desc">从开局录到结算，在“录像”页看，进度条上标着击倒、击杀、倒地这些时刻。只录 Apex 的窗口和它的声音，用显卡编码。</div>
+      {% if rec.encoder and rec.enabled %}<div class="setting-desc">这台电脑用 {{ rec.encoder }}编码</div>{% endif %}
+      {% if rec.blocked %}<div class="setting-desc update-hint" id="rec-blocked">{{ rec.blocked }}</div>{% endif %}
+      {{ note(rec, "toggle") }}
+    </div>
+    <form method="post" action="{{ url_for('recordings.toggle') }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="on" value="{{ '0' if rec.enabled else '1' }}">
+      <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if rec.enabled else 'false' }}"
+              aria-labelledby="rec-name" {% if rec.blocked %}aria-describedby="rec-blocked"{% endif %}
+              {{ 'disabled' if rec.blocked and not rec.enabled }}>
+        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+        <span class="switch-state" aria-hidden="true">{{ '已开启' if rec.enabled else '已关闭' }}</span>
+      </button>
+    </form>
+  </div>
+
+  {% if rec.enabled %}
+  {# 画质：四项一起保存；下面那一行随选的变（estimates 里先算好了每种组合，脚本只是查表） #}
+  <form method="post" action="{{ url_for('recordings.save_quality') }}" class="rec-group" id="rec-quality"
+        data-estimates='{{ rec.estimates | tojson }}'>
+    <input type="hidden" name="token" value="{{ token }}">
+    <div class="setting">
+      <div class="setting-text">
+        <label class="setting-name" for="rec-size">分辨率</label>
+        <div class="setting-desc">原画面和游戏窗口一样大；选小的，抓的时候就缩小，文件也小</div>
+      </div>
+      <select id="rec-size" name="size">
+        {% for one in rec.sizes %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.size }}>{{ one.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="setting">
+      <div class="setting-text"><label class="setting-name" for="rec-fps">帧数</label></div>
+      <select id="rec-fps" name="fps">
+        {% for one in rec.fps %}<option value="{{ one }}" {{ 'selected' if one == rec.current.fps }}>{{ one }} 帧</option>{% endfor %}
+      </select>
+    </div>
+    <div class="setting">
+      <div class="setting-text"><label class="setting-name" for="rec-quality-select">画质</label></div>
+      <select id="rec-quality-select" name="quality">
+        {% for one in rec.qualities %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.quality }}>{{ one.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="setting">
+      <div class="setting-text">
+        <label class="setting-name" for="rec-codec">编码格式</label>
+        <div class="setting-desc">H.264 哪里都能放；AV1 同样画质文件小约四成，Evo 里能放，有的播放器要另装插件</div>
+      </div>
+      <select id="rec-codec" name="codec">
+        {% for one in rec.codecs %}
+        <option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.codec }}{{ ' disabled' if not one.ready }}>{{ one.name }}{{ '（这台电脑的显卡编不了）' if not one.ready }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="setting">
+      <div class="setting-text">
+        <div class="setting-desc" id="rec-estimate" aria-live="polite">{{ rec.estimate or '' }}</div>
+        {{ note(rec, "quality") }}
+      </div>
+      <button type="submit" class="btn" aria-describedby="rec-estimate">保存</button>
+    </div>
+  </form>
+
+  <form method="post" action="{{ url_for('recordings.save_limit') }}" class="setting rec-group">
+    <input type="hidden" name="token" value="{{ token }}">
+    <div class="setting-text">
+      <label class="setting-name" for="rec-limit">硬盘上限</label>
+      <div class="setting-desc">现在 <span class="num">{{ rec.count }}</span> 个录像，共 <span class="num">{{ rec.used }}</span>{% if rec.free %}，{{ rec.free }}{% endif %}。超过上限时，录完一局从最旧的删起</div>
+      {{ note(rec, "limit") }}
+    </div>
+    <div class="setting-actions inline rec-limit">
+      <input type="number" id="rec-limit" name="gb" value="{{ rec.limit }}" min="{{ rec.limit_range[0] }}" max="{{ rec.limit_range[1] }}"
+             step="any" inputmode="decimal" required>
+      <span class="rec-unit" aria-hidden="true">GB</span>
+      <button type="submit" class="btn">保存</button>
+    </div>
+  </form>
+
+  {# 选的位置不能用时：下面"更改保存位置…"展开着，原因写在输入框下面（不写在这一行） #}
+  {% set folder_failed = rec.note and rec.note.where == 'folder' and rec.note.error %}
+  <div class="setting">
+    <div class="setting-text">
+      <div class="setting-name">保存位置</div>
+      <div class="setting-path">{{ rec.folder }}</div>
+      {% if not folder_failed %}{{ note(rec, "folder") }}{% endif %}
+    </div>
+    <div class="setting-actions">
+      <form method="post" action="{{ url_for('recordings.show') }}">
+        <input type="hidden" name="token" value="{{ token }}">
+        <input type="hidden" name="next" value="{{ url_for('settings') }}#h-video">
+        <button type="submit" class="btn">打开文件夹</button>
+      </form>
+    </div>
+  </div>
+  <details class="move-data" id="rec-folder" {{ 'open' if folder_failed }}>
+    <summary>更改保存位置…</summary>
+    <p class="setting-desc">已经录好的不会搬过去，还留在原来的地方。</p>
+    <form method="post" action="{{ url_for('recordings.save_folder') }}" class="move-form">
+      <input type="hidden" name="token" value="{{ token }}">
+      <label class="label" for="rec-folder-input">存到哪个文件夹</label>
+      <div class="move-input">
+        <input type="text" id="rec-folder-input" name="folder" value="{{ rec.note.chosen if folder_failed and rec.note.chosen else '' }}"
+               placeholder="比如 D:\Evo 录像" autocomplete="off" spellcheck="false" {% if folder_failed %}aria-describedby="rec-note-folder"{% endif %}>
+        {% if in_app %}<button type="button" class="btn" data-pick-folder>浏览…</button>{% endif %}
+        <button type="submit" class="btn">保存</button>
+      </div>
+      {% if folder_failed %}{{ note(rec, "folder") }}{% endif %}
+    </form>
+    {% if rec.custom_folder %}
+    <form method="post" action="{{ url_for('recordings.save_folder') }}" class="rec-reset">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="reset" value="1">
+      <button type="submit" class="btn-text">改回默认位置（数据文件夹里的 recordings）</button>
+    </form>
+    {% endif %}
+  </details>
+  <script>
+    // 画质那几项一改，下面那一行跟着换（每种组合的估算在 data-estimates 里，panel_recordings.estimate）
+    (function () {
+      var form = document.getElementById("rec-quality");
+      if (!form) return;
+      var table = JSON.parse(form.dataset.estimates || "{}"), out = document.getElementById("rec-estimate");
+      form.addEventListener("change", function () {
+        var f = form.elements;
+        var text = table[[f.size.value, f.fps.value, f.quality.value, f.codec.value].join("|")];
+        if (text) out.textContent = text;
+      });
+    })();
+  </script>
+  {% endif %}
+</section>
