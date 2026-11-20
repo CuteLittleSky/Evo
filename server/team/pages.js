@@ -263,6 +263,7 @@ table.nums { border-collapse: collapse; width: 100%; font-size: 14px; font-varia
 table.nums th, table.nums td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--row-border); white-space: nowrap; }
 table.nums th:first-child, table.nums td:first-child { text-align: left; }
 table.nums th { color: var(--muted); font-weight: 600; }
+table.nums tr.sum td { font-weight: 600; border-bottom: 0; }
 #viz-tip { position: fixed; z-index: 50; pointer-events: none; max-width: 260px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--card); color: var(--text); font-size: 13px; line-height: 1.5; white-space: pre-line; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
 .banner-text { flex: 1 1 240px; min-width: 0; }

@@ -3,6 +3,7 @@
 // 图在服务器上画成 SVG（网页只许运行本站的脚本，不引外面的图表库）；电脑、手机各画一张（字不会被缩得太小），CSS 按屏幕宽度挑一张。
 // 悬停看每一天的数（/app.js 的 data-tip）；每张图下面有"看数字"的表。颜色是 dataviz 的参考色板（深浅色各一套，验过色盲区分度）。
 // 口径：只算开了匿名统计的玩家（默认不开）；日期是玩家电脑上的日期；对局结束 1 小时以后才传上来，今天的数不全。
+// 11-20 加了段位识别（排位局里读到段位的比例，按天、按版本）和段位分布（照抄统计服务器汇总里的那份，不跟着范围变）。
 
 import { ago, escape, layout } from "./pages.js";
 import { isoDay, series, usageByVersion } from "./statsroll.js";
@@ -81,7 +82,7 @@ function chartSvg({ kind, items, days, today, unit = "", w, h, labels }) {
   return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="${escape(items.map((it) => it.name).join("、"))}的走势">${grid}${marks}${xLabels}${hit}</svg>`;
 }
 
-function chartCard({ title, note = "", kind, items, days, today, unit = "" }) {
+function chartCard({ title, note = "", kind, items, days, today, unit = "", extra = "" }) {
   const legend = items.length > 1 ? `<ul class="legend">${items.map((it) => `<li><span class="swatch ${it.cls}"></span>${escape(it.name)}</li>`).join("")}</ul>` : "";
   const rows = days.map((d, i) => `<tr><td>${d}${d === today ? "（今天）" : ""}</td>${items.map((it) => `<td>${it.values[i] === null ? "—" : `${fmt(it.values[i])}${unit}`}</td>`).join("")}</tr>`).reverse().join("");
   return `<section class="card stack viz">
@@ -89,6 +90,7 @@ function chartCard({ title, note = "", kind, items, days, today, unit = "" }) {
     ${note ? `<p class="small muted">${note}</p>` : ""}
     <div class="chart-wide">${chartSvg({ kind, items, days, today, unit, w: 720, h: 240, labels: 7 })}</div>
     <div class="chart-narrow">${chartSvg({ kind, items, days, today, unit, w: 360, h: 220, labels: 3 })}</div>
+    ${extra}
     <details class="rest"><summary>看数字</summary><div class="table-wrap"><table class="nums"><thead><tr><th>日期</th>${items.map((it) => `<th>${escape(it.name)}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table></div></details>
   </section>`;
@@ -109,13 +111,68 @@ function byVersionDesc(a, b) {
   return 0;
 }
 
+// ---------- 段位（2026-11-20 用户要的：段位分布、段位识别成功率）----------
+// 从高到低（同 server/stats/worker.js 的 TIER_ORDER 倒过来）；页面上猎杀者写短一点
+const TIERS = ["Apex 猎杀者", "大师", "钻石", "白金", "黄金", "白银", "青铜", "菜鸟"];
+const TIER_RANGES = [["season", "本赛季"], ["7d", "近 7 天"], ["all", "全部"]];
+export const MIN_VERSION_GAMES = 10;  // 段位识别按版本的表：排位局少于这么多的版本并成一行
+
+// 段位分布：统计服务器每天算一次的那份（statsroll.js 抄过来的），不跟着上面的范围变
+function tierCard(tiers) {
+  if (!tiers?.ranges?.season) return "";
+  const { ranges } = tiers;
+  const names = [...TIERS, ...new Set(Object.values(ranges).flatMap((r) => Object.keys(r.counts ?? {})).filter((t) => !TIERS.includes(t)))];
+  const season = ranges.season;
+  const max = Math.max(1, ...names.map((t) => season.counts[t] ?? 0));
+  // 比例：不到 1% 的写一位小数（1 个人不写成 0%）
+  const share = (r, t) => {
+    if (!r?.players) return "—";
+    const p = ((r.counts[t] ?? 0) / r.players) * 100;
+    return `${p > 0 && p < 1 ? p.toFixed(1) : p.toFixed(0)}%`;
+  };
+  const since = tiers.seasonFrom ? `（${escape(tiers.seasonFrom.slice(5))} 起）` : "";
+  return `<section class="card stack"><h2>段位分布</h2>
+    <p class="small muted">${tiers.season ? `第 ${escape(tiers.season)} 赛季` : "本赛季"}${since}打过排位的 ${fmt(season.players)} 人，每人算最近一局排位的段位，和 Evo 数据页"全体玩家"里的一样。
+      统计服务器每天算一次（这一份是 ${escape(tiers.madeAt ? tiers.madeAt.slice(0, 10) : "?")} 算的），不跟着上面选的范围变。</p>
+    <ul class="hbars">${names.map((t) => `<li><span class="hb-name">${escape(t.replace("Apex ", ""))}</span>
+      <span class="hb-track">${season.counts[t] ? `<span class="hb-bar s1" style="width:${((season.counts[t] / max) * 100).toFixed(1)}%"></span>` : ""}</span>
+      <span class="hb-val">${fmt(season.counts[t] ?? 0)} 人 · ${share(season, t)}</span></li>`).join("")}</ul>
+    <details class="rest"><summary>看数字（本赛季、近 7 天、全部）</summary><div class="table-wrap"><table class="nums">
+      <thead><tr><th>段位</th>${TIER_RANGES.map(([, name]) => `<th>${name}</th>`).join("")}</tr></thead>
+      <tbody>${names.map((t) => `<tr><td>${escape(t)}</td>${TIER_RANGES.map(([key]) => `<td>${ranges[key] ? `${fmt(ranges[key].counts[t] ?? 0)}（${share(ranges[key], t)}）` : "—"}</td>`).join("")}</tr>`).join("")}
+        <tr class="sum"><td>合计</td>${TIER_RANGES.map(([key]) => `<td>${ranges[key] ? `${fmt(ranges[key].players)} 人` : "—"}</td>`).join("")}</tr></tbody></table></div></details>
+  </section>`;
+}
+
+// 段位识别按版本：所选范围里每个版本的排位局、读到段位的局。局数少的版本并成"其他"
+function tierReadTable(rows) {
+  const by = {};
+  for (const r of rows) {
+    for (const [v, [n, ok]] of Object.entries(r.tierRead ?? {})) {
+      const o = (by[v] ??= [0, 0]);
+      o[0] += n;
+      o[1] += ok;
+    }
+  }
+  const list = Object.entries(by).sort((a, b) => byVersionDesc(a[0], b[0]));
+  if (!list.length) return "";
+  const shown = list.filter(([, [n]]) => n >= MIN_VERSION_GAMES);
+  const small = list.filter(([, [n]]) => n < MIN_VERSION_GAMES);
+  const sum = (items) => items.reduce((s, [, [n, ok]]) => [s[0] + n, s[1] + ok], [0, 0]);
+  const line = (name, [n, ok], cls = "") => `<tr${cls}><td>${name}</td><td>${fmt(n)}</td><td>${fmt(ok)}</td><td>${pctText((ok / n) * 100)}</td></tr>`;
+  return `<div class="table-wrap"><table class="nums"><thead><tr><th>版本</th><th>排位局</th><th>读到段位</th><th>比例</th></tr></thead>
+    <tbody>${shown.map(([v, x]) => line(escape(v), x)).join("")}
+      ${small.length ? line(`其他 ${small.length} 个`, sum(small)) : ""}
+      ${line("合计", sum(list), ' class="sum"')}</tbody></table></div>`;
+}
+
 export function statsPage(me, { doc, range, now, banner = "" }) {
   const today = isoDay(now + 8 * HOUR);  // 北京时间的今天（玩家大多在国内）
   const yesterday = isoDay(now + 8 * HOUR - DAY);
   const first = doc.first;
   if (!first || !Object.keys(doc.days).length) {
     return layout({ title: "数据", me, current: "stats", banner, body: `
-<div class="stack"><h1>数据</h1><p class="muted">Evo 的使用数据：日活、对局、版本、识别情况、Evo 的占用。</p></div>
+<div class="stack"><h1>数据</h1><p class="muted">Evo 的使用数据：日活、对局、版本、识别情况、段位、Evo 的占用。</p></div>
 <p class="note note-info">还没算过：定时任务每 3 分钟看一次，第一次要从最早的一天补算，过十几分钟再来看。</p>` });
   }
   const span = range === "all" ? null : Number(range);
@@ -168,6 +225,14 @@ ${chartCard({ title: "每天的对局", note: "排位、匹配叠起来；认不
           { name: "其他", cls: "s3", values: rows.map((r) => (r.missing ? null : Math.max(0, (r.games ?? 0) - (r.ranked ?? 0) - (r.pubs ?? 0)))) }] })}
 ${chartCard({ title: "识别情况", note: "每天的对局里标了待确认的、玩家在战绩页改过的占多少（越低说明 Evo 读得越准）", kind: "line", days, today, unit: "%",
   items: [{ name: "待确认", cls: "s1", values: ratio("review") }, { name: "玩家改过", cls: "s2", values: ratio("edited") }] })}
+${chartCard({ title: "段位识别", note: `每天的排位局里读到了段位（大段）的占多少。下面的表按记这一局的 Evo 版本分开，是所选范围里的合计（不到 ${MIN_VERSION_GAMES} 局的版本并成"其他"）`, kind: "line", days, today, unit: "%",
+  items: [{ name: "读到段位", cls: "s1", values: rows.map((r) => {
+    if (r.missing || !r.tierRead) return null;
+    const [n, ok] = Object.values(r.tierRead).reduce((s, [a, b]) => [s[0] + a, s[1] + b], [0, 0]);
+    return n ? (ok / n) * 100 : null;
+  }) }],
+  extra: tierReadTable(rows.filter((r) => !r.missing)) })}
+${tierCard(doc.tiers)}
 ${versionCard}
 ${usageCard}` });
 }
