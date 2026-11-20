@@ -169,6 +169,35 @@ class Hud:
         top = self.cfg["top_right"]
         return Snip(frame, top["box"], self.base, top.get("anchor"))
 
+    def kp_snip(self, frame):
+        """右上角击杀 / 助攻 / 老板分那一行（kp_row 的 area）：录像找击杀用，这一行变了才存（比整块右上角小得多），
+        一局结束后用 read_kills 读。"""
+        top = self.cfg["top_right"]
+        return Snip(frame, top["kp_row"]["area"], self.base, top.get("anchor"))
+
+    def kill_cell(self, snip):
+        """击杀数那一格：骷髅图标右边的数字（基准大小的灰度图），骷髅图标不在（这一行没显示）返回 None。只比外观。
+        这一行靠右排、跟着后面几项的宽度左右挪（2026-11-20 那局录像：骷髅图标在基准 x 1575 左右），所以先找图标。
+        录像找击杀用：这一格变了才存（match_recording._watch_kp）。"""
+        top = self.cfg["top_right"]
+        row = top["kp_row"]
+        icons = self._kp_icons(snip, row)
+        if "kills" not in icons:
+            return None
+        y, h = row["digits"]
+        return snip.gray([icons["kills"][1] + 1, y, row["digit_width"], h])
+
+    def read_kills(self, snip):
+        """读一块（kp_snip 或 top_snip）里的击杀数：这一行没显示（击杀、助攻都是 0）返回 0，显示着但读不出返回 None。
+        规则和 read_top 一样（先找每一项前面的图标），只读击杀这一个数。要用识别引擎：一局结束后才调用。"""
+        top = self.cfg["top_right"]
+        icons = self._kp_icons(snip, top["kp_row"])
+        if "kills" not in icons and "assists" not in icons:
+            return 0
+        if "kills" not in icons:
+            return None
+        return self._kp_number(snip, top, icons, "kills")[0]
+
     def mate_name_snip(self, frame, slot):
         mates = self.cfg["teammates"]
         return Snip(frame, mates["slots"][slot]["name"], self.base, mates.get("anchor"))

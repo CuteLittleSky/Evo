@@ -104,9 +104,11 @@ def load(video):
     started = _started(video, meta)
     duration = meta.get("duration") or recorder.mp4_duration(video) or 0
     events = []
-    for e in meta.get("events", []):
+    for e in sorted(meta.get("events", []), key=lambda e: e.get("t") or 0):  # 击杀是赛后才补进去的，按时间排
         if e.get("kind") in EVENTS and isinstance(e.get("t"), (int, float)):
             label, css = EVENTS[e["kind"]]
+            if e["kind"] == "kill" and (e.get("count") or 1) > 1:  # 一下子多了几个击杀（两次截图之间连着补掉两个）
+                label = f"{label} ×{e['count']}"
             events.append({"t": e["t"], "clock": clock(e["t"]), "label": label, "css": css,
                            "left": min(100.0, max(0.0, e["t"] / duration * 100)) if duration else 0})
     outages = [{"left": a / duration * 100, "width": max(0.4, (b - a) / duration * 100), "seconds": b - a}

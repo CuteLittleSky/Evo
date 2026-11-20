@@ -89,7 +89,8 @@ def checks():
     second = NOW - timedelta(minutes=30)
     old = make_recording(base, first, "未完成", 0, sidecar=False)
     new = make_recording(base, second, "班加罗尔", 120,
-                         events=[{"t": 60, "kind": "knocked"}, {"t": 90, "kind": "dead"}, {"t": 100, "kind": "unknown"}],
+                         events=[{"t": 60, "kind": "knocked"}, {"t": 90, "kind": "dead"}, {"t": 100, "kind": "unknown"},
+                                 {"t": 30, "kind": "kill", "kills": 2, "count": 2}],
                          outages=[[30, 36]])
     linked = storage.insert_match(conn, {"player_name": "Me", "ended_at": f"{second + timedelta(seconds=118):%Y-%m-%d %H:%M:%S}",
                                          "placement": 3, "kills": 4, "damage": 1234, "mode": "pubs", "map": "残月",
@@ -101,9 +102,9 @@ def checks():
     cards = re.findall(r'<article class="rec-card".*?</article>', raw, re.S)
     out["没打开录像但已经有录像：导航里照样有\"录像\""] = "录像" in nav_labels(raw)
     newest = text(cards[0]) if cards else ""
-    out[f"列表：从新到旧两张卡片；新的这张有时长 2:00、传奇、对上的战绩（匹配 · 残月、#3、击杀 4、伤害 1,234）、2 个事件（{newest}）"] = (
+    out[f"列表：从新到旧两张卡片；新的这张有时长 2:00、传奇、对上的战绩（匹配 · 残月、#3、击杀 4、伤害 1,234）、3 个事件（{newest}）"] = (
         len(cards) == 2 and "2:00" in newest and "班加罗尔" in newest and "匹配 · 残月" in newest and "#3" in newest
-        and "击杀 4" in newest and "伤害 1,234" in newest and "2 个事件" in newest)
+        and "击杀 4" in newest and "伤害 1,234" in newest and "3 个事件" in newest)
     oldest = text(cards[1]) if len(cards) > 1 else ""
     out["列表：没有 .json 的（上次崩了拼回来的）标\"未完成\"、写\"没对上战绩\""] = "未完成" in oldest and "没对上战绩" in oldest
     out["列表：缩略图按需加载、先占好位置；上面写共多大、上限 30 GB"] = (
@@ -114,12 +115,13 @@ def checks():
     marks = re.findall(r'<button type="button" class="rec-mark [^"]*"[^>]*>', raw)
     out["播放页：播放器不自动播放、先只读时长；网址带 t= 时从那一刻开始"] = (
         "<video" in raw and "autoplay" not in raw and 'preload="metadata"' in raw and 'data-start="61.5"' in raw)
-    out[f"时间轴：认得的事件才标（2 个），位置按时长算（60 秒在 50%），按钮念得出名字和时刻（{marks[:1]}）"] = (
-        len(marks) == 2 and "left: 50.000%" in marks[0] and "倒地，1:00" in marks[0] and "ev-knocked" in marks[0]
-        and "left: 75.000%" in marks[1] and "成盒，1:30" in marks[1])
+    out[f"时间轴：认得的事件才标（3 个，按时间），位置按时长算（60 秒在 50%），按钮念得出名字和时刻；一下子两个击杀写'×2'（{marks[:2]}）"] = (
+        len(marks) == 3 and "left: 25.000%" in marks[0] and "击杀 ×2，0:30" in marks[0] and "ev-kill" in marks[0]
+        and "left: 50.000%" in marks[1] and "倒地，1:00" in marks[1] and "ev-knocked" in marks[1]
+        and "left: 75.000%" in marks[2] and "成盒，1:30" in marks[2])
     out["时间轴：断掉的那段（30–36 秒）画出来"] = 'class="rec-gap" style="left: 25.000%; width: 5.000%"' in raw
     events = text("".join(re.findall(r'<ol class="rec-events".*?</ol>', raw, re.S)))
-    out[f"事件列表：按时间（{events}）"] = events == "1:00 倒地 1:30 成盒"
+    out[f"事件列表：按时间（{events}）"] = events == "0:30 击杀 ×2 1:00 倒地 1:30 成盒"
     out["对上的战绩：名次、击杀、伤害，点了去战绩页展开那一局"] = (
         f'href="/matches?open={linked}"' in raw and "在战绩里看" in raw)
     out["删除要先确认（写着文件名、多大、不能恢复）"] = "data-confirm" in raw and new.name in raw and "不能恢复" in raw

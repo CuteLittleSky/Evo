@@ -8,7 +8,7 @@
 - 上次崩了没拼的分段文件：拼成"_未完成"的 MP4
 - 作业对象：开 ffmpeg 的程序被强行结束，ffmpeg 也跟着退
 - 找窗口：按进程号找到一个测试窗口（不打开那个进程），只抓这个窗口抓得到
-- 接进记录程序（match_recording.py）：开关默认关；一局开始开录、事件（倒地、被扶起、成盒、被复活、冠军）、右上角变了的时刻、
+- 接进记录程序（match_recording.py）：开关默认关；一局开始开录、事件（倒地、被扶起、成盒、被复活、冠军、击倒对手、击杀）、右上角变了的时刻、
   结束再录 3 秒、同一局不重开、靶场也录、录不了只说一次
 要 ffmpeg（找法见 recorder.find_ffmpeg）和显卡硬件编码器；没有就只跑不用 ffmpeg 的那些。
 
@@ -26,6 +26,8 @@ import threading
 import time
 import wave
 from pathlib import Path
+
+import numpy as np
 
 from fake_game import report  # 要在项目代码之前导入（设置临时数据文件夹）
 
@@ -268,6 +270,9 @@ class FakeRecording:
     def poll(self):
         self.polls += 1
 
+    def since_t0(self):
+        return time.monotonic()
+
     def finish(self, info):
         self.finished = info
         return None
@@ -338,6 +343,56 @@ def match_checks(tmp):
     im.started, im.active, im.state = 5, True, "存活"
     step(m, None, im)
     out["没有开局画面（靶场）：看到自己的界面就开录"] = len(FakeRecording.made) == 1
+    m.close()
+
+    # 击杀：kill_events（击杀数只会变多，读错的不标）、add_events（写进 .json，换成 MP4 里的位置）
+    ke = match_recording.kill_events
+    out["找击杀：击杀数变大才算，读不出的跳过，一下子多两个记两个"] = ke(
+        [(1, 0), (2, None), (3, 1), (4, 1), (5, 3), (6, 3)]) == [(3, 1, 1), (5, 3, 2)]
+    out["找击杀：读错的不标（紧接着下一块比它小、一下子多出太多）"] = ke(
+        [(1, 0), (2, 7), (3, 1), (4, 1), (5, 40), (6, 2)], max_jump=5) == [(3, 1, 1), (6, 2, 1)]
+    sidecar = tmp / "kills.json"
+    sidecar.write_text(json.dumps({"first_frame": 0.5, "events": [{"t": 10.0, "kind": "knock"}]}), encoding="utf-8")
+    ok = match_recording.add_events(tmp / "kills.mp4", [{"t": 12.5, "kind": "kill", "kills": 1, "count": 1},
+                                                       {"t": 8.5, "kind": "kill", "kills": 2, "count": 1}])
+    events = json.loads(sidecar.read_text(encoding="utf-8"))["events"]
+    out["找击杀：写进录像旁边的 .json，时刻换成 MP4 里的位置（减掉第一帧），按时间排好"] = ok and [
+        (e["kind"], e["t"]) for e in events] == [("kill", 8.0), ("knock", 10.0), ("kill", 12.0)]
+
+    # 击杀：对局中击杀数那一格变了才存，回到大厅读，读完写进 .json
+    m, im = make(), FakeInMatch()
+    cells = {"a": np.zeros((28, 26), np.uint8), "b": np.full((28, 26), 255, np.uint8)}
+    plan = []  # 每一帧：(击杀那一格, 读出来的击杀数)
+    im.hud.kp_snip = lambda frame: plan[0]
+    im.hud.kill_cell = lambda snip: None if snip[0] is None else cells[snip[0]]
+    im.hud.read_kills = lambda snip: snip[1]
+    im.hud.knock, im.hud.cfg = (lambda frame: None), {}
+    step(m, "match_start", im)
+    im.started, im.active, im.state = 8, True, "存活"
+    rec = FakeRecording.made[-1]
+    for n, (cell, kills) in enumerate([(None, 0), ("a", 0), ("a", 0), ("b", 1), ("b", 1), ("a", 2)]):
+        plan[:] = [(cell, kills)]
+        im.tops = list(im.tops) + [n]  # InMatchWatcher 存了新的一块右上角
+        clock[0] += 0.3
+        m.update(None, im, frame="截图")
+    stored = len(m.kp_snips)
+    video = tmp / "lib-kill" / "match.mp4"
+    video.parent.mkdir(exist_ok=True)
+    video.write_bytes(b"0")
+    video.with_suffix(".json").write_text(json.dumps({"first_frame": 0.0, "events": []}), encoding="utf-8")
+    rec.finish = lambda info: video
+    im.done, im.active = True, False
+    step(m, "summary", im)
+    step(m, "summary", im, seconds=3.5)
+    for w in m.workers:
+        w.join(5)
+    before = json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))["events"]
+    for _ in range(3):
+        step(m, "lobby", im)
+    kills = [e for e in json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))["events"] if e["kind"] == "kill"]
+    out[f"击杀：对局中击杀数那一格变了才存（存了 {stored} 块），结算画面上不读，回到大厅读完写进 .json（{kills}）"] = (
+        stored == 3 and before == [] and [(e["kills"], e["count"]) for e in kills] == [(1, 1), (2, 1)]
+        and not m.pending and any("标上了 2 次击杀" in line for line in logs))
     m.close()
 
     # 击倒对手：中间那一行的"击倒"（hud.knock 给的位置）

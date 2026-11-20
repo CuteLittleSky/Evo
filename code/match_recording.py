@@ -6,14 +6,21 @@
 - 事件（.json 的 events，时刻是 MP4 里的位置）：倒地 knocked、被扶起 revived、成盒 dead、被复活 respawned、冠军 champion
   看的是 InMatchWatcher 记下的状态（in_match.py）；击倒对手 knock 看画面中间那一行的"击倒"（hud.knock，只比外观，
   录像开着时才看）：rearm_seconds 没看到才算下一次，还在显示时左右挪了 moved 以上（换了名字）也算
-- 右上角每变一次记一个时刻（.json 的 hud_changes）：以后从录像里找击杀用（击杀数只会变多，按这些时刻二分查找）
+- 右上角每变一次记一个时刻（.json 的 hud_changes）
+- 击杀 kill（.json 里还带 kills = 这一下之后的击杀数、count = 一下多了几个）：和 Evo 一贯的"对局中只存、赛后才读"一样。
+  对局中右上角击杀那一行里击杀数那一格（hud.kill_cell：先找骷髅图标）变了，存下这一行（hud.kp_snip）和时刻（只比外观）；回到大厅后每截一张
+  读几块（hud.read_kills，用识别引擎），击杀数比前一块大就是一次击杀（kill_events：读错的不标），写进那一局的 .json。
+  停止记录时还没读完的一次读完。不解码录像，时刻精确到截图的间隔（0.3 秒）
 - 停：这一局结束（结算画面、回到大厅、停止记录）以后再录 tail_seconds 秒，拼 MP4 在后台线程里做，不耽误读结算画面
 - 设置里录不了（找不到 ffmpeg、没有硬件编码器、抓不到画面）：日志里说一次，每局开始时再试
 """
 
+import json
 import threading
 import time
 from pathlib import Path
+
+import numpy as np
 
 import app_settings
 import game_detect
@@ -45,6 +52,36 @@ def options_from(settings):
                             audio=bool(settings.get("recording_audio", True)))
 
 
+def kill_events(values, max_jump=5):
+    """[(时刻, 击杀数或 None)]（按时间排好）→ [(时刻, 这一下之后的击杀数, 多了几个)]。击杀数只会变多：
+    读不出的跳过；比前一个大才算一次击杀；一下子多出 max_jump 以上、或者紧接着的下一块读到的比它小，当作这一块读错了，
+    不标（原则 4：宁可少标，不标错）。"""
+    known = [(t, k) for t, k in values if k is not None]
+    out, prev = [], 0
+    for i, (t, k) in enumerate(known):
+        if k <= prev or k - prev > max_jump:
+            continue
+        if i + 1 < len(known) and known[i + 1][1] < k:
+            continue
+        out.append((t, k, k - prev))
+        prev = k
+    return out
+
+
+def add_events(video, events):
+    """往录像旁边的 .json 里加事件（时刻是从开始录算起的秒数，换成 MP4 里的位置），按时间排好。成功返回 True。"""
+    sidecar = Path(video).with_suffix(".json")
+    try:
+        meta = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    first = meta.get("first_frame") or 0
+    meta["events"] = sorted(meta.get("events", []) + [{**e, "t": round(e["t"] - first, 3)} for e in events],
+                            key=lambda e: e["t"])
+    sidecar.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    return True
+
+
 def apex_pid():
     for pid, name in game_detect.processes():
         if name in game_detect.GAME_PROCESSES:
@@ -70,17 +107,23 @@ class MatchRecorder:
         self.workers = []  # 后台拼 MP4 的线程
         self.legend_name = None
         self.recovered = False  # 上次没拼完的已经拼过了（每次记录只做一次）
+        self.kp_snips, self.kp_last = [], None  # 这一局击杀那一行变了的时候存下的 (时刻, 小块)；上一块的灰度图
+        self.pending = []  # 录完了、还没读击杀数的几局（回到大厅后读，见 _read_kills）
+        self.hud = None  # 读击杀数用（InMatchWatcher 的 hud，停止记录时还要用）
 
     # ---------- 记录程序调用的 ----------
 
     def update(self, screen, in_match, frame=None):
         """frame：这一张截图（认"击倒"用；不给就不认）。"""
         tick = self.clock()
+        self.hud = in_match.hud
         if self.rec is None:
+            if self.pending and screen == "lobby":  # 回到大厅：读上一局存下的击杀那一行（每截一张读几块）
+                self._read_kills(self.rules["kills"]["reads_per_frame"])
             if self._new_match(screen, in_match):
                 self._start(in_match)
             return
-        self._follow(screen, in_match)
+        self._follow(screen, in_match, frame)
         if frame is not None and screen is None:
             self._watch_knock(in_match.hud.knock(frame), in_match.hud.cfg.get("knock") or {}, tick)
         if self.stop_at is None and (in_match.done or screen in END_SCREENS or screen == "lobby"):
@@ -98,6 +141,11 @@ class MatchRecorder:
             self._finish()
         for worker in self.workers:
             worker.join(wait)
+        while self.pending and self.hud is not None:  # 还没读的击杀那一行：现在读完（之后就没有截图了）
+            before = len(self.pending)
+            self._read_kills(10 ** 6)
+            if len(self.pending) == before:  # 那一局的 MP4 没拼成：不读了
+                self.pending.pop(0)
 
     # ---------- 里面的 ----------
 
@@ -129,6 +177,7 @@ class MatchRecorder:
             return
         self.rec, self.state, self.top, self.stop_at = rec, in_match.state, None, None
         self.knock_seen, self.knock_x = None, None
+        self.kp_snips, self.kp_last = [], None
         self.limit = float(settings.get("recording_limit_gb", DEFAULT_LIMIT_GB)) * 2 ** 30
         self.next_poll = self.clock() + POLL_SECONDS
         if not self.recovered and ffmpeg:  # 上次 Evo 崩了没拼完的：这次第一次开录时在后台拼好
@@ -140,7 +189,7 @@ class MatchRecorder:
         worker.start()
         self.workers = [w for w in self.workers if w.is_alive()] + [worker]
 
-    def _follow(self, screen, in_match):
+    def _follow(self, screen, in_match, frame=None):
         """对局中：从 InMatchWatcher 记下的状态里看出事件。"""
         if self.covered in (None, BANNER) and in_match.started is not None:
             self.covered = in_match.started
@@ -155,6 +204,8 @@ class MatchRecorder:
         if top is not None and top is not self.top:
             self.top = top
             self.rec.hud_change()
+            if frame is not None:  # InMatchWatcher 刚存了一块右上角（自己的界面、右上角变了）：看击杀那一行变没变
+                self._watch_kp(in_match.hud, in_match.hud.kp_snip(frame))
         if in_match.legend is not None:
             self.legend_name = in_match.hud.legends.name(in_match.legend)
 
@@ -168,15 +219,58 @@ class MatchRecorder:
             self.rec.mark("knock")
         self.knock_seen, self.knock_x = tick, x
 
+    def _watch_kp(self, hud, snip):
+        """击杀数那一格（骷髅图标右边的数字）的白字和上一块存下的比，变了 change 以上就存下这一行和时刻，一局结束后读。
+        不看整行：这一行背后是半透明的底，跟着画面一直变（2026-11-20 那局几乎每帧都算变了）。"""
+        cfg = self.rules["kills"]
+        cell = hud.kill_cell(snip)
+        if cell is None:  # 这一行没显示（击杀、助攻都是 0）
+            return
+        mask = cell >= cfg["level"]
+        if self.kp_last is not None and mask.shape == self.kp_last.shape and \
+                float(np.mean(mask != self.kp_last)) < cfg["change"]:
+            return
+        self.kp_last = mask
+        if len(self.kp_snips) < cfg["max_snips"]:
+            self.kp_snips.append((self.rec.since_t0(), snip))
+
+    def _read_kills(self, budget):
+        """读最早那一局存下的击杀那一行，最多读 budget 块；读完了、MP4 也拼好了，算出每次击杀写进 .json。"""
+        job = self.pending[0]
+        while budget > 0 and job["next"] < len(job["snips"]):
+            t, snip = job["snips"][job["next"]]
+            try:
+                value = self.hud.read_kills(snip)
+            except Exception:  # noqa: BLE001 读一块出错不影响别的（也不影响记录）
+                value = None
+            job["values"].append((t, value))
+            job["next"] += 1
+            budget -= 1
+        if job["next"] < len(job["snips"]) or not job["finished"].is_set():
+            return
+        self.pending.pop(0)
+        if job["path"] is None:
+            return
+        found = kill_events(job["values"], self.rules["kills"]["max_jump"])
+        if found and add_events(job["path"], [{"t": t, "kind": "kill", "kills": k, "count": n} for t, k, n in found]):
+            self.log(f"录像：标上了 {len(found)} 次击杀（读了 {len(job['values'])} 块右上角）")
+
     def _finish(self):
         rec, self.rec = self.rec, None
         info = {"legend": self.legend_name} if self.legend_name else {}
         self.legend_name, self.stop_at = None, None
         limit, out_dir = self.limit, rec.out_dir
+        job = {"snips": self.kp_snips, "next": 0, "values": [], "path": None, "finished": threading.Event()}
+        self.kp_snips, self.kp_last = [], None
+        if job["snips"]:
+            self.pending.append(job)
 
         def work():
-            path = rec.finish(info)
-            if path is not None:
-                recorder.enforce_limit(out_dir, limit, log=self.log)
+            try:
+                job["path"] = path = rec.finish(info)
+                if path is not None:
+                    recorder.enforce_limit(out_dir, limit, log=self.log)
+            finally:
+                job["finished"].set()
 
         self._background(work, "录像拼 MP4")
