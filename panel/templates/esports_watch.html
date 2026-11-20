@@ -29,11 +29,11 @@
       <span class="es-tag watch-mark">{{ event.mark }}</span>
       {% endif %}
       {# 多屏同看（2026-11-19 用户要的）：播放器那一块分成 1 / 2 / 4 格，每格一路；选中的那一格有声音，右边点人就放进选中的那一格。
-         1 大 2 小（2026-11-20 用户要的）：3 格，选中的那一格是大的 #}
+         三屏（2026-11-20 用户要的，三屏；按钮上写"三屏"也是用户定的）：3 格，选中的那一格是大的 #}
       <div class="watch-seg watch-layout" role="group" aria-label="同时看几路直播">
         <button type="button" class="on" aria-pressed="true" data-layout="1">单屏</button>
         <button type="button" aria-pressed="false" data-layout="2">双屏</button>
-        <button type="button" aria-pressed="false" data-layout="3">1 大 2 小</button>
+        <button type="button" aria-pressed="false" data-layout="3">三屏</button>
         <button type="button" aria-pressed="false" data-layout="4">四屏</button>
       </div>
     </div>
@@ -288,7 +288,7 @@
     }
 
     // ---------- 播放器那一块：1 / 2 / 3 / 4 格（多屏同看，2026-11-19 用户要的），每格一路 ----------
-    // 3 格是"1 大 2 小"（2026-11-20）：选中的那一格是大的（只换样式，不动格子本身，画面不会重新加载）
+    // 3 格是三屏（一大两小，2026-11-20）：选中的那一格是大的（只换样式，不动格子本身，画面不会重新加载）
     // 格子：{index, id: 这一格放的是谁, key: 现在显示的是什么, player, seq, video, showSound, node, body, chips, dot, text, pick, close}
     // 选中的那一格（st.focus）有声音，别的格子静音；右边点一位在播的，就放进选中的那一格。st.sel 一直是选中那一格里的人
     var stageBox = document.querySelector(".watch-stage-box"), screen = $("watch-screen");
@@ -318,7 +318,7 @@
       tools.append(cell.pick, cell.close);
       cell.node.append(cell.body, cell.chips, tools);
       cell.node.addEventListener("click", function (e) {
-        // 1 大 2 小：点小格子的画面就把它换到大屏；点它控制条上的按钮（暂停、清晰度……）不换，免得画面跳走
+        // 三屏：点小格子的画面就把它换到大屏；点它控制条上的按钮（暂停、清晰度……）不换，免得画面跳走
         if (st.layout === 3 && e.target.closest && e.target.closest(".watch-controls")) return;
         if (multi() && st.focus !== cell.index) focusCell(cell.index);
       });
