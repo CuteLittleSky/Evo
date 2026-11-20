@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_esports_follow.html" import star, follow_dialog %}
 {% block title %}电竞 · Evo{% endblock %}
 
 {# "电竞"页面（panel_esports.py，2026-11-17 用户定的；0.6.0、0.6.1 里叫"赛事"）：正在进行（卡片）、主播（名单里开直播的选手）、即将开始、最近结束（一行一场）。
@@ -39,6 +40,37 @@
   <a class="banner-link" href="{{ url_for('esports.page') }}">再试一次</a>
 </div>
 {% endif %}
+
+{# 关注没保存上、满了：在这里说一句，几秒后自己收起来 #}
+<div class="banner-info" id="es-fav-msg" role="status" hidden><span class="grow" id="es-fav-msg-text"></span></div>
+
+{# 我关注的（2026-11-20 用户要的，放在最上面单独一块；没关注任何人时不显示）：
+   - 关注的主播的卡片：就是下面"主播"一块里的那几张，由脚本挪上来（在播的排前面），不画两遍
+   - 关注了、但不开直播的选手：一排小标签（"主播"一块里没有他们）
+   - 正在进行、即将开始的赛事里有关注的人参赛（或在观战）的那几场，写着是哪几位，点了进看直播页先看他
+   右上角的开关：关注的主播开播时用 Windows 通知提醒（托盘里的 Evo 在后台查，第一次关注时问过一次）。
+   内容都由下面的脚本照 window.evoFollow 的数据画：关注、取消以后不用重新打开页面 #}
+<section class="es-section es-fav" id="es-fav" aria-labelledby="h-es-fav" hidden>
+  <div class="es-section-head">
+    <h2 id="h-es-fav">我关注的</h2>
+    <span class="es-count" id="es-fav-count"></span>
+    <span class="es-fav-notify">
+      <span id="es-fav-notify-name">开播时通知我</span>
+      <button type="button" class="switch" id="es-fav-notify" role="switch" aria-checked="false" aria-labelledby="es-fav-notify-name"
+              title="关注的主播开播时用 Windows 通知提醒。打开以后 Evo 每 5 分钟向直播平台问一次，只问你关注的主播；Apex 开着时不问">
+        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+        <span class="switch-state" aria-hidden="true">已关闭</span>
+      </button>
+    </span>
+  </div>
+  <ul class="es-st-grid" id="es-fav-grid" hidden></ul>
+  <ul class="es-fav-idle" id="es-fav-idle" aria-label="关注了、不开直播的选手" hidden></ul>
+  <p class="es-fav-hint" id="es-fav-hint" hidden>关注的人现在不在名单里（可能换了名单），等他们回来会重新出现。</p>
+  <div id="es-fav-events-box" hidden>
+    <h3 class="es-fav-sub" id="h-es-fav-events">关注的选手有比赛</h3>
+    <ul class="card es-list" id="es-fav-events" aria-labelledby="h-es-fav-events"></ul>
+  </div>
+</section>
 
 <section class="es-section" aria-labelledby="h-es-live">
   <h2 id="h-es-live">正在进行</h2>
@@ -87,6 +119,8 @@
   <ul class="es-st-grid" id="es-st-grid" hidden>
     {% for s in streamers %}
     <li>
+      {# 右边的星星：关注（和卡片这个链接并排，不放在链接里面） #}
+      {{ star(s.id, s.name, "es-st-star") }}
       <a class="card es-st" href="{{ s.watch }}" data-streamer="{{ s.id }}" data-name="{{ s.name }}" data-initial="{{ s.initial }}"
          data-team="{{ s.team }}" data-platform="{{ s.platform_name }}" data-watch="{{ s.watch }}" data-room="{{ s.url }}">
         <span class="es-avatar es-st-avatar" data-avatar aria-hidden="true">{{ s.initial }}</span>
@@ -132,6 +166,75 @@
 {% endblock %}
 
 {% block scripts %}
+{% if loaded %}
+{{ follow_dialog(follow) }}
+<script>
+  // "我关注的"一块：照 window.evoFollow 的数据画（关注的主播的卡片由下面"主播"的脚本挪上来，window.esRegroup）
+  (function () {
+    var F = window.evoFollow, cfg = F.state;
+    function $(id) { return document.getElementById(id); }
+    function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
+    var section = $("es-fav"), idle = $("es-fav-idle"), box = $("es-fav-events-box"), list = $("es-fav-events");
+    var sw = $("es-fav-notify"), msg = $("es-fav-msg"), hideMsg = null;
+    function eventRow(e) {
+      var live = e.state === "live", li = el("li", "es-row es-fav-row");
+      var when = el("div"), time = el("time", "es-row-time num", e.time);
+      time.dateTime = e.start;
+      if (live) {
+        var tag = el("span", "es-live-tag");
+        tag.append(el("span", "es-live-dot"), "进行中");
+        when.append(tag);
+      } else {
+        when.append(el("div", "es-row-day", e.day + " " + e.weekday), time);
+      }
+      var main = el("div", "es-row-main");
+      main.append(el("div", "es-row-name es-ell", e.name), el("div", "es-row-sub es-ell", e.type + (e.stage ? " · " + e.stage : "")));
+      var who = el("div", "es-fav-who es-ell", "关注的：" + e.names.join("、"));
+      who.title = e.names.join("、");
+      var note = el("div", "es-row-note"), go = el("a", live ? "watch-btn" : "btn es-row-btn", live ? "看直播" : "看名单和直播");
+      go.href = e.watch;
+      go.setAttribute("aria-label", (live ? "看直播：" : "看名单和直播：") + e.name + "，有你关注的 " + e.names.join("、")
+                                    + (live ? "，进行中" : "，" + e.day + " " + e.time + " 开始"));
+      note.append(go);
+      li.append(when, main, who, note);
+      return li;
+    }
+    function render() {
+      section.hidden = cfg.ids.length === 0;
+      var on = cfg.notify === true;
+      sw.setAttribute("aria-checked", on ? "true" : "false");
+      sw.querySelector(".switch-state").textContent = on ? "已开启" : "已关闭";
+      idle.replaceChildren.apply(idle, cfg.idle.map(function (p) {
+        var li = el("li", "es-fav-chip");
+        li.append(el("span", "es-fav-chip-name", p.name));
+        if (p.team) li.append(el("span", "es-fav-chip-team", p.team));
+        li.append(el("span", "es-fav-chip-note", "不直播"), F.star(p.id, p.name));
+        return li;
+      }));
+      idle.hidden = cfg.idle.length === 0;
+      list.replaceChildren.apply(list, cfg.events.map(eventRow));
+      box.hidden = cfg.events.length === 0;
+      if (window.esRegroup) window.esRegroup();
+      var shown = document.querySelectorAll("#es-fav-grid > li").length + cfg.idle.length;
+      $("es-fav-count").textContent = shown ? "关注了 " + shown + " 位" : "";
+      $("es-fav-hint").hidden = cfg.ids.length === 0 || shown > 0;
+    }
+    sw.addEventListener("click", function () {
+      sw.disabled = true;
+      F.setNotify(cfg.notify !== true).then(function () { sw.disabled = false; });
+    });
+    F.onChange(render);
+    F.onFail(function (text) {
+      $("es-fav-msg-text").textContent = text;
+      msg.hidden = false;
+      clearTimeout(hideMsg);
+      hideMsg = setTimeout(function () { msg.hidden = true; }, 8000);
+    });
+    window.esFavRender = render;
+    render();
+  })();
+</script>
+{% endif %}
 {% if live %}
 <script>
   // 正在进行的赛事有几位选手在播：页面画好以后问一次（查直播间要几秒）。没查到就写"没查到谁在播"，不写 0
@@ -163,6 +266,9 @@
   // 没开播、没查到的收在下面一栏，点了用浏览器打开直播间
   (function () {
     var grid = document.getElementById("es-st-grid"), offGrid = document.getElementById("es-st-off");
+    var favGrid = document.getElementById("es-fav-grid");  // "我关注的"一块：关注的主播的卡片挪到那里
+    var last = null;  // 上次问到的（关注、取消以后照它重新分堆，不用再问一次）
+    function followed(card) { return !!window.evoFollow && window.evoFollow.has(card.dataset.streamer); }
     var more = document.getElementById("es-st-more"), none = document.getElementById("es-st-none");
     var count = document.getElementById("es-st-count"), button = document.getElementById("es-st-refresh");
     var cards = Array.prototype.slice.call(grid.querySelectorAll(".es-st"));
@@ -215,25 +321,30 @@
       wanted.forEach(function (card) { list.appendChild(card.parentNode); });
     }
     function show(found, checked) {
-      var focused = document.activeElement, on = [], rest = [], unknown = 0;
+      var focused = document.activeElement, on = [], rest = [], mine = [], mineOff = [], unknown = 0, liveCount = 0;
+      last = { found: found, checked: checked };
       cards.forEach(function (card) {
         var state = paint(card, found ? found[card.dataset.streamer] : null);
+        if (state === "live") liveCount++;
+        if (followed(card)) { (state === "live" ? mine : mineOff).push(card); return; }  // 关注的：挪到"我关注的"，在播的排前面
         (state === "live" ? on : rest).push(card);
         if (state === "error") unknown++;
       });
+      fill(favGrid, mine.concat(mineOff));
+      favGrid.hidden = mine.length + mineOff.length === 0;
       fill(grid, on);
       fill(offGrid, rest);
       grid.hidden = on.length === 0;
-      none.hidden = !found || on.length > 0;
+      none.hidden = !found || liveCount > 0;
       more.hidden = rest.length === 0;
       if (!opened) { more.open = rest.length <= 12; opened = true; }
       document.getElementById("es-st-more-text").textContent =
         (!found ? "没查到的 " : unknown && unknown < rest.length ? "没开播、没查到的 " : unknown ? "没查到的 " : "没开播的 ") + rest.length + " 位";
-      if (focused && (grid.contains(focused) || offGrid.contains(focused)) && focused.offsetParent) focused.focus();  // 挪了位置以后焦点还在原来那一位上
+      if (focused && (grid.contains(focused) || offGrid.contains(focused) || favGrid.contains(focused)) && focused.offsetParent) focused.focus();  // 挪了位置以后焦点还在原来那一位上
       count.textContent = "";
       if (found) {
         var at = new Date(checked * 1000);
-        count.append("在播 ", el("num", on.length), " / ", String(cards.length), " 位，",
+        count.append("在播 ", el("num", liveCount), " / ", String(cards.length), " 位，",
                      el("num", String(at.getHours()).padStart(2, "0") + ":" + String(at.getMinutes()).padStart(2, "0")), " 查的");
       } else {
         count.textContent = "没查到谁在播，可能是网络连不上";
@@ -249,6 +360,16 @@
         .catch(function () { show(null); });
     }
     button.addEventListener("click", function () { count.textContent = "正在看谁在播…"; ask(); });
+    // 关注、取消以后重新分堆。还没问到谁在播时只把关注的挪上去
+    window.esRegroup = function () {
+      if (last) { show(last.found, last.checked); return; }
+      var mine = cards.filter(followed);
+      fill(favGrid, mine);
+      favGrid.hidden = mine.length === 0;
+      fill(grid, cards.filter(function (card) { return !followed(card); }));
+    };
+    window.esRegroup();
+    if (window.esFavRender) window.esFavRender();
     ask();
   })();
 </script>

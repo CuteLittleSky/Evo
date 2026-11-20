@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_esports_follow.html" import star, star_icon, follow_dialog %}
 {% block title %}{{ event.name }} · Evo{% endblock %}
 {# 看直播页（panel_esports.py，2026-11-17 用户定的，样子照用户给的样稿）：占满整个窗口，没有侧边栏，只有"← 赛事"。
    左边：赛事名、播放器、正在看的选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
@@ -67,6 +68,10 @@
       </div>
       {# 三个按钮都是用系统浏览器打开这位主播的直播间：发弹幕、送礼物要登录平台，玩家一般在浏览器里登录过 #}
       {# 要登录才能看高画质的平台（B站）才显示：没登录写"登录 B站看原画"，登录了写"B站：昵称"（点开能退出登录） #}
+      {# 关注这一位（主舞台的直播间没有）：开播时可以通知，他参赛的赛事电竞页会单独列出来 #}
+      <button type="button" class="btn watch-link watch-follow" id="watch-follow" data-follow="" data-name="" aria-pressed="false" hidden>
+        {{ star_icon() }}<span data-follow-text>关注</span>
+      </button>
       <button type="button" class="btn watch-link watch-login" id="watch-login" hidden></button>
       <a class="btn watch-link" id="watch-danmu" target="_blank" rel="noopener noreferrer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H10l-4 3.5V16H4z"></path><path d="M8 9.5h8M8 12.5h5"></path></svg>发送弹幕
@@ -105,17 +110,32 @@
       {% endif %}
     </div>
     <div class="watch-list" id="watch-list">
+      {# 我关注的（2026-11-20 用户要的）：名单里有关注的人时，最上面多这一组，里面的几行是脚本从下面抄上来的
+         （renderFav；关注、取消以后马上跟着变）。不算进"在播 N / M"，筛选"在播的"时没人在播就收起来 #}
+      <details class="watch-team-box watch-fav-box" id="watch-fav" data-fav open hidden>
+        <summary>
+          <svg class="watch-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span class="watch-team-logo is-fav" aria-hidden="true">{{ star_icon() }}</span>
+          <span class="watch-team-name es-ell">我关注的</span>
+          <span class="watch-team-live" data-team-live>…</span>
+        </summary>
+        <div class="watch-players" id="watch-fav-list"></div>
+      </details>
       {% if solo %}
       {# 主播名单：不分队伍，一列到底；在播的由脚本点亮、排到前面 #}
       <div class="watch-team-box watch-solo" data-solo>
         <div class="watch-players">
           {% for p in members %}
+          {# 一行：选这位来看的按钮 + 右边的星星（关注）。两个按钮并排，不能一个套一个 #}
+          <div class="watch-p-row" data-row="{{ p.id }}">
           <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
             <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
             <span class="watch-p-name es-ell">{{ p.name }}</span>
             <span class="watch-p-plat"><span class="es-dot pf-{{ p.platform }}" aria-hidden="true"></span>{{ p.platform_name }}</span>
             <span class="watch-p-time num" data-time>…</span>
           </button>
+          {{ star(p.id, p.name, "watch-star") }}
+          </div>
           {% endfor %}
         </div>
       </div>
@@ -138,7 +158,9 @@
         </summary>
         <div class="watch-players">
           {% for p in team.players %}
-          {# 没开播的不能点（disabled）；在播的由脚本点亮。不开直播的选手照样列出来，右边写"不直播"，一直不能点 #}
+          {# 没开播的不能点（disabled）；在播的由脚本点亮。不开直播的选手照样列出来，右边写"不直播"，一直不能点。
+             右边的星星是关注（主舞台的几路直播间没有；不开直播的选手也能关注：他参赛时电竞页会列出来） #}
+          <div class="watch-p-row" data-row="{{ p.id }}">
           <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
             <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
             <span class="watch-p-name es-ell">{{ p.name }}</span>
@@ -151,6 +173,8 @@
             <span class="watch-p-time num" data-time>…</span>
             {% endif %}
           </button>
+          {% if not team.main %}{{ star(p.id, p.name, "watch-star") }}{% endif %}
+          </div>
           {% else %}
           <p class="watch-empty">名单里还没有这支队的选手</p>
           {% endfor %}
@@ -178,6 +202,7 @@
   </div>
 </dialog>
 <script type="application/json" id="watch-data">{{ page_data|tojson }}</script>
+{{ follow_dialog(page_data.follow) }}
 {% endblock %}
 
 {% block scripts %}
@@ -253,20 +278,20 @@
           time.textContent = p.off ? p.platform_name : !st.status ? "…" : live ? clock(s.since) : s && s.state === "error" ? "没查到" : "未开播";
           if (live) time.title = spoken(s.since); else time.removeAttribute("title");
         });
-        var main = box.hasAttribute("data-main");
-        if (!main) liveTotal += n;
+        var main = box.hasAttribute("data-main"), fav = box.hasAttribute("data-fav");  // "我关注的"一组是抄上来的，不重复数
+        if (!main && !fav) liveTotal += n;
         if (box.hasAttribute("data-solo")) {
-          // 主播名单：在播的排到前面（别的照名单的顺序）；"在播的"只留在播的那几位
+          // 主播名单：在播的排到前面（别的照名单的顺序）；"在播的"只留在播的那几位。一行 = 选人的按钮 + 星星（data-row 是这位的 id）
           var list = box.querySelector(".watch-players"), focused = document.activeElement;
-          var order = Array.prototype.slice.call(list.children).map(function (btn) {
-            if (!btn.dataset.order) btn.dataset.order = String(Array.prototype.indexOf.call(list.children, btn));
-            btn.hidden = st.filter === "live" && !!st.status && !isLive(btn.dataset.player);
-            return btn;
+          var order = Array.prototype.slice.call(list.children).map(function (row) {
+            if (!row.dataset.order) row.dataset.order = String(Array.prototype.indexOf.call(list.children, row));
+            row.hidden = st.filter === "live" && !!st.status && !isLive(row.dataset.row);
+            return row;
           }).sort(function (a, b) {
-            return (isLive(a.dataset.player) ? 0 : 1) - (isLive(b.dataset.player) ? 0 : 1) || a.dataset.order - b.dataset.order;
+            return (isLive(a.dataset.row) ? 0 : 1) - (isLive(b.dataset.row) ? 0 : 1) || a.dataset.order - b.dataset.order;
           });
-          if (order.some(function (btn, i) { return btn !== list.children[i]; })) {
-            order.forEach(function (btn) { list.appendChild(btn); });
+          if (order.some(function (row, i) { return row !== list.children[i]; })) {
+            order.forEach(function (row) { list.appendChild(row); });
             if (focused && list.contains(focused)) focused.focus();
           }
         } else {
@@ -277,14 +302,35 @@
           else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), main ? " 路在播" : " 人在播");
           else tag.textContent = main ? "没在播" : "没人在播";
         }
-        box.hidden = st.filter === "live" && !!st.status && n === 0;
-        if (!box.hidden) shown++;
+        box.hidden = (st.filter === "live" && !!st.status && n === 0) || (fav && !box.querySelector(".watch-p"));
+        if (!box.hidden && !fav) shown++;
       });
       $("watch-none").hidden = shown > 0;
       var count = $("watch-count");
       count.textContent = "";
       if (st.status) count.append("在播 ", el("span", "num watch-count-live", liveTotal), " / ", el("span", "num", data.players.filter(function (x) { return !x.main && !x.off; }).length), data.solo ? " 位" : " 人");
       else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
+    }
+
+    // ---------- 关注（2026-11-20 用户要的；window.evoFollow 在 _esports_follow.html）----------
+    // 名单最上面"我关注的"一组：把名单里关注的那几行抄一份上来（主舞台的直播间不算）；关注、取消以后重画
+    function renderFav() {
+      var list = $("watch-fav-list"), rows = [];
+      window.evoFollow.state.ids.forEach(function (id) {
+        var p = byId[id];
+        var from = p && !p.main ? document.querySelector('#watch-list > :not(#watch-fav) .watch-p-row[data-row="' + CSS.escape(id) + '"]') : null;
+        if (!from) return;
+        var row = from.cloneNode(true);
+        row.hidden = false;
+        delete row.dataset.order;
+        row.querySelector(".watch-p").addEventListener("click", function () { select(id); });
+        var avatar = row.querySelector("[data-avatar]");
+        delete avatar.dataset.src;  // 头像让 renderList 重新放一遍（抄过来的图片没有"加载不出来换成名字"那一步）
+        avatar.textContent = p.initial;
+        rows.push(row);
+      });
+      list.replaceChildren.apply(list, rows);
+      window.evoFollow.paintAll();
     }
 
     // ---------- 播放器那一块：1 / 2 / 3 / 4 格（多屏同看，2026-11-19 用户要的），每格一路 ----------
@@ -498,6 +544,11 @@
         link.title = "用浏览器打开 " + p.name + " 的" + p.platform_name + "直播间" + pair[1];
       });
       $("watch-go-text").textContent = "去" + p.platform_name + "看";
+      var followBtn = $("watch-follow");  // 主舞台的直播间不能关注
+      followBtn.hidden = !!p.main;
+      followBtn.dataset.follow = p.main ? "" : p.id;
+      followBtn.dataset.name = p.name;
+      if (!p.main) window.evoFollow.paint(followBtn);
       var loginBtn = $("watch-login"), account = st.accounts[p.platform];
       loginBtn.hidden = !data.login[p.platform];
       if (!loginBtn.hidden) {
@@ -1195,6 +1246,14 @@
     $("watch-apex-close").addEventListener("click", function () { st.closed = true; render(); });
     document.addEventListener("visibilitychange", tick);
     window.addEventListener("pagehide", stopAll);  // 离开这一页：播放器停下，中转那头跟着断开
+    window.evoFollow.onChange(function () { renderFav(); renderList(); renderInfo(); });
+    window.evoFollow.onFail(function (text) {  // 没保存上、满了：用播放器上面那条提示说一句
+      $("watch-failed-text").textContent = text;
+      $("watch-failed-retry").hidden = true;
+      $("watch-failed").hidden = false;
+      setTimeout(function () { $("watch-failed-retry").hidden = false; renderFailed(); }, 8000);
+    });
+    renderFav();
     cells.push(makeCell(0));
     screen.appendChild(cells[0].node);
     cells[0].id = st.sel;

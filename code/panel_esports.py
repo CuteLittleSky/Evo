@@ -26,6 +26,9 @@
   再让播放器连 GET /esports/stream/<选手>（本机中转，flv_relay.py：只听 127.0.0.1、要带面板的口令、一次只播一路，
   开新的一路就停掉上一路；播放器断开就停，不在后台留着）。取地址、连视频服务器都在玩家自己的电脑上
 - Apex 在运行：GET /esports/game（game_detect，只看进程名），页面每 10 秒问一次，正在播时显示黄色提示条
+- 关注（2026-11-20 用户要的；follows.py，名单存在 settings.json）：POST /esports/follow/<选手> 关注 / 取消，
+  POST /esports/follow-notify 开 / 关开播通知（托盘里的 Evo 在后台查，follow_alerts.py）；电竞页最上面"我关注的"一块、
+  两页上的星星按钮都用它们（_esports_follow.html）
 这个文件不加载识别用的库。规则见 docs/面板.md"赛事页""看直播页"。
 """
 
@@ -43,6 +46,8 @@ import danmaku
 import douyin_chat
 import esports_data
 import flv_relay
+import follow_alerts
+import follows
 import game_detect
 import live_status
 import qr
@@ -146,6 +151,69 @@ def roster(data, event):
     return teams
 
 
+def follow_view(data, now=None):
+    """关注的事页面要的（电竞页"我关注的"一块、两页上的星星）：
+    {"ids": 关注的 id, "notify": 开播通知开没开（None 还没问过）,
+     "events": 正在进行、即将开始的赛事里有关注的人的那几场（view() 的几项 + names 关注的是谁 + watch 看直播页的地址）,
+     "idle": 关注了、但不开直播的选手（"主播"一块里没有他们的卡片）}。"""
+    now = now or datetime.now().astimezone()
+    events = []
+    for event, mine in follows.events(data, now):
+        shown = view(event, now)
+        first = next((p["id"] for p in mine if p["platform"] != esports_data.NO_STREAM), None)  # 点进去先看关注的那一位
+        events.append({**{key: shown[key] for key in ("id", "name", "type", "stage", "day", "weekday", "time", "start", "state")},
+                       "names": [p["name"] for p in mine],
+                       "watch": url_for("esports.watch", event_id=event["id"], **({"p": first} if first else {}))})
+    return {"ids": follows.ids(), "notify": follows.notify(), "events": events,
+            "idle": [{"id": p["id"], "name": p["name"], "team": p.get("team", "")}
+                     for p in follows.players(data) if p["platform"] == esports_data.NO_STREAM]}
+
+
+def follow_config(data):
+    """给页面里的脚本（window.evoFollow）的：follow_view() 加上两个接口的地址、面板的口令、最多关注几位。"""
+    return {**follow_view(data), "url": url_for("esports.follow", player_id="_").rsplit("/", 1)[0] + "/",
+            "notify_url": url_for("esports.follow_notify"), "token": current_app.config["TOKEN"], "max": follows.MAX}
+
+
+@bp.app_context_processor
+def _follow_context():
+    """设置页的"开播通知"开关要的（每个页面都能用）：开没开、关注了几位。"""
+    return {"esports_follow": {"notify": follows.notify() is True, "count": len(follows.ids())}}
+
+
+@bp.post("/esports/follow/<player_id>")
+def follow(player_id):
+    """关注 / 取消关注一位（表单里 on=1 / 0）。只能关注名单里有的选手、主播；取消随时可以。
+    回 follow_view() 那几项，加 ok、full（满了，没加上）。"""
+    saved = esports_data.cached()
+    data = saved["data"] if saved else None
+    on = request.form.get("on") == "1"
+    known = {item["id"] for item in [*(data.get("players") or []), *(data.get("streamers") or [])]} if data else set()
+    if on and player_id not in known:
+        return jsonify(ok=False, full=False, **follow_view(data))
+    before = follows.ids()
+    now = follows.set_following(player_id, on)
+    if now != before:
+        log.info("关注：%s %s（现在关注 %d 位）", "关注了" if on else "取消了", player_id, len(now))
+        follow_alerts.wake.set()
+    full = on and player_id not in now
+    return jsonify(ok=not full, full=full, **follow_view(data))
+
+
+@bp.post("/esports/follow-notify")
+def follow_notify():
+    """开 / 关"关注的主播开播时通知"（表单里 on=1 / 0）。设置页的开关带着 next：改完回设置页；页面里的脚本不带，回 JSON。"""
+    on = follows.set_notify(request.form.get("on") == "1")
+    log.info("关注：开播通知%s", "打开了（托盘里的 Evo 每 5 分钟查一次关注的主播，Apex 开着时不查）" if on else "关掉了（不在后台查了）")
+    follow_alerts.wake.set()
+    if request.form.get("next"):
+        flash("已开启：关注的主播开播时用 Windows 通知提醒你。Evo 开着时每 5 分钟问一次直播平台，只问你关注的主播；Apex 开着时不问。"
+              if on else "已关闭开播通知，Evo 不再在后台查关注的主播。", "ok")
+        return redirect(url_for("settings"))
+    saved = esports_data.cached()
+    return jsonify(ok=True, **follow_view(saved["data"] if saved else None))
+
+
 @bp.route("/esports")
 def page():
     got = esports_data.get()
@@ -160,7 +228,8 @@ def page():
         recent=[view(e, now) for e in found["recent"]],
         # 主播名单（赛程文件里有才有这一块）：先照名单的顺序画出来，谁在播由页面里的脚本问 /esports/live
         streamers=[{**member(s, s.get("team", "")), "watch": url_for("esports.streamers", p=s["id"])}
-                   for s in esports_data.streamers(data)])
+                   for s in esports_data.streamers(data)],
+        follow=follow_config(data))
 
 
 @bp.get("/esports/live")
@@ -196,6 +265,7 @@ def watch_page_data(data, members, selected, status_url):
             "status_url": status_url, "game_url": url_for("esports.game"),
             "mpegts_url": url_for("static", filename="vendor/mpegts.js"), "token": current_app.config["TOKEN"],
             "failed_url": url_for("esports.play_failed", player_id="_").rsplit("/", 1)[0] + "/",  # 后面接选手 id
+            "follow": follow_config(data),  # 关注（星星按钮、名单最上面"我关注的"一组）
             # 要登录才能看高画质的平台：现在登录着没有（打开页面时隔 6 小时向平台核对一次）、登录用的三个接口
             "accounts": {key: module.account(check=True) for key, module in LOGINS.items()},
             "login": {key: {step: url_for(f"esports.login_{step}", platform=key) for step in ("start", "poll", "logout")}

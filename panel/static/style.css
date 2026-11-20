@@ -1206,11 +1206,41 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 /* 主播（2026-11-19）：一格一位，能放几列放几列。在播的字是正常的颜色、右边是红点和开播了多久；没开播的整格灰色、右边是"用浏览器打开"的箭头。
    一格高 64px（整格都能点）；--muted 在卡片上深色 7:1、浅色 5.9:1 */
 .es-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+/* 关注（2026-11-20）：星星按钮（电竞页的主播卡片、看直播页的名单都用）。空心 = 没关注，实心、金色 = 关注了 */
+.fav-star { font: inherit; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--muted); cursor: pointer; transition: color 0.15s, background-color 0.15s; }
+.fav-star:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.fav-star[aria-pressed="true"], .fav-star[aria-pressed="true"]:hover:not(:disabled) { color: var(--warn-text); }
+.fav-star[aria-pressed="true"] svg { fill: currentColor; }
+.fav-star:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.fav-star:disabled { opacity: 0.5; cursor: default; }
+.fav-dialog { width: min(440px, calc(100vw - 32px)); }
+@media (prefers-reduced-motion: reduce) { .fav-star { transition: none; } }
+/* 电竞页"我关注的"一块 */
+.es-fav-notify { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.es-fav-notify .switch { min-height: 32px; }
+.es-fav-sub { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+.es-fav > div:not(.es-section-head):not([hidden]) { display: flex; flex-direction: column; gap: 8px; }
+.es-fav > [hidden], #es-fav-msg[hidden] { display: none; }
+.es-fav-hint { margin: 0; font-size: 13px; color: var(--muted); }
+.es-fav-idle { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.es-fav-chip { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 2px 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); font-size: 13px; }
+.es-fav-chip-name { font-weight: 600; }
+.es-fav-chip-team, .es-fav-chip-note { font-size: 12px; color: var(--muted); }
+.es-row.es-fav-row { grid-template-columns: 128px minmax(0, 1.2fr) minmax(0, 1fr) 160px; }
+.es-fav-who { font-size: 13px; color: var(--text); }
+.es-fav-row .es-live-tag { display: inline-flex; }
+@container page (max-width: 680px) {
+  .es-row.es-fav-row { grid-template-columns: 96px minmax(0, 1fr); }
+  .es-fav-who { grid-column: 2; }
+}
 .es-section-head > h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .es-st-refresh { margin-left: auto; }
 .es-st-refresh:disabled { opacity: .5; cursor: default; }
 .es-st-grid { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.es-st-grid > li { min-width: 0; }
+.es-st-grid > li { min-width: 0; position: relative; }
+.es-st-grid .es-st { padding-right: 48px; }  /* 右边留给星星按钮 */
+.es-st-star { position: absolute; top: 50%; right: 8px; z-index: 1; transform: translateY(-50%); }
 .es-st { display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 14px; color: var(--text); text-decoration: none; min-width: 0;
   transition: border-color .15s ease, background-color .15s ease; }
 .es-st:hover { border-color: var(--dashed); background: color-mix(in srgb, var(--text) 4%, var(--card)); }
@@ -1446,6 +1476,17 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .watch-ob { flex: none; padding: 0 6px; height: 18px; display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 4px;
   font-size: 11px; color: var(--muted); white-space: nowrap; }
 .watch-p[hidden] { display: none; }
+/* 名单的一行：选人的按钮 + 右边的星星（关注） */
+.watch-p-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.watch-p-row[hidden] { display: none; }
+.watch-p-row > .watch-p { flex: 1; min-width: 0; width: auto; }
+.watch-star { width: 28px; height: 28px; }
+.watch-star:not([aria-pressed="true"]) { opacity: 0.55; }  /* 没关注的星星淡一些，不抢名单的字；悬停、聚焦时回到正常 */
+.watch-star:not([aria-pressed="true"]):hover, .watch-star:not([aria-pressed="true"]):focus-visible { opacity: 1; }
+.watch-team-logo.is-fav { color: var(--warn-text); }
+.watch-team-logo.is-fav svg { fill: currentColor; }
+.watch-follow[hidden] { display: none; }
+.watch-follow[aria-pressed="true"] svg { fill: currentColor; color: var(--warn-text); }
 .watch-p { font: inherit; display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px;
   background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .watch-p:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); }

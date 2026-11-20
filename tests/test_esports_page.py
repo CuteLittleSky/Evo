@@ -154,7 +154,7 @@ def main():
     serve(folder, [event("soon", NOW + timedelta(hours=3))], players=silent)
     nobody = client.get("/esports").get_data(as_text=True)
     out["名单里没有开直播的选手：没有\"主播\"这一块，也不问谁在播"] = (
-        "h-es-streamers" not in nobody and "es-st-grid" not in nobody and "/esports/live" not in nobody and section(nobody, "即将开始") != "")
+        "h-es-streamers" not in nobody and 'id="es-st-grid"' not in nobody and "/esports/live" not in nobody and section(nobody, "即将开始") != "")
     streamers = [{"id": "douyu-901", "name": "大主播", "platform": "douyu", "room": "901"},
                  {"id": "huya-902", "name": "<i>二主播</i>", "platform": "huya", "room": "902"},
                  {"id": "bilibili-1", "name": "也是选手", "platform": "bilibili", "room": "1"},

@@ -18,6 +18,7 @@ import test_aspect
 import test_bili_login
 import test_hls_relay
 import test_danmaku
+import test_follow_alerts
 import test_douyin_chat
 import test_data_move
 import test_tester
@@ -103,6 +104,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "HLS 中转（看直播页播 B站：播放列表和 TS 接成一条流）": test_hls_relay,
          "弹幕（斗鱼、B站：要连哪里、面板的接口、页面上的开关）": test_danmaku,
          "抖音的弹幕（签名、protobuf、WebSocket、转给页面）": test_douyin_chat,
+         "电竞页的关注和开播通知（谁刚开播、名单、接口、页面、托盘里的线程）": test_follow_alerts,
          "最常用武器（认武器、计时、记进数据库、数据页）": test_weapons,
          "匿名统计（同意了才发、只发说好的几项、日活、重发改过的局、Evo 的占用、连不上、面板）": test_telemetry,
          "Evo 占用（读进程、现在的、对局中最近 10 局、侧边栏）": test_usage,

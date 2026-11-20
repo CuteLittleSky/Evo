@@ -1,0 +1,99 @@
+{# 电竞页、看直播页共用的"关注"：星星按钮、第一次关注时问要不要开播通知的对话框、两页共用的脚本（2026-11-20 用户要的；code/follows.py、panel_esports.py 的 /esports/follow…）。
+   - star(id, name)：一位选手、主播旁边的星星按钮（没关注是空心的，关注了是实心的；读屏软件念"关注 某某"/"取消关注 某某"）
+   - follow_dialog(cfg)：第一次关注时问"开播时要不要通知"的对话框，和两页共用的脚本 window.evoFollow
+     （点带 data-follow 的按钮就关注 / 取消，改完叫 onChange 登记的函数重画）。
+   关注的名单只存在这台电脑上（settings.json），和直播平台上的关注没有关系 #}
+
+{% macro star_icon() -%}
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"></path></svg>
+{%- endmacro %}
+
+{% macro star(id, name, cls="") -%}
+<button type="button" class="fav-star{% if cls %} {{ cls }}{% endif %}" data-follow="{{ id }}" data-name="{{ name }}" aria-pressed="false" aria-label="关注 {{ name }}" title="关注">{{ star_icon() }}</button>
+{%- endmacro %}
+
+{% macro follow_dialog(cfg) %}
+{# 第一次点"关注"时问一次（用户 11-20 定的：新的联网行为先问）。答了就记住，电竞页"我关注的"和设置页随时能改；
+   按 Esc 关掉 = 这次没答，下次关注别人时再问 #}
+<dialog class="dialog fav-dialog" id="follow-dialog" aria-labelledby="h-follow-dialog" aria-describedby="follow-dialog-desc">
+  <form method="dialog">
+    <h2 id="h-follow-dialog" tabindex="-1" autofocus>开播时通知你？</h2>
+    <p class="dialog-desc" id="follow-dialog-desc">
+      关注的主播开播时，Evo 可以用 Windows 通知提醒你。打开以后，托盘里的 Evo 每 <span class="num">5</span> 分钟向直播平台问一次，
+      只问你关注的主播；Apex 开着的时候不问也不提醒，关了游戏再补。以后可以在电竞页“我关注的”或者设置页随时改。
+    </p>
+    <div class="dialog-actions">
+      <button type="button" class="btn-text" id="follow-dialog-no">不用通知</button>
+      <button type="button" class="btn btn-primary" id="follow-dialog-yes">开播时通知我</button>
+    </div>
+  </form>
+</dialog>
+{# 脚本要画星星按钮时照这个抄（evoFollow.star） #}
+<template id="follow-star">{{ star("", "") }}</template>
+<script type="application/json" id="follow-data">{{ cfg|tojson }}</script>
+<script>
+  // 两页共用：window.evoFollow。cfg = {ids: 关注的 id, notify: 开播通知（null 还没问过）, events、idle: 电竞页那一块用的,
+  // url: 关注的接口（后面接 id）, notify_url, token, max}
+  window.evoFollow = (function () {
+    var cfg = JSON.parse(document.getElementById("follow-data").textContent);
+    var dialog = document.getElementById("follow-dialog");
+    var changed = [], failed = [], asked = false;
+    function post(url, fields) {  // 改东西的请求都要带面板的口令
+      return fetch(url, { method: "POST", body: new URLSearchParams(Object.assign({ token: cfg.token }, fields)) })
+        .then(function (r) { return r.json(); });
+    }
+    function has(id) { return cfg.ids.indexOf(id) >= 0; }
+    function take(r) {
+      ["ids", "notify", "events", "idle"].forEach(function (key) { if (key in r) cfg[key] = r[key]; });
+      paintAll();
+      changed.forEach(function (fn) { fn(cfg); });
+    }
+    function fail(text) { failed.forEach(function (fn) { fn(text); }); }
+    // 一个星星按钮现在该是什么样：实心 / 空心、读屏软件念什么；里面有 data-follow-text 的（看直播页那个带字的按钮）改字
+    function paint(btn) {
+      var on = has(btn.dataset.follow), name = btn.dataset.name || "";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.setAttribute("aria-label", (on ? "取消关注 " : "关注 ") + name);
+      btn.title = on ? "取消关注" : "关注（开播时可以通知你）";
+      var text = btn.querySelector("[data-follow-text]");
+      if (text) text.textContent = on ? "已关注" : "关注";
+    }
+    function paintAll() { document.querySelectorAll("[data-follow]").forEach(paint); }
+    function star(id, name, cls) {  // 画一个新的星星按钮
+      var btn = document.getElementById("follow-star").content.firstElementChild.cloneNode(true);
+      btn.dataset.follow = id;
+      btn.dataset.name = name;
+      if (cls) btn.classList.add(cls);
+      paint(btn);
+      return btn;
+    }
+    function toggle(id) {
+      var on = !has(id);
+      return post(cfg.url + encodeURIComponent(id), { on: on ? "1" : "0" }).then(function (r) {
+        take(r);
+        if (r.full) fail("最多关注 " + cfg.max + " 位，先取消几位再关注。");
+        else if (!r.ok) fail("没有关注上：名单里现在没有这位了，重新打开这一页试试。");
+        else if (on && cfg.notify === null && !asked) { asked = true; dialog.showModal(); }
+      }).catch(function () { fail("没有保存上，再点一次试试。"); });
+    }
+    function setNotify(on) {
+      return post(cfg.notify_url, { on: on ? "1" : "0" }).then(take).catch(function () { fail("没有保存上，再点一次试试。"); });
+    }
+    // 星星按钮可能在链接、别的按钮旁边，也可能是后来才画出来的：统一在这里接
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest("[data-follow]") : null;
+      if (!btn || !btn.dataset.follow) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      toggle(btn.dataset.follow).then(function () { btn.disabled = false; });
+    });
+    document.getElementById("follow-dialog-yes").addEventListener("click", function () { dialog.close(); setNotify(true); });
+    document.getElementById("follow-dialog-no").addEventListener("click", function () { dialog.close(); setNotify(false); });
+    paintAll();
+    return { state: cfg, has: has, toggle: toggle, setNotify: setNotify, paint: paint, paintAll: paintAll, star: star,
+             onChange: function (fn) { changed.push(fn); }, onFail: function (fn) { failed.push(fn); } };
+  })();
+</script>
+{% endmacro %}

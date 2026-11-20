@@ -195,7 +195,8 @@ def main():
 
     serve(folder, teams={"甲队": {"logo": "3fa9c1d2e4b5a6f7.webp"}, "<b>乙队</b>": {"logo": "https://example.invalid/x.png"}})
     with_logo = client.get("/esports/live/watch").get_data(as_text=True)
-    marks = re.findall(r'<span class="watch-team-logo[^"]*"[^>]*>.*?</span>', with_logo, re.S)
+    marks = [m for m in re.findall(r'<span class="watch-team-logo[^"]*"[^>]*>.*?</span>', with_logo, re.S)
+             if "is-fav" not in m]  # 名单最上面"我关注的"一组的星星不是队徽
     out["有队徽的队显示队徽（图片只从 dl.evotracker.cn 的 esports/logos/ 加载，加载不出来时页面换回第一个字）；没有的、写得不对的照旧是队名第一个字"] = (
         len(marks) == 4 and sum("<img " in m for m in marks) == 1
         and 'class="watch-team-logo has-img"' in marks[1] and 'data-initial="甲"' in marks[1]
@@ -206,14 +207,15 @@ def main():
                         {"id": "douyin-xxfps", "name": "<i>解说</i>", "platform": "douyin", "room": "xxfps"},
                         {"id": "douyu-1", "name": "和选手同一个 id", "platform": "douyu", "room": "101"}])
     staged = client.get("/esports/live/watch").get_data(as_text=True)
-    stage_boxes = re.findall(r'<details class="watch-team-box[^>]*>.*?</details>', staged, re.S)
+    stage_boxes = [box for box in re.findall(r'<details class="watch-team-box[^>]*>.*?</details>', staged, re.S)
+                   if "data-fav" not in box.split(">", 1)[0]]  # "我关注的"一组不算
     stage_data = page_data(staged)
     out["赛程里写了主舞台：右边最上面多一栏\"主舞台\"（默认展开、图标不是队名的字），下面照旧是队伍；\"全部 N 支\"不数它"] = (
         len(stage_boxes) == 5 and 'data-main open' in stage_boxes[0] and 'class="watch-team-logo is-main"' in stage_boxes[0]
         and "主舞台" in text(stage_boxes[0]) and "官方直播" in text(stage_boxes[0]) and "<i>解说</i>" in text(stage_boxes[0])
         and "<i>解说</i>" not in staged and len(re.findall(r'<button type="button" class="watch-p"', stage_boxes[0])) == 2
         and all("data-main" not in box for box in stage_boxes[1:]) and "全部 4 支" in text(staged)
-        and len(re.findall(r'<details class="watch-team-box[^>]*>', raw)) == 4 and "data-main" not in raw.split("<script>")[0])
+        and len(re.findall(r'<details class="watch-team-box"[^>]*>', raw)) == 4 and "data-main" not in raw.split("<script>")[0])
     out["给脚本的数据：主舞台的两路排在最前面、标着是主舞台；和选手同一个房间的那一路不算；网址里的 p 也能选主舞台"] = (
         [(p["id"], p["main"], p["team"]) for p in stage_data["players"][:3]] == [
             ("bilibili-900", True, "主舞台"), ("douyin-xxfps", True, "主舞台"), ("douyin-1", False, "丙队")]
@@ -301,7 +303,8 @@ def main():
     info = page_data(solo)
     out["主播的看直播页：和赛事的是同一个页面，标题写\"主播\"、能回电竞页；右边不分队伍，一位一行、写着平台，先都不能点"] = (
         "<title>主播 · Evo</title>" in solo and 'href="/esports"' in solo and "watch-mark" not in solo[:solo.find("<aside")]
-        and "<details" not in side and 'data-solo' in side and len(rows) == 3 and all(" disabled" in row for row in rows)
+        and side.count("<details") == 1 and 'id="watch-fav" data-fav' in side  # 只有"我关注的"那一组能折叠
+        and 'data-solo' in side and len(rows) == 3 and all(" disabled" in row for row in rows)
         and [text(row).split()[-2] for row in rows] == ["斗鱼", "虎牙", "B站"] and "<i>二主播</i>" not in side
         and text(side).startswith("主播 正在看谁在播… 全部 3 位 在播的") and "现在没有主播在播。" in side)
     out["给脚本的数据：是主播名单（solo）、页面上称呼\"主播\"、问状态的地址是主播的；网址里的 p 是名单里的主播才选中；能播的平台带着问播放地址的接口"] = (

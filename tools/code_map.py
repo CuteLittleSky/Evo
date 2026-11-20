@@ -51,7 +51,7 @@ SECTIONS = [
     ("页面", "程序", [
         "code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/radar.py",
         "code/global_stats.py", "code/map_rotation.py"]),
-    ("页面", "赛事、看直播", ["code/panel_esports.py", "code/esports_data.py", "code/live_status.py", "code/abogus.py",
+    ("页面", "赛事、看直播", ["code/panel_esports.py", "code/esports_data.py", "code/follows.py", "code/follow_alerts.py", "code/live_status.py", "code/abogus.py",
                               "code/watch_douyu.py", "code/flv_relay.py", "code/watch_douyin.py", "code/watch_bilibili.py", "code/hls_relay.py", "code/danmaku.py", "code/douyin_chat.py", "code/bili_login.py",
                               "code/secret_store.py", "code/qr.py"]),
     ("页面", "模板（panel/templates/）", ["panel/templates/*.html", "panel/templates/share/*.svg"]),

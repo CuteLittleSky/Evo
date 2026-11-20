@@ -205,6 +205,53 @@ def start_notice_checker(log, notify, stop, game_running, first_delay=NOTICE_FIR
     threading.Thread(target=loop, name="notice-check", daemon=True).start()
 
 
+FOLLOW_FIRST_DELAY = 30  # 秒：启动后等一会儿再查关注的主播，排在检查新版本、读公告后面
+FOLLOW_FIRST_DELAY_BACKGROUND = 135  # 开机自启时：等网络连上
+FOLLOW_EVERY = 5 * 60  # 之后每 5 分钟查一次（2026-11-20 用户定的）
+FOLLOW_GAME_WAIT = 60  # Apex 开着（不查）：每分钟看一次游戏关了没有，关了马上查一次
+
+
+def start_follow_checker(log, notify, stop, game_running, first_delay=FOLLOW_FIRST_DELAY, every=FOLLOW_EVERY,
+                         game_wait=FOLLOW_GAME_WAIT):
+    """关注的主播开播通知（follow_alerts.py；2026-11-20 用户要的）：玩家在电竞页关注了人、打开了"开播时通知我"才联网
+    （第一次关注时页面问过），每 5 分钟问一次直播平台，只问关注的那几位；谁刚开播用托盘通知提醒一次。
+    **Apex 开着时不查也不弹**（用户定的：不占打游戏时的网络，游戏画面上不盖东西），关了游戏马上查一次，
+    游戏开着那段时间里开播、现在还在播的补一条。关注的名单、开关改了（follow_alerts.wake）马上重新看一遍。
+    日志只在提醒了、没查到的原因变了的时候写。"""
+    import follow_alerts
+
+    def loop():
+        if stop.wait(first_delay):
+            return
+        tracker, said, held = follow_alerts.Tracker(), None, None  # held：Apex 开着没查，是从哪一刻起的
+        while not stop.is_set():
+            wait = every
+            if not follow_alerts.wanted():
+                tracker.forget()
+                held = None
+            elif game_running():
+                held = time.time() if held is None else held
+                wait = game_wait
+            else:
+                try:
+                    started, problem = follow_alerts.check(tracker, since_after=held), None
+                except Exception as e:  # noqa: BLE001  这次没查成：只记一笔，下次再查
+                    started, problem = [], f"关注：没查成谁在播（{type(e).__name__}: {e}）"
+                held = None
+                if started:
+                    body, title = follow_alerts.text(started)
+                    notify(body, title)
+                    log("关注：" + "、".join(player["name"] for player, _ in started) + " 开播了，用托盘通知提醒了")
+                if problem != said:
+                    if problem:
+                        log(problem)
+                    said = problem
+            if follow_alerts.wake.wait(wait):
+                follow_alerts.wake.clear()
+
+    threading.Thread(target=loop, name="follow-check", daemon=True).start()
+
+
 STATS_FIRST_DELAY = 60  # 秒：启动后等一会儿再发匿名统计，排在检查新版本后面
 STATS_FIRST_DELAY_BACKGROUND = 180  # 开机自启时：等网络连上
 STATS_EVERY = 3600  # 之后每小时一次（没有要发的就不联网；2026-10-22 用户决定，原来是 8 小时）
@@ -730,6 +777,9 @@ def main():
             start_notice_checker(log, icon.notify, stop_update_checker,  # 公告：和检查新版本共用一个开关
                                  lambda: game_running(recorder.game_names),
                                  NOTICE_FIRST_DELAY_BACKGROUND if args.background else NOTICE_FIRST_DELAY)
+            start_follow_checker(log, icon.notify, stop_update_checker,  # 关注的主播开播通知：玩家打开了才联网
+                                 lambda: game_running(recorder.game_names),
+                                 FOLLOW_FIRST_DELAY_BACKGROUND if args.background else FOLLOW_FIRST_DELAY)
             start_telemetry(log, stop_update_checker,  # 用户同意了才发匿名统计
                             STATS_FIRST_DELAY_BACKGROUND if args.background else STATS_FIRST_DELAY)
             try:  # 绑定了微信小程序才联网，定时上传战绩（cloud_sync.py）。小程序的文件只在开发者电脑上，

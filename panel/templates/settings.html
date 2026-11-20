@@ -456,6 +456,28 @@
       </div>
     </section>
 
+    {# 电竞页的关注（2026-11-20 用户要的）：关注的主播开播时用 Windows 通知提醒。第一次关注时电竞页问过一次，这里随时能改；
+       开着时托盘里的 Evo 每 5 分钟向直播平台问一次，只问关注的主播（panel_esports.py 的 /esports/follow-notify） #}
+    <section class="card settings-card" aria-labelledby="h-follow">
+      <h2 id="h-follow">电竞</h2>
+      <div class="setting">
+        <div class="setting-text">
+          <div class="setting-name" id="follow-notify-name">关注的主播开播时通知我</div>
+          <div class="setting-desc">打开以后，Evo 每 <span class="num">5</span> 分钟向直播平台问一次，只问你在电竞页关注的主播；Apex 开着时不问也不提醒，关了游戏再补。{% if not esports_follow.count %}你还没有关注任何人：在电竞页点主播旁边的星星。{% else %}现在关注了 <span class="num">{{ esports_follow.count }}</span> 位。{% endif %}</div>
+        </div>
+        <form method="post" action="{{ url_for('esports.follow_notify') }}">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="on" value="{{ '0' if esports_follow.notify else '1' }}">
+          <input type="hidden" name="next" value="{{ url_for('settings') }}">
+          <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if esports_follow.notify else 'false' }}"
+                  aria-labelledby="follow-notify-name">
+            <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            <span class="switch-state" aria-hidden="true">{{ '已开启' if esports_follow.notify else '已关闭' }}</span>
+          </button>
+        </form>
+      </div>
+    </section>
+
     {% import "_update.html" as upd with context %}
     <section class="card settings-card" aria-labelledby="h-update">
       <h2 id="h-update">更新</h2>
