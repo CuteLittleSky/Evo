@@ -159,11 +159,18 @@ def mss_checks():
         frame = real.grab()
         if frame is not None:
             break
+    size = (real.width, real.height)
     real.release()
     cam = capture.MssCamera()
     shot = cam.grab()
-    out[f"mss 截主显示器，尺寸和 dxcam 一样（{cam.width}x{cam.height}，dxcam {None if frame is None else frame.shape}）"] = (
-        frame is not None and shot.shape == frame.shape and (cam.width, cam.height) == (frame.shape[1], frame.shape[0]))
+    if frame is None and not fake_game.screen_ready():
+        # 这台电脑现在 dxcam 一张画面都拿不到（显示器息屏了）：只比尺寸，画面那一项跳过
+        out[f"mss 截主显示器，尺寸和 dxcam 一样（{cam.width}x{cam.height}，dxcam 的输出 {size[0]}x{size[1]}）"
+            "；这台电脑现在截不到屏幕（显示器息屏？），比画面这一项跳过"] = (
+            (cam.width, cam.height) == size and shot.shape[:2] == (size[1], size[0]))
+    else:
+        out[f"mss 截主显示器，尺寸和 dxcam 一样（{cam.width}x{cam.height}，dxcam {None if frame is None else frame.shape}）"] = (
+            frame is not None and shot.shape == frame.shape and (cam.width, cam.height) == (frame.shape[1], frame.shape[0]))
     # 屏幕一直在变（两张不是同一时刻截的），不比内容；颜色顺序拿同一张截图和 mss 自己给的 RGB 比
     raw = cam._sct.grab(cam._mon)
     rgb = np.frombuffer(raw.rgb, np.uint8).reshape(raw.height, raw.width, 3)

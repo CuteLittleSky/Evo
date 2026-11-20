@@ -39,7 +39,7 @@ import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fake_game import CODE, ROOT, SHOTS, MissingShots, load, report, shot  # 要在项目代码之前导入
+from fake_game import CODE, ROOT, SHOTS, MissingShots, load, report, screen_ready, shot  # 要在项目代码之前导入
 
 import numpy as np
 from PIL import Image
@@ -845,9 +845,12 @@ def real_checks(tmp):
         names = zf.namelist()
         info = json.loads(zf.read("info.json"))
     frames = [n for n in names if n.startswith("frames/")]
+    # 这台电脑现在截不到屏幕（显示器息屏了）：截图那一项跳过，别的照查
+    dark = not frames and not screen_ready()
+    skipped = "；这台电脑现在截不到屏幕（显示器息屏？），有没有截图这一项跳过" if dark else ""
     out_checks = {
-        f"真的截几秒：压缩包里有截图（{len(frames)} 张）、诊断信息、截屏记录、工具日志、tester.json":
-            frames and all(n in names for n in ("info.json", "info.txt", "captures.csv", "tool_log.txt", "tester.json")),
+        f"真的截几秒：压缩包里有截图（{len(frames)} 张）、诊断信息、截屏记录、工具日志、tester.json{skipped}":
+            (frames or dark) and all(n in names for n in ("info.json", "info.txt", "captures.csv", "tool_log.txt", "tester.json")),
         f"截屏对象和 Evo 一样建好了（{info['dxcam']['截屏对象']}，{info['dxcam']['截法']}）":
             info["dxcam"]["截屏对象"] == "建好了" and info["dxcam"]["截法"] == "dxcam",
         f"诊断信息里列了全部显卡（{info['dxcam'].get('全部显卡')}）、Evo.exe 的图形设置":
@@ -868,8 +871,10 @@ def real_checks(tmp):
         tester = json.loads(zf.read("tester.json")) if zf else {}
         rows = len(zf.read("captures.csv").decode("utf-8-sig").splitlines()) - 1 if zf else 0
         saved = folder is None or any(n.startswith(folder) for n in names)
+        no_shot = not saved and dark  # 截不到屏幕时存不下截图：这一项跳过
         out_checks[f"真的截几秒（{project}）：截了 {rows} 次{f'、{folder} 里有截图' if folder else ''}、"
-                   f"tester.json 写着项目（{tester.get('项目')}）"] = rows >= 4 and saved and tester.get("项目") == project
+                   f"tester.json 写着项目（{tester.get('项目')}）{skipped if no_shot else ''}"] = (
+            rows >= 4 and (saved or no_shot) and tester.get("项目") == project)
     return out_checks
 
 
