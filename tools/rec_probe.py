@@ -101,11 +101,17 @@ def encoder_args(encoder, fps, bitrate):
     return args
 
 
-def source_filter(source, fps, output_idx=0, window="r5apex"):
+SIZES = {"native": None, "1080p": (1920, 1080), "720p": (1280, 720)}  # 录多大：None = 和抓到的一样
+
+
+def source_filter(source, fps, output_idx=0, window="r5apex", size=None):
+    """抓画面的滤镜。size=(宽, 高)：Windows Graphics Capture 在抓的时候就缩放（显卡上做，CPU 和录原画面差不多；
+    2026-11-20 实测）。桌面复制不能这样缩，要另外缩（scale_d3d11，这台电脑上用不了）。"""
+    scale = f":width={size[0]}:height={size[1]}:resize_mode=scale_aspect:scale_mode=bicubic" if size else ""
     if source == "gfxcapture":
-        return f"gfxcapture=window_exe={window}:max_framerate={fps}:capture_cursor=0"
+        return f"gfxcapture=window_exe={window}:max_framerate={fps}:capture_cursor=0{scale}"
     if source == "gfxcapture-monitor":
-        return f"gfxcapture=monitor_idx={output_idx}:max_framerate={fps}:capture_cursor=0"
+        return f"gfxcapture=monitor_idx={output_idx}:max_framerate={fps}:capture_cursor=0{scale}"
     return f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=0"
 
 
@@ -248,10 +254,10 @@ class Recorder:
     def command(self):
         a = self.args
         n = self.runs
-        width = height = None
-        if a.size == "1080p":
-            width, height = 1920, 1080
-        source = source_filter(a.source, a.fps, a.output_idx, a.window)
+        size = SIZES[a.size]
+        in_capture = a.source.startswith("gfxcapture")  # Windows Graphics Capture 抓的时候就缩放
+        width, height = size if size and not in_capture else (None, None)
+        source = source_filter(a.source, a.fps, a.output_idx, a.window, size if in_capture else None)
         stamp = f"settb=AVTB,setpts=RTCTIME-{self.t0_us}"  # 时间戳 = 抓到这一帧时电脑的时钟 - t0（微秒）
         # 送图用 fps 滤镜每 0.3 秒挑一帧，round=up = 挑这一刻之前的最后一帧（晚 0–33 毫秒）。默认的 round=near
         # 挑的是这一刻前后 0.15 秒里最后一帧，比标的时间晚 150–180 毫秒（2026-11-19 第二局实测，用 testsrc2 核对过）
@@ -407,7 +413,10 @@ def record(args, label=None, audio_pid=None, on_ready=None):
     size = grab_size(ffmpeg, source_filter(args.source, args.fps, args.output_idx, args.window))
     if isinstance(size, str):
         sys.exit(f"抓不到画面：{size}")
-    width, height = (1920, 1080) if args.size == "1080p" else size
+    if SIZES[args.size] and not args.source.startswith("gfxcapture"):
+        print("提醒：桌面复制不能在抓的时候缩放，要在显卡上另外缩（scale_d3d11），有的电脑上用不了；"
+              "录 1080p / 720p 建议加 --source gfxcapture")
+    width, height = SIZES[args.size] or size
     if not args.bitrate:
         args.bitrate = default_bitrate(args.encoder, width, height, args.fps)
     run_dir = new_run_dir(label or args.label)
@@ -1097,7 +1106,8 @@ def main():
     r.add_argument("--minutes", type=float, default=10)
     r.add_argument("--encoder", default="auto", help="auto 或 check 里打勾的，如 hevc_nvenc、av1_nvenc")
     r.add_argument("--fps", type=int, default=60)
-    r.add_argument("--size", choices=["native", "1080p"], default="native", help="录原分辨率还是缩到 1080p（在显卡上缩）")
+    r.add_argument("--size", choices=list(SIZES), default="native",
+                   help="录多大：native = 原画面；1080p、720p 配 --source gfxcapture（抓的时候就缩放）")
     r.add_argument("--bitrate", type=int, default=None, help="码率（bps），不给就按分辨率估")
     r.add_argument("--source", choices=["ddagrab", "gfxcapture", "gfxcapture-monitor"], default="ddagrab",
                    help="ddagrab = 桌面复制（推荐）；gfxcapture = 只抓 Apex 的窗口")
