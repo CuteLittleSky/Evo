@@ -53,6 +53,7 @@
       "name": "抖音",
       "room_url": "https://live.douyin.com/{room}",
       "page_url": "https://live.douyin.com/{room}",
+      "danmaku_url": "wss://webcast100-ws-web-lq.douyin.com/webcast/im/push/v2/",
       "room_pattern": "[A-Za-z0-9_]{1,24}",
       "page_max_bytes": 3000000,
       "player": "direct",

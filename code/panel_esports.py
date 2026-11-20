@@ -29,6 +29,7 @@
 这个文件不加载识别用的库。规则见 docs/面板.md"赛事页""看直播页"。
 """
 
+import json
 import logging
 import re
 import threading
@@ -39,6 +40,7 @@ from flask import Blueprint, Response, abort, current_app, flash, jsonify, redir
 
 import bili_login
 import danmaku
+import douyin_chat
 import esports_data
 import flv_relay
 import game_detect
@@ -64,6 +66,7 @@ LOGINS = {"bilibili": bili_login}
 RATE_RE = re.compile(r"-?\d{1,5}|[a-z]{1,12}")  # 清晰度：斗鱼、B站是编号，抖音是档名（origin、uhd、hd……）
 SLOTS = ("0", "1", "2", "3")  # 多屏同看：页面上最多 4 格，每格一路中转
 _playing = {}  # 格子 → 正在中转的那一路（每格一次只播一路：这一格开新的一路就停掉它上一路）
+_chats = {}    # 格子 → 正在转的那一路抖音弹幕（同上，每格一次只转一路）
 _playing_lock = threading.Lock()
 log = logging.getLogger("evo")
 _status = {"at": 0.0, "found": {}}  # 上次查到的：{选手 id: live_status 的结果}
@@ -328,7 +331,49 @@ def danmaku_info(player_id):
         return jsonify(ok=False, reason="upstream", detail=str(e))
     if found is None:
         return jsonify(ok=False, reason="unsupported"), 404
+    if found["platform"] == "douyin":  # 抖音：页面连不了，连面板的这个地址，由 Evo 的后台去连抖音再转过来
+        found = {**found, "feed": url_for("esports.danmaku_feed", player_id=player_id, s=_slot(), t=current_app.config["TOKEN"])}
     return jsonify(ok=True, **found)
+
+
+@bp.get("/esports/danmaku-feed/<player_id>")
+def danmaku_feed(player_id):
+    """抖音的弹幕（douyin_chat.py）：Evo 的后台连抖音的弹幕服务器，把弹幕一条条转给页面（text/event-stream，每条是 {"text": 内容}）。
+    要带面板的口令（别的网页不能让 Evo 去连平台）；每一格一次只转一路。页面断开就跟着断开抖音。连不上回 502 和原因。"""
+    if request.args.get("t") != current_app.config["TOKEN"]:
+        abort(403)
+    player = _player(player_id)
+    if player is None or player["platform"] != "douyin" or not danmaku.supported("douyin"):
+        abort(404)
+    try:
+        feed = douyin_chat.Feed(player["room"])
+    except Exception as e:  # noqa: BLE001  没开播、连不上、被拒绝：页面就不显示弹幕
+        log.info("看直播：douyin 房间 %s 的弹幕没连上：%s", player["room"], e)
+        return jsonify(ok=False, reason="upstream", detail=str(e)), 502
+    slot = _slot()
+    with _playing_lock:
+        old, _chats[slot] = _chats.get(slot), feed
+    if old is not None:
+        old.close()
+    room = player["room"]
+
+    def events():
+        yield ": ok\n\n"
+        quiet = time.monotonic()
+        try:
+            for batch in feed.texts():
+                for text in batch[:20]:  # 一次最多转 20 条：再多页面也显示不下
+                    yield "data: " + json.dumps({"text": text}, ensure_ascii=False) + "\n\n"
+                if batch:
+                    quiet = time.monotonic()
+                elif time.monotonic() - quiet > 15:  # 没有弹幕时隔一会儿发一行空的：页面走了这里才发现得了
+                    quiet = time.monotonic()
+                    yield ": keep\n\n"
+        except douyin_chat.ChatError as e:
+            log.info("看直播：douyin 房间 %s 的弹幕断了：%s", room, e)
+
+    log.info("看直播：开始转 douyin 房间 %s 的弹幕", room)
+    return Response(events(), mimetype="text/event-stream", headers={"Cache-Control": "no-store"})
 
 
 @bp.post("/esports/play-failed/<player_id>")

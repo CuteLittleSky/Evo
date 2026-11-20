@@ -60,7 +60,7 @@ def main():
     except live_status.StatusError:
         refused = True
     out["没做的平台、房间号写得不对：不给，也不去问；斗鱼回的数据里没有房间号：说明原因"] = (
-        danmaku.info("huya", "88", get) is None and danmaku.info("douyin", "88", get) is None
+        danmaku.info("huya", "88", get) is None and danmaku.info("douyin", "88", get) == {"platform": "douyin"}
         and danmaku.info("douyu", "8x8", get) is None and danmaku.info("bilibili", "8x8", get) is None and len(asked) == count and refused
         and danmaku.supported("douyu") and not danmaku.supported("huya") and not danmaku.supported("nope"))
     real_url = live_status.PLATFORMS["douyu"]["danmaku_url"]

@@ -531,6 +531,8 @@
     function shoot(cell, text, color) {
       var layer = cell.layer;
       if (!layer || !text) return;
+      // 窗口最小化、切走时动画是停着的，飘不完的弹幕会越攒越多：看不见就不放；同时在飘的也有上限
+      if (document.visibilityState !== "visible" || layer.childElementCount >= 80) return;
       var width = layer.clientWidth, height = layer.clientHeight;
       if (!width || !height) return;
       var size = Math.max(14, Math.min(24, Math.round(width / 40))), line = Math.round(size * 1.45);
@@ -638,6 +640,16 @@
       var chat = cell.chat = { id: p.id, socket: null, beat: null, retry: null, tries: 0 };
       function connect(found) {
         if (cell.chat !== chat) return;
+        if (found.feed) {  // 抖音：页面连不了抖音，由 Evo 的后台去连，这里收它转过来的（一行一条）
+          var source = chat.socket = new EventSource(found.feed);
+          source.onmessage = function (e) {
+            if (cell.chat !== chat) return;
+            chat.tries = 0;
+            try { shoot(cell, String(JSON.parse(e.data).text || ""), ""); } catch (err) {}
+          };
+          source.onerror = function () { if (cell.chat !== chat || ++chat.tries > 5) source.close(); };  // 浏览器自己会重连，连着不行就算了
+          return;
+        }
         var bili = found.platform === "bilibili";
         // B站给了几个弹幕服务器：连不上就换下一个
         var socket = chat.socket = new WebSocket(bili ? found.urls[chat.tries % found.urls.length] : found.url);
@@ -665,9 +677,9 @@
           chat.retry = setTimeout(function () { connect(found); }, 2000 * chat.tries);
         };
       }
-      fetch(p.danmaku, { cache: "no-store" }).then(function (r) { return r.json(); })
+      fetch(p.danmaku + "?s=" + cell.index, { cache: "no-store" }).then(function (r) { return r.json(); })
         .then(function (found) {
-          if (found.ok && (found.platform === "douyu" || (found.platform === "bilibili" && found.urls && found.urls.length))) connect(found);
+          if (found.ok && (found.platform === "douyu" || found.feed || (found.platform === "bilibili" && found.urls && found.urls.length))) connect(found);
         })
         .catch(function () {});
     }

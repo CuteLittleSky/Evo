@@ -7,7 +7,9 @@
 - B站：弹幕服务器要一个口令。后台用**游客身份**向 B站要（getDanmuInfo，要 WBI 签名和游客的设备号 buvid）：
   不带玩家的 B站登录（弹幕只显示内容，用不着名字；登录凭证照旧只用来要视频地址），所以 B站那边看到的是一位没登录的观众。
   签名用的两个 key（nav 接口给）和 buvid（spi 接口给）在内存里记 6 小时。选手库里写的可能是短号，先换成真实房间号
-- 抖音、虎牙还没做：返回 None，页面就不显示弹幕的开关
+- 抖音：页面连不了（连接时要带网页脚本带不了的 Cookie 和来源页），由托盘里的 Evo 去连、再转给页面（douyin_chat.py，
+  面板的 /esports/danmaku-feed/<选手>）。这里只回 {"platform": "douyin"}，转弹幕的地址由面板填
+- 虎牙还没做（Evo 里本来就不播虎牙）：返回 None，页面就不显示弹幕的开关
 
 用法：python code/danmaku.py 房间号 [douyu / bilibili]   → 打印页面会拿到的东西（B站的口令不打印）
 """
@@ -126,7 +128,12 @@ def bilibili(room, ask=None, now=None):
     return {"platform": "bilibili", "urls": urls[:4], "room": long_id, "token": token, "buvid": buvid}
 
 
-SOURCES = {"douyu": douyu, "bilibili": bilibili}
+def douyin(room, get=None):
+    """抖音：没有页面能直接连的地址，只告诉页面"有"（转弹幕的地址由面板填）。"""
+    return {"platform": "douyin"}
+
+
+SOURCES = {"douyu": douyu, "bilibili": bilibili, "douyin": douyin}
 
 
 def supported(platform):
