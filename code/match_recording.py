@@ -7,10 +7,11 @@
   看的是 InMatchWatcher 记下的状态（in_match.py）；击倒对手 knock 看画面中间那一行的"击倒"（hud.knock，只比外观，
   录像开着时才看）：rearm_seconds 没看到才算下一次，还在显示时左右挪了 moved 以上（换了名字）也算
 - 右上角每变一次记一个时刻（.json 的 hud_changes）
-- 击杀 kill（.json 里还带 kills = 这一下之后的击杀数、count = 一下多了几个）：和 Evo 一贯的"对局中只存、赛后才读"一样。
-  对局中右上角击杀那一行里击杀数那一格（hud.kill_cell：先找骷髅图标）变了，存下这一行（hud.kp_snip）和时刻（只比外观）；回到大厅后每截一张
-  读几块（hud.read_kills，用识别引擎），击杀数比前一块大就是一次击杀（kill_events：读错的不标），写进那一局的 .json。
-  停止记录时还没读完的一次读完。不解码录像，时刻精确到截图的间隔（0.3 秒）
+- 击杀 kill、助攻 assist（.json 里还带 kills / assists = 这一下之后的数、count = 一下多了几个；助攻 2026-11-20 加的）：
+  和 Evo 一贯的"对局中只存、赛后才读"一样。对局中右上角击杀 / 助攻那一行里击杀数、助攻数那两格（hud.kp_cells：先找骷髅、
+  握手图标）有一格变了，存下这一行（hud.kp_snip）和时刻（只比外观）；回到大厅后每截一张读几块（hud.read_kp，用识别引擎），
+  比前一块大就是一次（count_events：读错的不标），写进那一局的 .json。停止记录时还没读完的一次读完。
+  不解码录像，时刻精确到截图的间隔（0.3 秒）
 - 停：这一局结束（结算画面、回到大厅、停止记录）以后再录 tail_seconds 秒，拼 MP4 在后台线程里做，不耽误读结算画面
 - 设置里录不了（找不到 ffmpeg、没有硬件编码器、抓不到画面）：日志里说一次，每局开始时再试
 """
@@ -47,9 +48,12 @@ def options_from(settings, rules=None):
     return recorder.options_from(settings, rules)
 
 
-def kill_events(values, max_jump=5):
-    """[(时刻, 击杀数或 None)]（按时间排好）→ [(时刻, 这一下之后的击杀数, 多了几个)]。击杀数只会变多：
-    读不出的跳过；比前一个大才算一次击杀；一下子多出 max_jump 以上、或者紧接着的下一块读到的比它小，当作这一块读错了，
+COUNTERS = {"kills": ("kill", "击杀"), "assists": ("assist", "助攻")}  # 右上角的哪一项 → (事件, 显示名)
+
+
+def count_events(values, max_jump=5):
+    """[(时刻, 击杀数或助攻数或 None)]（按时间排好）→ [(时刻, 这一下之后的数, 多了几个)]。这两个数只会变多：
+    读不出的跳过；比前一个大才算一次；一下子多出 max_jump 以上、或者紧接着的下一块读到的比它小，当作这一块读错了，
     不标（原则 4：宁可少标，不标错）。"""
     known = [(t, k) for t, k in values if k is not None]
     out, prev = [], 0
@@ -61,6 +65,9 @@ def kill_events(values, max_jump=5):
         out.append((t, k, k - prev))
         prev = k
     return out
+
+
+kill_events = count_events  # 以前的名字
 
 
 def add_events(video, events):
@@ -102,7 +109,7 @@ class MatchRecorder:
         self.workers = []  # 后台拼 MP4 的线程
         self.legend_name = None
         self.recovered = False  # 上次没拼完的已经拼过了（每次记录只做一次）
-        self.kp_snips, self.kp_last = [], None  # 这一局击杀那一行变了的时候存下的 (时刻, 小块)；上一块的灰度图
+        self.kp_snips, self.kp_last = [], {}  # 这一局击杀 / 助攻那一行变了的时候存下的 (时刻, 小块)；{项: 上一块存下时那一格的白字}
         self.pending = []  # 录完了、还没读击杀数的几局（回到大厅后读，见 _read_kills）
         self.hud = None  # 读击杀数用（InMatchWatcher 的 hud，停止记录时还要用）
 
@@ -172,7 +179,7 @@ class MatchRecorder:
             return
         self.rec, self.state, self.top, self.stop_at = rec, in_match.state, None, None
         self.knock_seen, self.knock_x = None, None
-        self.kp_snips, self.kp_last = [], None
+        self.kp_snips, self.kp_last = [], {}
         self.limit = float(settings.get("recording_limit_gb", DEFAULT_LIMIT_GB)) * 2 ** 30
         self.next_poll = self.clock() + POLL_SECONDS
         if not self.recovered and ffmpeg:  # 上次 Evo 崩了没拼完的：这次第一次开录时在后台拼好
@@ -215,29 +222,31 @@ class MatchRecorder:
         self.knock_seen, self.knock_x = tick, x
 
     def _watch_kp(self, hud, snip):
-        """击杀数那一格（骷髅图标右边的数字）的白字和上一块存下的比，变了 change 以上就存下这一行和时刻，一局结束后读。
-        不看整行：这一行背后是半透明的底，跟着画面一直变（2026-11-20 那局几乎每帧都算变了）。"""
+        """击杀数、助攻数那两格（骷髅、握手图标右边的数字）的白字各自和上一块存下的比，有一格变了 change 以上就存下这一行
+        和时刻，一局结束后读。不看整行：这一行背后是半透明的底，跟着画面一直变（2026-11-20 那局几乎每帧都算变了）。
+        这一行没显示（击杀、助攻都是 0）时两格都是 None，不存。"""
         cfg = self.rules["kills"]
-        cell = hud.kill_cell(snip)
-        if cell is None:  # 这一行没显示（击杀、助攻都是 0）
-            return
-        mask = cell >= cfg["level"]
-        if self.kp_last is not None and mask.shape == self.kp_last.shape and \
-                float(np.mean(mask != self.kp_last)) < cfg["change"]:
-            return
-        self.kp_last = mask
-        if len(self.kp_snips) < cfg["max_snips"]:
+        changed = False
+        for name, cell in hud.kp_cells(snip).items():
+            if cell is None:
+                continue
+            mask = cell >= cfg["level"]
+            last = self.kp_last.get(name)
+            if last is None or mask.shape != last.shape or float(np.mean(mask != last)) >= cfg["change"]:
+                self.kp_last[name] = mask
+                changed = True
+        if changed and len(self.kp_snips) < cfg["max_snips"]:
             self.kp_snips.append((self.rec.since_t0(), snip))
 
     def _read_kills(self, budget):
-        """读最早那一局存下的击杀那一行，最多读 budget 块；读完了、MP4 也拼好了，算出每次击杀写进 .json。"""
+        """读最早那一局存下的击杀 / 助攻那一行，最多读 budget 块；读完了、MP4 也拼好了，算出每次击杀、助攻写进 .json。"""
         job = self.pending[0]
         while budget > 0 and job["next"] < len(job["snips"]):
             t, snip = job["snips"][job["next"]]
             try:
-                value = self.hud.read_kills(snip)
+                value = self.hud.read_kp(snip)
             except Exception:  # noqa: BLE001 读一块出错不影响别的（也不影响记录）
-                value = None
+                value = {}
             job["values"].append((t, value))
             job["next"] += 1
             budget -= 1
@@ -246,9 +255,14 @@ class MatchRecorder:
         self.pending.pop(0)
         if job["path"] is None:
             return
-        found = kill_events(job["values"], self.rules["kills"]["max_jump"])
-        if found and add_events(job["path"], [{"t": t, "kind": "kill", "kills": k, "count": n} for t, k, n in found]):
-            self.log(f"录像：标上了 {len(found)} 次击杀（读了 {len(job['values'])} 块右上角）")
+        events, said = [], []
+        for key, (kind, label) in COUNTERS.items():
+            found = count_events([(t, value.get(key)) for t, value in job["values"]], self.rules["kills"]["max_jump"])
+            events += [{"t": t, "kind": kind, key: k, "count": n} for t, k, n in found]
+            if found:
+                said.append(f"{len(found)} 次{label}")
+        if events and add_events(job["path"], events):
+            self.log(f"录像：标上了 {'、'.join(said)}（读了 {len(job['values'])} 块右上角）")
 
     def _finish(self):
         rec, self.rec = self.rec, None
@@ -256,7 +270,7 @@ class MatchRecorder:
         self.legend_name, self.stop_at = None, None
         limit, out_dir = self.limit, rec.out_dir
         job = {"snips": self.kp_snips, "next": 0, "values": [], "path": None, "finished": threading.Event()}
-        self.kp_snips, self.kp_last = [], None
+        self.kp_snips, self.kp_last = [], {}
         if job["snips"]:
             self.pending.append(job)
 

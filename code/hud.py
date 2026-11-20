@@ -32,6 +32,7 @@ from storage import name_key
 CONFIG_NAME = "hud.json"
 TOP_FIELDS = ("squads_left", "kills", "assists", "participation", "damage", "rp_delta")
 KP_ROW = ("kills", "assists", "participation")  # 右上角同一行（从左往右）：全是 0 时整行不显示
+COUNTED = ("kills", "assists")  # 录像上标出来的两项（击杀、助攻）：只会变多，变了就是一次
 TOP_LABELS = {"squads_left": "剩余小队", "kills": "击杀", "assists": "助攻", "participation": "老板分",
               "damage": "伤害", "rp_delta": "RP"}
 
@@ -175,28 +176,34 @@ class Hud:
         top = self.cfg["top_right"]
         return Snip(frame, top["kp_row"]["area"], self.base, top.get("anchor"))
 
-    def kill_cell(self, snip):
-        """击杀数那一格：骷髅图标右边的数字（基准大小的灰度图），骷髅图标不在（这一行没显示）返回 None。只比外观。
-        这一行靠右排、跟着后面几项的宽度左右挪（2026-11-20 那局录像：骷髅图标在基准 x 1575 左右），所以先找图标。
-        录像找击杀用：这一格变了才存（match_recording._watch_kp）。"""
+    def kp_cells(self, snip):
+        """击杀、助攻那两格：骷髅、握手图标右边的数字（基准大小的灰度图），{"kills": 图, "assists": 图}，图标不在的是 None。
+        只比外观。这一行靠右排、跟着前面数字的宽度左右挪（2026-11-20 那局录像：骷髅图标在基准 x 1575 左右），所以先找图标。
+        录像找击杀、助攻用：某一格变了才存这一行（match_recording._watch_kp）。"""
         top = self.cfg["top_right"]
         row = top["kp_row"]
         icons = self._kp_icons(snip, row)
-        if "kills" not in icons:
-            return None
         y, h = row["digits"]
-        return snip.gray([icons["kills"][1] + 1, y, row["digit_width"], h])
+        return {name: snip.gray([icons[name][1] + 1, y, row["digit_width"], h]) if name in icons else None
+                for name in COUNTED}
 
-    def read_kills(self, snip):
-        """读一块（kp_snip 或 top_snip）里的击杀数：这一行没显示（击杀、助攻都是 0）返回 0，显示着但读不出返回 None。
-        规则和 read_top 一样（先找每一项前面的图标），只读击杀这一个数。要用识别引擎：一局结束后才调用。"""
+    def kill_cell(self, snip):
+        """击杀数那一格（kp_cells 的 kills）。"""
+        return self.kp_cells(snip)["kills"]
+
+    def read_kp(self, snip):
+        """读一块（kp_snip 或 top_snip）里的击杀数、助攻数：{"kills": 数, "assists": 数}。这一行没显示（都是 0）时都是 0；
+        显示着但读不出（或那一项的图标没找到）是 None。规则和 read_top 一样（先找每一项前面的图标）。
+        要用识别引擎：一局结束后才调用。"""
         top = self.cfg["top_right"]
         icons = self._kp_icons(snip, top["kp_row"])
         if "kills" not in icons and "assists" not in icons:
-            return 0
-        if "kills" not in icons:
-            return None
-        return self._kp_number(snip, top, icons, "kills")[0]
+            return {name: 0 for name in COUNTED}
+        return {name: self._kp_number(snip, top, icons, name)[0] for name in COUNTED}
+
+    def read_kills(self, snip):
+        """击杀数（read_kp 的 kills）。"""
+        return self.read_kp(snip)["kills"]
 
     def mate_name_snip(self, frame, slot):
         mates = self.cfg["teammates"]

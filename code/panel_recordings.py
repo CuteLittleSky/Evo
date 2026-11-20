@@ -5,7 +5,7 @@
   对上的那一局战绩（名次徽章、击杀、伤害）和事件数。从新到旧。上面一行：共几个、占多大、上限、"打开文件夹"
 - 上次 Evo 崩了拼回来的（名字带"_未完成"，没有 .json）也列出来，标"未完成"
 播放 /recordings/watch?v=<年-月/文件名>（recordings_watch.html）
-- 播放器（不自动播放）、下面自己画的时间轴：事件标在对应的位置（击倒对手、倒地、被扶起、成盒、被复活、冠军、击杀），断掉的那几段
+- 播放器（不自动播放）、下面自己画的时间轴：事件标在对应的位置（击倒对手、倒地、被扶起、成盒、被复活、冠军、击杀、助攻），断掉的那几段
   画成斜线；点事件从它前 EVENT_LEAD 秒开始放。事件也按时间列在下面（按钮，键盘、读屏软件都能用）
 - 网址带 t=秒：从那一刻开始（战绩页以后可以直接跳到某个事件）
 - "在资源管理器中显示"、"删除"（先确认；删 MP4 和同名的 .json、.jpg）
@@ -47,6 +47,7 @@ EVENTS = {  # 事件 → (显示名, 样式)：颜色以外还写着名字（时
     "knock": ("击倒", "ev-knock"),
     "champion": ("冠军", "ev-champion"),
     "kill": ("击杀", "ev-kill"),
+    "assist": ("助攻", "ev-assist"),
 }
 EVENT_LEAD = 3  # 点事件时从它前几秒开始放：看得到是怎么发生的
 MATCH_SLACK = timedelta(minutes=2)  # 战绩里那一局的结束时刻比录像的结尾晚这么多以内，也算同一局（结算画面上才记下）
@@ -128,7 +129,7 @@ def load(video):
     for e in sorted(meta.get("events", []), key=lambda e: e.get("t") or 0):  # 击杀是赛后才补进去的，按时间排
         if e.get("kind") in EVENTS and isinstance(e.get("t"), (int, float)):
             label, css = EVENTS[e["kind"]]
-            if e["kind"] == "kill" and (e.get("count") or 1) > 1:  # 一下子多了几个击杀（两次截图之间连着补掉两个）
+            if e["kind"] in ("kill", "assist") and (e.get("count") or 1) > 1:  # 一下子多了几个（两次截图之间连着两个）
                 label = f"{label} ×{e['count']}"
             events.append({"t": e["t"], "clock": clock(e["t"]), "label": label, "css": css,
                            "left": min(100.0, max(0.0, e["t"] / duration * 100)) if duration else 0})

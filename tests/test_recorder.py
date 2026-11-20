@@ -385,19 +385,22 @@ def match_checks(tmp):
     out["找击杀：写进录像旁边的 .json，时刻换成 MP4 里的位置（减掉第一帧），按时间排好"] = ok and [
         (e["kind"], e["t"]) for e in events] == [("kill", 8.0), ("knock", 10.0), ("kill", 12.0)]
 
-    # 击杀：对局中击杀数那一格变了才存，回到大厅读，读完写进 .json
+    # 击杀、助攻：对局中那两格有一格变了才存，回到大厅读，读完写进 .json
     m, im = make(), FakeInMatch()
     cells = {"a": np.zeros((28, 26), np.uint8), "b": np.full((28, 26), 255, np.uint8)}
-    plan = []  # 每一帧：(击杀那一格, 读出来的击杀数)
+    plan = []  # 每一帧：(击杀那一格, 助攻那一格, 读出来的击杀数, 助攻数)
     im.hud.kp_snip = lambda frame: plan[0]
-    im.hud.kill_cell = lambda snip: None if snip[0] is None else cells[snip[0]]
-    im.hud.read_kills = lambda snip: snip[1]
+    im.hud.kp_cells = lambda snip: {"kills": None if snip[0] is None else cells[snip[0]],
+                                    "assists": None if snip[1] is None else cells[snip[1]]}
+    im.hud.read_kp = lambda snip: {"kills": snip[2], "assists": snip[3]}
     im.hud.knock, im.hud.cfg = (lambda frame: None), {}
     step(m, "match_start", im)
     im.started, im.active, im.state = 8, True, "存活"
     rec = FakeRecording.made[-1]
-    for n, (cell, kills) in enumerate([(None, 0), ("a", 0), ("a", 0), ("b", 1), ("b", 1), ("a", 2)]):
-        plan[:] = [(cell, kills)]
+    frames = [(None, None, 0, 0), ("a", "a", 0, 0), ("a", "a", 0, 0), ("b", "a", 1, 0), ("b", "a", 1, 0),
+              ("b", "b", 1, 1), ("a", "b", 2, 1)]  # 第 4 帧击杀、第 6 帧助攻、第 7 帧又一个击杀
+    for n, item in enumerate(frames):
+        plan[:] = [item]
         im.tops = list(im.tops) + [n]  # InMatchWatcher 存了新的一块右上角
         clock[0] += 0.3
         m.update(None, im, frame="截图")
@@ -415,10 +418,13 @@ def match_checks(tmp):
     before = json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))["events"]
     for _ in range(3):
         step(m, "lobby", im)
-    kills = [e for e in json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))["events"] if e["kind"] == "kill"]
-    out[f"击杀：对局中击杀数那一格变了才存（存了 {stored} 块），结算画面上不读，回到大厅读完写进 .json（{kills}）"] = (
-        stored == 3 and before == [] and [(e["kills"], e["count"]) for e in kills] == [(1, 1), (2, 1)]
-        and not m.pending and any("标上了 2 次击杀" in line for line in logs))
+    events = json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))["events"]
+    kills = [e for e in events if e["kind"] == "kill"]
+    assists = [e for e in events if e["kind"] == "assist"]
+    out[f"击杀、助攻：对局中那两格有一格变了才存（存了 {stored} 块），结算画面上不读，回到大厅读完写进 .json（{events}）"] = (
+        stored == 4 and before == [] and [(e["kills"], e["count"]) for e in kills] == [(1, 1), (2, 1)]
+        and [(e["assists"], e["count"]) for e in assists] == [(1, 1)]
+        and not m.pending and any("标上了 2 次击杀、1 次助攻" in line for line in logs))
     m.close()
 
     # 击倒对手：中间那一行的"击倒"（hud.knock 给的位置）

@@ -1580,6 +1580,7 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .ev-champion { --ev: var(--p2-bg); }
 .ev-kill { --ev: var(--accent); }
 .ev-knock { --ev: var(--series-1); }  /* 击倒对手：橙色 */
+.ev-assist { --ev: var(--series-4); }  /* 助攻：粉色 */
 .rec-events { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .rec-event { font: inherit; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
   background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; }
