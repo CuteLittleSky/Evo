@@ -28,10 +28,12 @@
       {% elif event.mark %}
       <span class="es-tag watch-mark">{{ event.mark }}</span>
       {% endif %}
-      {# 多屏同看（2026-11-19 用户要的）：播放器那一块分成 1 / 2 / 4 格，每格一路；选中的那一格有声音，右边点人就放进选中的那一格 #}
+      {# 多屏同看（2026-11-19 用户要的）：播放器那一块分成 1 / 2 / 4 格，每格一路；选中的那一格有声音，右边点人就放进选中的那一格。
+         1 大 2 小（2026-11-20 用户要的）：3 格，选中的那一格是大的 #}
       <div class="watch-seg watch-layout" role="group" aria-label="同时看几路直播">
         <button type="button" class="on" aria-pressed="true" data-layout="1">单屏</button>
         <button type="button" aria-pressed="false" data-layout="2">双屏</button>
+        <button type="button" aria-pressed="false" data-layout="3">1 大 2 小</button>
         <button type="button" aria-pressed="false" data-layout="4">四屏</button>
       </div>
     </div>
@@ -285,7 +287,8 @@
       else count.textContent = st.failed ? "没查到谁在播" : "正在看谁在播…";
     }
 
-    // ---------- 播放器那一块：1 / 2 / 4 格（多屏同看，2026-11-19 用户要的），每格一路 ----------
+    // ---------- 播放器那一块：1 / 2 / 3 / 4 格（多屏同看，2026-11-19 用户要的），每格一路 ----------
+    // 3 格是"1 大 2 小"（2026-11-20）：选中的那一格是大的（只换样式，不动格子本身，画面不会重新加载）
     // 格子：{index, id: 这一格放的是谁, key: 现在显示的是什么, player, seq, video, showSound, node, body, chips, dot, text, pick, close}
     // 选中的那一格（st.focus）有声音，别的格子静音；右边点一位在播的，就放进选中的那一格。st.sel 一直是选中那一格里的人
     var stageBox = document.querySelector(".watch-stage-box"), screen = $("watch-screen");
@@ -314,7 +317,11 @@
       var tools = el("div", "watch-cell-tools");
       tools.append(cell.pick, cell.close);
       cell.node.append(cell.body, cell.chips, tools);
-      cell.node.addEventListener("click", function () { if (multi() && st.focus !== cell.index) focusCell(cell.index); });
+      cell.node.addEventListener("click", function (e) {
+        // 1 大 2 小：点小格子的画面就把它换到大屏；点它控制条上的按钮（暂停、清晰度……）不换，免得画面跳走
+        if (st.layout === 3 && e.target.closest && e.target.closest(".watch-controls")) return;
+        if (multi() && st.focus !== cell.index) focusCell(cell.index);
+      });
       return cell;
     }
     function stopCell(cell) {
@@ -404,11 +411,11 @@
         };
       } else if (!p && multi()) {
         // 多屏时空着的格子：选中的那一格等着右边点人，别的格子给一个"选这一格"的按钮
-        key = "empty:" + focused + ":" + anyLive;
+        key = "empty:" + focused + ":" + anyLive + ":" + st.layout;
         build = function () {
           if (focused) return message("这一格是空的", anyLive ? "在右边点一位在播的" + noun + "，就放进这一格。" : "现在没有" + noun + "在播。");
           var box = message("这一格是空的");
-          var pick = el("button", "watch-secondary", "选这一格");
+          var pick = el("button", "watch-secondary", st.layout === 3 ? "换到大屏" : "选这一格");
           pick.type = "button";
           pick.addEventListener("click", function (e) { e.stopPropagation(); focusCell(cell.index); });
           box.append(pick);
@@ -470,6 +477,8 @@
         cell.text.textContent = canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
       }
       cell.pick.hidden = !multi() || focused;
+      cell.pick.title = st.layout === 3 ? "换到大屏（声音跟着这一格）" : "选中这一格（声音跟着这一格）";
+      cell.pick.setAttribute("aria-label", cell.pick.title);
       cell.close.hidden = !multi() || !cell.id;
     }
 
@@ -523,6 +532,63 @@
     // 只有用 Evo 自己的播放器、这个平台的弹幕做了（p.danmaku）才有；多屏时只连选中的那一格。开关记在这台电脑上，默认开；
     // 系统设置了"减少动态效果"时默认关。弹幕只当纯文字显示
     var DOUYU_COLORS = { 1: "#FF5A5A", 2: "#58A6FF", 3: "#7AC84B", 4: "#FF9F40", 5: "#B77BFF", 6: "#FF8FC7" };
+    // 弹幕的样子（2026-11-20 用户要的，和各直播平台一样能调）：不透明度、字号、速度、显示区域。记在这台电脑上，所有格子共用。
+    // 不透明度马上生效（整层一起变），别的三样从下一条弹幕起生效
+    var DM_SPEEDS = [14000, 11000, 9000, 7000, 5000], DM_SPEED_NAMES = ["很慢", "慢", "适中", "快", "很快"];  // 飘过画面要几毫秒
+    var DM_AREAS = [25, 50, 75, 100], DM_AREA_NAMES = ["1/4 屏", "半屏", "3/4 屏", "满屏"];  // 从上往下占画面的百分之几
+    var DM_FIELDS = [
+      { key: "opacity", label: "不透明度", min: 20, max: 100, step: 5, initial: 100, show: function (v) { return v + "%"; } },
+      { key: "size", label: "字号", min: 60, max: 160, step: 10, initial: 100, show: function (v) { return v + "%"; } },
+      { key: "speed", label: "速度", min: 1, max: 5, step: 1, initial: 3, show: function (v) { return DM_SPEED_NAMES[v - 1]; } },
+      { key: "area", label: "显示区域", min: 1, max: 4, step: 1, initial: 2, show: function (v) { return DM_AREA_NAMES[v - 1]; } }
+    ];
+    var dm = {};
+    DM_FIELDS.forEach(function (f) {
+      var v = parseInt(saved("evo-watch-dm-" + f.key, ""), 10);
+      dm[f.key] = v >= f.min && v <= f.max ? v : f.initial;
+    });
+    function applyDanmakuLook() {
+      cells.forEach(function (cell) { if (cell.layer) cell.layer.style.opacity = String(dm.opacity / 100); });
+    }
+    // 设置面板：四行滑杆（名字、滑杆、现在的值）和"恢复默认"。panel.sync() 把滑杆对到现在的设置（别的格子里可能改过）
+    function buildDanmakuLook() {
+      var panel = el("div", "watch-dm-panel"), rows = [];
+      panel.setAttribute("role", "group");
+      panel.setAttribute("aria-label", "弹幕设置");
+      panel.append(el("div", "watch-dm-head", "弹幕设置"));
+      DM_FIELDS.forEach(function (f) {
+        var row = el("label", "watch-dm-row"), range = el("input", "watch-dm-range"), value = el("span", "watch-dm-value");
+        range.type = "range";
+        range.min = String(f.min);
+        range.max = String(f.max);
+        range.step = String(f.step);
+        function show() {
+          range.value = String(dm[f.key]);
+          value.textContent = f.show(dm[f.key]);
+          range.setAttribute("aria-valuetext", f.show(dm[f.key]));
+        }
+        range.addEventListener("input", function () {
+          dm[f.key] = parseInt(range.value, 10);
+          save("evo-watch-dm-" + f.key, String(dm[f.key]));
+          show();
+          applyDanmakuLook();
+        });
+        row.append(el("span", "watch-dm-label", f.label), range, value);
+        panel.append(row);
+        rows.push(show);
+      });
+      var reset = el("button", "watch-dm-reset", "恢复默认");
+      reset.type = "button";
+      reset.addEventListener("click", function () {
+        DM_FIELDS.forEach(function (f) { dm[f.key] = f.initial; save("evo-watch-dm-" + f.key, String(f.initial)); });
+        panel.sync();
+        applyDanmakuLook();
+      });
+      panel.append(reset);
+      panel.sync = function () { rows.forEach(function (show) { show(); }); };
+      panel.sync();
+      return panel;
+    }
     function danmakuOn() {
       var calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       return saved("evo-watch-danmaku", calm ? "0" : "1") === "1";
@@ -535,8 +601,9 @@
       if (document.visibilityState !== "visible" || layer.childElementCount >= 80) return;
       var width = layer.clientWidth, height = layer.clientHeight;
       if (!width || !height) return;
-      var size = Math.max(14, Math.min(24, Math.round(width / 40))), line = Math.round(size * 1.45);
-      var rows = Math.max(1, Math.floor(height * 0.6 / line)), now = performance.now();
+      // 字号跟着画面宽度（14–24），再乘玩家调的百分比，最小 12；显示区域：从上往下占画面的几分之几
+      var size = Math.max(12, Math.round(Math.max(14, Math.min(24, Math.round(width / 40))) * dm.size / 100)), line = Math.round(size * 1.45);
+      var rows = Math.max(1, Math.floor((height * DM_AREAS[dm.area - 1] / 100 - 8) / line)), now = performance.now();
       cell.rows = cell.rows || [];
       var row = -1;
       for (var i = 0; i < rows; i++) { if (!(cell.rows[i] > now)) { row = i; break; } }
@@ -546,7 +613,7 @@
       item.style.top = (8 + row * line) + "px";
       if (color) item.style.color = color;
       layer.appendChild(item);
-      var own = item.offsetWidth, duration = 9000, speed = (width + own) / duration;
+      var own = item.offsetWidth, duration = DM_SPEEDS[dm.speed - 1], speed = (width + own) / duration;
       cell.rows[row] = now + (own + 24) / speed;  // 这一条的尾巴进了画面、再留一点空，这一行才能放下一条
       var run = item.animate([{ transform: "translateX(" + width + "px)" }, { transform: "translateX(" + (-own) + "px)" }],
                              { duration: duration, easing: "linear" });
@@ -693,6 +760,7 @@
       muted: '<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
       full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>',
       close: '<path d="M6 6l12 12M18 6L6 18"></path>',
+      sliders: '<path d="M4 7h8M18 7h2M4 17h2M12 17h8"></path><circle cx="15" cy="7" r="2.5"></circle><circle cx="9" cy="17" r="2.5"></circle>',
       target: '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"></circle>'
     };
     function icon(name) {
@@ -763,8 +831,9 @@
       // 弹幕：一层盖在画面上（不挡点击），控制条上一个开关。这个平台的弹幕没做就没有这个按钮
       var layer = el("div", "watch-danmaku");
       layer.setAttribute("aria-hidden", "true");
+      layer.style.opacity = String(dm.opacity / 100);
       cell.layer = layer;
-      var danmakuBtn = null;
+      var danmakuBtn = null, lookBtn = null, look = null;  // 开关、"弹幕设置"的按钮、设置面板
       if (p.danmaku) {
         danmakuBtn = cell.danmakuBtn = el("button", "watch-ctl watch-danmaku-btn", "弹");
         danmakuBtn.type = "button";
@@ -773,11 +842,18 @@
           save("evo-watch-danmaku", danmakuOn() ? "0" : "1");
           syncAllDanmaku();
         });
+        lookBtn = control("弹幕设置", "sliders");
+        lookBtn.classList.add("watch-dm-btn");
+        lookBtn.setAttribute("aria-haspopup", "true");
+        lookBtn.setAttribute("aria-expanded", "false");
+        look = buildDanmakuLook();
+        look.hidden = true;
       }
       bar.append(playBtn, muteBtn, volume, el("span", "grow"));
-      if (danmakuBtn) bar.append(danmakuBtn);
+      if (danmakuBtn) bar.append(danmakuBtn, lookBtn);
       bar.append(quality, fullBtn);
       box.append(video, layer, wait, hint, bar);
+      if (look) box.append(look);
 
       function showSound() {
         var off = video.muted || video.volume === 0;
@@ -799,6 +875,13 @@
       function setMenu(open) {
         menu.hidden = !open;
         qualityBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) setLook(false);  // 两个弹出来的面板一次只开一个
+      }
+      function setLook(open) {
+        if (!look) return;
+        if (open) { look.sync(); setMenu(false); }
+        look.hidden = !open;
+        lookBtn.setAttribute("aria-expanded", open ? "true" : "false");
       }
       // 浏览器不让带声音自动播放时：先静音播，提示点一下打开声音
       function tryPlay() {
@@ -833,8 +916,16 @@
         else if (stageBox.requestFullscreen) stageBox.requestFullscreen();  // 多屏时几格一起全屏
       });
       qualityBtn.addEventListener("click", function () { setMenu(menu.hidden); });
-      box.addEventListener("keydown", function (e) { if (e.key === "Escape" && !menu.hidden) { setMenu(false); qualityBtn.focus(); } });
-      document.addEventListener("click", function (e) { if (!menu.hidden && !quality.contains(e.target)) setMenu(false); });
+      if (lookBtn) lookBtn.addEventListener("click", function () { setLook(look.hidden); });
+      box.addEventListener("keydown", function (e) {
+        if (e.key !== "Escape") return;
+        if (!menu.hidden) { setMenu(false); qualityBtn.focus(); }
+        else if (look && !look.hidden) { setLook(false); lookBtn.focus(); }
+      });
+      document.addEventListener("click", function (e) {
+        if (!menu.hidden && !quality.contains(e.target)) setMenu(false);
+        if (look && !look.hidden && !look.contains(e.target) && !lookBtn.contains(e.target)) setLook(false);
+      });
       video.addEventListener("play", showPlay);
       video.addEventListener("pause", showPlay);
       video.addEventListener("playing", function () { wait.hidden = true; syncDanmaku(cell); });

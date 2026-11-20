@@ -1283,8 +1283,18 @@ table.stats-table { width: 100%; border-collapse: collapse; }
   background: #161A22; color: #ECEEF2; --pf-douyu: #FF7A2F; --pf-huya: #F2B705; --pf-bilibili: #FB7299; --pf-douyin: #25D9E8; }
 .watch-screen { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; background: #000000; }
 /* 多屏同看：2 格并排（整块变成 32:9，每格还是 16:9），4 格是 2×2。选中的那一格有一圈红边、有声音 */
-.watch-stage-box.n2, .watch-stage-box.n4 { max-width: none; }
+.watch-stage-box.n2, .watch-stage-box.n3, .watch-stage-box.n4 { max-width: none; }
 .watch-stage-box.n2 { aspect-ratio: 32 / 9; }
+/* 1 大 2 小（2026-11-20 用户要的）：左边一格大的占 2/3 宽，右边两格小的上下排；整块 24:9，三格都正好是 16:9。
+   选中的那一格就是大的（只换位置，格子本身不动，画面不重新加载）。小格子窄（主窗口里 270px 上下）：
+   音量滑杆、弹幕的两个按钮、"直播中"的标记收起来（小格子本来就没有声音和弹幕），平台和房间号照样标着 */
+.watch-stage-box.n3 { aspect-ratio: 8 / 3; }
+.watch-stage-box.n3 .watch-screen { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.watch-stage-box.n3 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 2; }
+.watch-stage-box.n3 .watch-cell:not(.focus) { grid-column: 2; }
+.watch-stage-box.n3 .watch-cell:not(.focus) :is(.watch-volume, .watch-danmaku-btn, .watch-dm-btn, .watch-dm-panel, .watch-chip-live) { display: none; }
+.watch-stage-box.n3 .watch-cell:not(.focus) .watch-chips { top: 8px; left: 8px; }
+.watch-stage-box.n3 .watch-cell:not(.focus) .watch-controls { height: 40px; padding: 0 6px; }
 .watch-stage-box.n2 .watch-screen, .watch-stage-box.n4 .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .watch-cell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #0E1016; color: #ECEEF2; }
 .watch-cell-screen { position: absolute; inset: 0; }
@@ -1296,7 +1306,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-stage-box.multi .watch-msg { padding: 12px; gap: 8px; }
 .watch-layout { flex: none; margin-left: auto; padding: 2px; }
 .watch-mark + .watch-layout { margin-left: 0; }
-.watch-layout button { flex: none; height: 26px; padding: 0 10px; font-size: 12px; }
+.watch-seg.watch-layout button { flex: none; padding: 0 10px; white-space: nowrap; }  /* 按字数定宽（"1 大 2 小"比别的长），不平分 */
 .watch-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
 .watch-chips { position: absolute; top: 12px; left: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; pointer-events: none; }
 .watch-chip-live, .watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; }
@@ -1324,6 +1334,17 @@ table.stats-table { width: 100%; border-collapse: collapse; }
   text-shadow: 0 0 2px #000000, 0 0 2px #000000, 1px 1px 2px rgb(0 0 0 / 0.9); }
 .watch-danmaku-btn { font-weight: 700; font-size: 13px; }
 .watch-danmaku-btn.off { opacity: 0.55; text-decoration: line-through; }
+/* 弹幕设置：控制条上"弹"旁边的按钮点开，压在画面右下角；格子矮的时候里面可以滚动 */
+.watch-dm-panel { position: absolute; right: 10px; bottom: 56px; z-index: 4; display: flex; flex-direction: column; gap: 2px; width: 272px; max-width: calc(100% - 20px); max-height: calc(100% - 64px);
+  overflow-y: auto; padding: 10px 12px; border: 1px solid rgb(236 238 242 / 0.18); border-radius: 8px; background: rgb(8 9 12 / 0.94); color: #ECEEF2; font-size: 13px; }
+.watch-dm-panel[hidden] { display: none; }
+.watch-dm-head { margin-bottom: 4px; font-size: 12px; font-weight: 600; color: #B4BAC6; }
+.watch-dm-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 48px; align-items: center; gap: 10px; min-height: 32px; cursor: pointer; }
+.watch-dm-range { width: 100%; height: 4px; margin: 0; accent-color: #ECEEF2; cursor: pointer; }
+.watch-dm-value { text-align: right; font-size: 12px; color: #B4BAC6; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.watch-dm-reset { font: inherit; align-self: flex-end; height: 28px; margin-top: 4px; padding: 0 10px; border: 1px solid rgb(236 238 242 / 0.28); border-radius: 6px; cursor: pointer;
+  background: transparent; color: #ECEEF2; font-size: 12px; }
+.watch-dm-reset:hover { background: rgb(236 238 242 / 0.12); }
 .watch-wait { position: absolute; inset: 0 0 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 14px; color: #B4BAC6; pointer-events: none; }
 .watch-wait[hidden], .watch-hint[hidden], .watch-quality-menu[hidden] { display: none; }
 .watch-wait .watch-primary { pointer-events: auto; }
@@ -1335,7 +1356,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
   background: transparent; color: #ECEEF2; font-size: 12px; white-space: nowrap; }
 .watch-ctl:hover:not(:disabled) { background: rgb(236 238 242 / 0.12); }
 .watch-ctl:disabled { cursor: default; }
-.watch-ctl:focus-visible, .watch-volume:focus-visible, .watch-quality-item:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
+.watch-ctl:focus-visible, .watch-volume:focus-visible, .watch-quality-item:focus-visible, .watch-dm-range:focus-visible, .watch-dm-reset:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
 .watch-volume { width: 84px; height: 4px; accent-color: #ECEEF2; cursor: pointer; }
 .watch-quality { position: relative; }
 .watch-quality-menu { position: absolute; right: 0; bottom: 40px; display: flex; flex-direction: column; gap: 2px; min-width: 150px; max-width: 260px; padding: 6px; border: 1px solid rgb(236 238 242 / 0.18); border-radius: 8px;

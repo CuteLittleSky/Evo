@@ -170,6 +170,12 @@ def main():
         and "function biliPacket(op, text)" in page and "uid: 0, roomid: found.room, protover: 2" in page
         and 'new DecompressionStream("deflate")' in page
         and 'el("span", "watch-danmaku-item", String(text).slice(0, 60))' in page and 'layer.setAttribute("aria-hidden", "true")' in page)
+    out["弹幕设置：不透明度、字号、速度、显示区域四个滑杆和\"恢复默认\"，记在这台电脑上；新弹幕的字号、行数、速度照设置算"] = (
+        all(f'key: "{key}", label: "{label}"' in page for key, label in
+            (("opacity", "不透明度"), ("size", "字号"), ("speed", "速度"), ("area", "显示区域")))
+        and 'save("evo-watch-dm-" + f.key, String(dm[f.key]))' in page and '"watch-dm-reset", "恢复默认"' in page
+        and 'control("弹幕设置", "sliders")' in page and "layer.style.opacity = String(dm.opacity / 100)" in page
+        and "* dm.size / 100))" in page and "DM_AREAS[dm.area - 1] / 100" in page and "duration = DM_SPEEDS[dm.speed - 1]" in page)
     real_info = danmaku.info
     danmaku.info = lambda platform, room, get=None: {"platform": platform, "url": "wss://example.invalid:1", "room": "1234567"}
     try:
