@@ -26,8 +26,9 @@ import storage
 from post_match import XP_ONLY_NOTE
 
 FOLDER = Path(tempfile.mkdtemp(prefix="evo-mates-", dir=storage.DB_PATH.parent.parent))  # 在测试的临时数据文件夹里
-# 不是 16:9 的记录（这里按 16:9 读）：11-11 用户用 4:3 拉伸打的那局，整局在 test_aspect.py 里按 4:3 重放、对答案
-NOT_16_9 = {"20261111_225234"}
+# 不是 16:9 的记录（这里按 16:9 读）：11-11 用户用 4:3 拉伸打的那局，整局在 test_aspect.py 里按 4:3 重放、对答案；
+# 11-20 用户用源码版试录像打的那局（16:10 拉伸，源码版留下了全部截图）
+NOT_16_9 = {"20261111_225234", "20261120_201524"}
 
 
 def screenshot_checks():

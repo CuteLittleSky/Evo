@@ -823,7 +823,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                 if screen in ("match_start", "lobby"):
                     summary.catch_up()  # 存总结页时先留着的队友、名字：回到大厅、下一局开局时读，在交对局中的数据之前
                 in_match.update(screen, frame, now)  # 一局结束时先记下；回到大厅、下一局开局时交对局中的数据（先交才收尾）
-                recording.update(screen, in_match)  # 录像：一局开始开录、记事件、结束后在后台拼 MP4
+                recording.update(screen, in_match, frame)  # 录像：一局开始开录、记事件（含中间那一行的'击倒'）、结束后在后台拼 MP4
                 other.update(None if on_summary else screen, frame, now)  # 总结页还没存下时，经验值页先不读
                 lobby.update(screen, frame, now)
                 seasons.update(screen, frame, now, in_match.active)  # 录入模式里：游戏里的数据页

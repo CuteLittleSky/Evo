@@ -15,6 +15,7 @@
 
 import json
 import re
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -55,6 +56,14 @@ def make_recording(base, started, name, duration, events=(), outages=(), legend=
 
 def main():
     print("录像页（列表、播放、删除、战绩页的看录像按钮）")
+    try:
+        return checks()
+    finally:  # 全部测试在同一个临时数据文件夹里跑：留下录像、开着录像，后面几组的导航会多出"录像"
+        shutil.rmtree(panel_recordings.folder(), ignore_errors=True)
+        app_settings.set_value("recording_enabled", False)
+
+
+def checks():
     out = {}
     folder = Path(tempfile.mkdtemp(prefix="evo-recordings-"))
     db = folder / "evo.db"

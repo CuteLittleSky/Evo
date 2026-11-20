@@ -340,6 +340,26 @@ def match_checks(tmp):
     out["没有开局画面（靶场）：看到自己的界面就开录"] = len(FakeRecording.made) == 1
     m.close()
 
+    # 击倒对手：中间那一行的"击倒"（hud.knock 给的位置）
+    m, im = make(), FakeInMatch()
+    script = []
+    im.hud.knock = lambda frame: script.pop(0) if script else None
+    im.hud.cfg = {"knock": {"rearm_seconds": 0.6, "moved": 20}}
+    step(m, "match_start", im)
+    im.started, im.active, im.state = 7, True, "存活"
+    rec = FakeRecording.made[0]
+    seen = [None, 299, 299, 300, 299, None, None, None, 299, 299, 352, 352, None]
+    for x in seen:
+        script.append(x)
+        clock[0] += 0.3
+        m.update(None, im, frame="一张截图")
+    clock[0] += 0.3
+    m.update("summary", im, frame="结算画面")  # 不在对局中的画面不看
+    knocks = [e for e in rec.events if e["kind"] == "knock"]
+    out[f"击倒对手：同一行显示着只算一次；隔一会儿又出现算下一次；还在显示但左右挪了（换了名字）也算（{len(knocks)} 次）"] = (
+        len(knocks) == 3)
+    m.close()
+
     # 录不了：一局最多试两次（横幅、看到自己的界面），日志里只说一次，下一局再试
     m = make()
     FakeRecording.fail = "这台电脑上没有能用的显卡硬件编码器"
@@ -370,6 +390,29 @@ root.after(8000, root.destroy)
 print("ready", flush=True)
 root.mainloop()
 """
+
+
+def knock_checks():
+    """hud.knock：在中间那条横带里找"击倒"两个字（参照图贴到不同的位置都找得到），没有就是 None。"""
+    import numpy as np
+    import hud
+    reader = hud.Hud(None)
+    k = reader.cfg["knock"]
+    tpl = reader.knock_template
+    out = {}
+    if tpl is None:
+        return {"中间那一行的'击倒'：有参照图 config/templates/hud/knock.png": False}
+    found = []
+    for at in (300, 450):  # 名字长短不同，这一行左右挪
+        frame = np.full((1080, 1920, 3), 30, np.uint8)
+        x0, y0 = k["band"][0] + at, k["band"][1] + 31
+        frame[y0:y0 + tpl.shape[0], x0:x0 + tpl.shape[1]] = tpl[:, :, None]
+        found.append(reader.knock(frame))
+    blank = reader.knock(np.full((1080, 1920, 3), 30, np.uint8))
+    out[f"中间那一行的'击倒'：贴在横带里不同的位置都找得到（{found}），没有时是空"] = (
+        found[0] is not None and abs(found[0] - 300) <= 2 and found[1] is not None and abs(found[1] - 450) <= 2
+        and blank is None)
+    return out
 
 
 def window_checks(ffmpeg):
@@ -417,6 +460,7 @@ def main():
         tmp = Path(folder)
         checks = pure_checks(tmp)
         checks.update(match_checks(tmp))
+        checks.update(knock_checks())
         ffmpeg = recorder.find_ffmpeg()
         if not ffmpeg:
             print("  （电脑上没有 ffmpeg：跳过真的录的那些）")

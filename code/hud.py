@@ -120,6 +120,7 @@ class Hud:
         mates = self.cfg["teammates"]
         self.mate_templates = self.legends.scaled(mates["scale"])
         self.spectate_template = load_hud_template("spectate", lang)
+        self.knock_template = load_hud_template("knock", lang)  # 中间那一行的"击倒"（录像标事件用）；别的语言还没有
         self.icon_template = load_hud_template("damage_icon", lang)
         icons = self.cfg["top_right"]["kp_row"]["icons"]
         self.kp_templates = {name: load_hud_template(icons[name]["template"], lang) for name in KP_ROW}  # 每一项前面的图标
@@ -144,6 +145,15 @@ class Hud:
         s = self.cfg["spectate"]
         score, _, _ = best_match(gray_crop(frame, s["roi"], self.base, s.get("anchor")), self.spectate_template)
         return score >= s["min_similarity"]
+
+    def knock(self, frame):
+        """画面中间那一行"击倒 名字 +150"（自己击倒了对手）："击倒"两个字在横带里的位置（基准 x），没有返回 None。
+        这一行跟着名字长短左右挪，所以在一条横带里找（config/hud.json 的 knock）。只给录像标事件用，不进战绩。"""
+        k = self.cfg.get("knock")
+        if not k or self.knock_template is None:
+            return None
+        score, x, _ = best_match(gray_crop(frame, k["band"], self.base, k.get("anchor")), self.knock_template)
+        return x if score >= k["min_similarity"] else None
 
     def spectated_legend(self, frame):
         """观战时被观战的人用的传奇（编号），认不出返回 None。只在 spectating() 为真时问。"""
