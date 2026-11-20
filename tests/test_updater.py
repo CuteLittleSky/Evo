@@ -13,6 +13,7 @@
   中途出错就恢复原来的版本；新版本的 Evo.exe 带 --apply-update 时写结果、重新打开 Evo；等进程退出
 - 装好以后：新打开的 Evo 读结果（装上了 / 没装上），面板顶部只说一次；清理装过的版本、留着更新的
 - 面板：提示条和设置页的各个阶段（立即更新、进度、已下载好、Apex 开着时不能装并写原因、正在安装）
+- 测试版的版本号（0.7.0b，2026-11-20 起录像的实验版只发 QQ 群）：比之前的正式版新、比同号的正式版旧
 
 运行：python tests/test_updater.py
 """
@@ -198,6 +199,26 @@ def download_info_checks():
             "patches 不是字典：当作没有": check({**ok, "patches": [patch]}) == plain,
             "补丁包最多看 5 个": len(check({**ok, "patches": {f"0.3.{i}": patch for i in range(9)}})["patches"]) == 5,
         })
+    return out
+
+
+def version_checks():
+    """测试版的版本号：装着 0.7.0b 时不提醒更新回 0.6.x，正式 0.7.0 出来时提醒。"""
+    v = update_check.version_tuple
+    out = {}
+    out["版本号：0.6.3 < 0.7.0b < 0.7.0b2 < 0.7.0 < 0.7.1，格式不对的不认"] = (
+        v("0.6.3") < v("0.7.0b") < v("0.7.0b2") < v("0.7.0") < v("0.7.1") and v("0.10.2") > v("0.9.9")
+        and v("0.7.0x") is None and v("0.7") is None and v("") is None)
+    out["带 b 的才是测试版"] = (update_check.is_test_version("0.7.0b") and update_check.is_test_version("0.7.0b2")
+                           and not update_check.is_test_version("0.7.0"))
+    with mock.patch.object(update_check, "APP_VERSION", "0.7.0b"):
+        app_settings.set_value("update_latest", {"version": "0.6.3"})
+        stays = update_check.known_newer()
+        app_settings.set_value("update_latest", {"version": "0.7.0"})
+        moves = update_check.known_newer()
+    app_settings.set_value("update_latest", None)
+    out["装着测试版 0.7.0b：有 0.6.3 不提醒，正式 0.7.0 出来时提醒更新"] = (
+        stays is None and isinstance(moves, dict) and moves["version"] == "0.7.0")
     return out
 
 
@@ -655,6 +676,7 @@ def main():
     server, base = start_server()
     try:
         checks = download_info_checks()
+        checks.update(version_checks())
         checks.update(latest_checks(base))
         checks.update(download_checks(base))
         checks.update(mirror_checks(base))

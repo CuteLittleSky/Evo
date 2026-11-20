@@ -79,9 +79,20 @@ class UpdateError(Exception):
 
 
 def version_tuple(text):
-    """"0.10.2" → (0, 10, 2)，用来比较新旧；格式不对返回 None。"""
-    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", str(text or "").strip())
-    return tuple(int(x) for x in m.groups()) if m else None
+    """"0.10.2" → (0, 10, 2, 1, 0)，用来比较新旧；格式不对返回 None。
+    测试版（2026-11-20 起：录像的实验版 0.7.0b 只发 QQ 群）"0.7.0b" → (0, 7, 0, 0, 1)、"0.7.0b2" → (0, 7, 0, 0, 2)：
+    比之前的正式版都新（装着测试版不会被提醒更新回 0.6.x），比同号的正式版旧（正式 0.7.0 出来时能一键更新过去）。"""
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:b(\d*))?", str(text or "").strip())
+    if not m:
+        return None
+    major, minor, patch, test = m.groups()
+    return (int(major), int(minor), int(patch)) + ((1, 0) if test is None else (0, int(test or 1)))
+
+
+def is_test_version(text=None):
+    """是不是测试版（版本号带 b，如 "0.7.0b"）：只打包发给测试的玩家，不上架一键更新（tools/publish.py 会拒绝）。"""
+    m = re.fullmatch(r"\d+\.\d+\.\d+b\d*", str(APP_VERSION if text is None else text).strip())
+    return m is not None
 
 
 def safe_page(url):

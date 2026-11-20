@@ -682,6 +682,9 @@ def main():
     parser.add_argument("--yes", action="store_true", help="和 --live 一起用：已经确认过，不再问")
     parser.add_argument("--changelog-ok", metavar="核对码", help="第一段用：更新日志的原文已经确认过（核对码见 --dry-run 的输出）")
     args = parser.parse_args()
+    if update_check.is_test_version(APP_VERSION):  # 2026-11-20：测试版（如 0.7.0b）只发给测试的玩家，不上架
+        print(f"❌ {APP_VERSION} 是测试版：不上传官网、GitHub Releases、Mirror酱 和 latest.json，把压缩包直接发给测试的玩家")
+        return 1
     try:
         if args.live:
             go_live(args.yes, args.skip_mirror)

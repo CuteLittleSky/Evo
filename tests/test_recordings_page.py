@@ -9,7 +9,7 @@
 - 录像文件支持拖动（Range 请求回 206）；缩略图；网址不能指到录像文件夹以外、分段文件夹里的文件
 - 删除：MP4、.json、.jpg 一起删；没有口令不让删
 - 战绩页：有录像的局多一个"看录像"按钮，指到那个录像；没录像的局没有
-- 设置页"录像"一栏（假的 ffmpeg 和编码器检测，这台电脑"编不了 AV1"）：关着时只有开关；没有 ffmpeg 打不开；
+- 设置页"录像"一栏（假的 ffmpeg 和编码器检测，这台电脑"编不了 AV1"）：没有 ffmpeg 时整栏不显示、打不开（正式版）；
   打开时检测编码器、记住；画质四项一起保存，选了编不了的 AV1、乱填的不保存；估一局多大；硬盘上限的范围；
   保存位置（不是完整路径、在程序文件夹里的不行，填的留在输入框里；换了以后说原来的录像还在哪；改回默认）；关掉
 
@@ -101,21 +101,24 @@ def settings_checks(client, token, base):
     try:
         app_settings.set_value("recording_enabled", False)
         app_settings.set_value(panel_recordings.CHECK_KEY, None)
+        raw = client.get("/settings").get_data(as_text=True)
+        out["没有 ffmpeg（正式版）、录像也没开：设置页整栏\"录像\"都不显示"] = 'id="h-video"' not in raw and "设置" in raw
+        r = client.post("/settings/recording", data={"on": "1", "token": token})
+        out["没有 ffmpeg 时直接提交\"打开\"也打不开"] = (
+            r.status_code == 302 and app_settings.get("recording_enabled") is not True)
+        app_settings.set_value("recording_enabled", True)
         box = section(client.get("/settings").get_data(as_text=True))
-        out["关着：有\"录像\"一栏和开关（关着），没有画质、上限、位置；没有 ffmpeg 时开关点不了、写着原因"] = (
-            'aria-checked="false"' in box and "rec-size" not in box and "硬盘上限" not in box
-            and "找不到录像要用的组件" in box and "disabled" in box)
-        box, said = note(client, "/settings/recording", {"on": "1"}, token)
-        out[f"没有 ffmpeg 时打不开：还是关着，开关下面写原因（{said}）"] = (
-            said.startswith("alert:打不开") and app_settings.get("recording_enabled") is not True)
+        out["开着、ffmpeg 却不见了：照样显示这一栏（能关掉），写着找不到 ffmpeg"] = (
+            'aria-checked="true"' in box and "找不到录像要用的组件" in box)
+        app_settings.set_value("recording_enabled", False)
         r = client.post("/settings/recording", data={"on": "1"})
         out["没有口令不让改"] = r.status_code != 302 and app_settings.get("recording_enabled") is not True
 
         ffmpeg["path"] = "ffmpeg.exe"
         box, said = note(client, "/settings/recording", {"on": "1"}, token)
         check = app_settings.get(panel_recordings.CHECK_KEY) or {}
-        out[f"打开：检测了 H.264、AV1 的编码器、记住了；写着用 NVIDIA 显卡；显示画质、上限、位置（{said}）"] = (
-            app_settings.get("recording_enabled") is True and said.startswith("status:打开了")
+        out[f"有 ffmpeg 时显示这一栏，标着\"实验\"；打开：检测了 H.264、AV1 的编码器、记住了；写着用 NVIDIA 显卡；显示画质、上限、位置（{said}）"] = (
+            app_settings.get("recording_enabled") is True and said.startswith("status:打开了") and ">实验<" in box
             and check == {"ffmpeg": "ffmpeg.exe", "h264": "h264_nvenc", "av1": None}
             and "NVIDIA 显卡" in box and 'aria-checked="true"' in box and 'id="rec-size"' in box
             and "硬盘上限" in box and "保存位置" in box)

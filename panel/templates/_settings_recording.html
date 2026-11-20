@@ -1,13 +1,15 @@
 {# 设置页的"录像"一栏（2026-11-20；panel_recordings.py 的 settings_view 和 /settings/recording…，规则见 docs/面板.md"设置页：录像"）。
    开关默认关（原则 2）；打开以后才显示画质、硬盘上限、保存位置。改了从下一局开始生效。
-   保存的结果写在那一项下面（rec.note，只显示一次），保存完跳回这一栏（#h-video），页面最上面的提示看不到 #}
+   保存的结果写在那一项下面（rec.note，只显示一次），保存完跳回这一栏（#h-video），页面最上面的提示看不到。
+   找不到 ffmpeg、录像也没开着时整栏不显示（rec.shown）：正式版不带 ffmpeg，只有测试版（0.7.0b，实验功能）有这一栏 #}
 {% set rec = recording_settings() %}
 {% macro note(rec, where) -%}
 {% if rec.note and rec.note.where == where %}<div class="setting-desc rec-note-line {{ 'update-error' if rec.note.error else 'rec-saved' }}"
   role="{{ 'alert' if rec.note.error else 'status' }}" id="rec-note-{{ where }}">{{ rec.note.text }}</div>{% endif %}
 {%- endmacro %}
+{% if rec.shown %}
 <section class="card settings-card" aria-labelledby="h-video">
-  <h2 id="h-video" class="rec-settings-title">录像 <span class="tag-beta">内测</span></h2>
+  <h2 id="h-video" class="rec-settings-title">录像 <span class="tag-beta">实验</span></h2>
   <div class="setting">
     <div class="setting-text">
       <div class="setting-name" id="rec-name">录下每一局</div>
@@ -142,3 +144,4 @@
   </script>
   {% endif %}
 </section>
+{% endif %}

@@ -17,6 +17,8 @@
 版本号取自 storage.py 的 APP_VERSION。压缩包里没有 data_location.txt，所以别人的数据会放在他们自己电脑上程序旁边的
 Evo Tracker Data（规则见 paths.py）。
 只是想试一下流程、还有没提交的改动时：python tools/release.py --allow-dirty（文件名会带上 -dirty，不要发布这种；也不写 latest.json）
+测试版（版本号带 b，如 0.7.0b；2026-11-20 起，录像的实验版只发 QQ 群）：照样跑测试、打包、自检、压缩、算 SHA-256，
+不做补丁包、不写 latest.json（不进一键更新；publish.py 也会拒绝上传测试版）
 
 做好以后用 python tools/publish.py 上传和核对（压缩包、官网、最后 latest.json，见 publish.py 开头）。
 它按下面的顺序做——上传到 R2（dl.evotracker.cn）和腾讯云 COS：先传压缩包和补丁包，确认能下载、SHA-256 对得上，
@@ -147,7 +149,7 @@ def sha256(path):
 
 
 def version_tuple(text):
-    return tuple(int(x) for x in text.split("."))
+    return update_check.version_tuple(text)  # 认得测试版的 b（"0.7.0b"），比同号的正式版旧
 
 
 def old_packages():
@@ -237,15 +239,20 @@ def main():
         (DIST / f"{name}.sha256").write_text(f"{digest}  {name}\n", encoding="utf-8")
         print(f"    {digest}")
 
+        testing = update_check.is_test_version(APP_VERSION)
         step(7, "做补丁包（一键更新只下载变了的文件）")
         if dirty:
             print("    ⏭ 跳过：有没提交的改动，这次的压缩包不能发布")
+        elif testing:
+            print(f"    ⏭ 跳过：{APP_VERSION} 是测试版，不进一键更新")
         else:
             patches = make_patches(target)
 
         step(8, "写版本号文件 latest.json")
         if dirty:
             print("    ⏭ 跳过：有没提交的改动，这次的压缩包不能发布")
+        elif testing:
+            print(f"    ⏭ 跳过：{APP_VERSION} 是测试版，不进一键更新")
         else:
             write_latest(today, name, digest, size, patches)
     except Stop as e:
@@ -259,6 +266,8 @@ def main():
     print(f"SHA-256：{digest}")
     if dirty:
         print("⚠ 这次有没提交的改动，只能自己试，不要发布")
+    elif testing:
+        print(f"\n{APP_VERSION} 是测试版：把压缩包直接发给测试的玩家（如 QQ 群），不要用 publish.py 上传")
     else:
         print("\n上传：python tools/publish.py（先传压缩包和官网、逐项核对；再 --github 传 GitHub Releases 和 Mirror酱；"
               "最后 python tools/publish.py --live 传 latest.json）")
