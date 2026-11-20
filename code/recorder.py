@@ -237,6 +237,51 @@ def align_wav(src, dst, offset):
             w.writeframes(chunk)
 
 
+def mp4_duration(path):
+    """MP4 有多长（秒），读不出返回 None。只读文件开头（录像拼好时加了 +faststart）的 moov/mvhd，不用 ffmpeg。"""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            while True:
+                head = f.read(8)
+                if len(head) < 8:
+                    return None
+                size, kind = struct.unpack(">I4s", head)
+                if size == 1:
+                    size = struct.unpack(">Q", f.read(8))[0] - 8
+                if kind == b"moov":
+                    body = f.read(min(size - 8, 1 << 16))
+                    at = body.find(b"mvhd")
+                    if at < 0:
+                        return None
+                    version = body[at + 4]
+                    if version == 1:
+                        scale, length = struct.unpack(">IQ", body[at + 24:at + 36])
+                    else:
+                        scale, length = struct.unpack(">II", body[at + 16:at + 24])
+                    return length / scale if scale else None
+                if size < 8:
+                    return None
+                f.seek(size - 8, 1)
+    except (OSError, struct.error, IndexError):
+        return None
+
+
+def make_thumbnail(ffmpeg, video, at, out=None, width=480):
+    """在录像的 at 秒处截一张小图（JPG，宽 width），存在录像旁边同名的 .jpg。成功返回路径。"""
+    out = Path(out or Path(video).with_suffix(".jpg"))
+    code, _ = run_ffmpeg(ffmpeg, ["-y", "-loglevel", "error", "-ss", f"{max(0.0, at):.2f}", "-i", str(video),
+                                  "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(out)], timeout=60)
+    return out if code == 0 and out.exists() else None
+
+
+def thumbnail_time(events, duration):
+    """缩略图截哪一刻：最后一个事件的前 1 秒（冠军、成盒那一下），没有事件取 40% 处。"""
+    if events:
+        return max(0.0, events[-1]["t"] - 1)
+    return (duration or 0) * 0.4
+
+
 def safe_name(text):
     return re.sub(r'[\\/:*?"<>|\s]+', "_", str(text)).strip("_") or "录像"
 
@@ -476,6 +521,8 @@ class Recording:
             "options": {**asdict(self.options), "extra": None}, "encoder": self.encoder, "size": list(self.size),
             "bitrate": self.bitrate, "parts": len(parts), "audio": audio_note,
         }
+        meta["duration"] = round(mp4_duration(out) or 0, 2)
+        make_thumbnail(self.ffmpeg, out, thumbnail_time(meta["events"], meta["duration"]))
         out.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
         shutil.rmtree(self.work, ignore_errors=True)
         self.log(f"录像：存好了 {out}（{out.stat().st_size / 2 ** 20:.0f} MB，{len(self.events)} 个事件）")

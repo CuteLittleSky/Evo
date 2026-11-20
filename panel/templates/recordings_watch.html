@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% from "_legend.html" import legend_icon %}
+{% block title %}{{ item.title }} · 录像 · Evo{% endblock %}
+
+{# 放一个录像（panel_recordings.watch）：播放器、自己画的时间轴（事件、断掉的那几段）、事件列表、显示文件、删除 #}
+
+{% block content %}
+<section class="card rec-watch" aria-labelledby="h-watch">
+  <div class="rec-watch-head">
+    <a class="btn-text rec-back" href="{{ url_for('recordings.page') }}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg>
+      录像
+    </a>
+    <div class="rec-watch-title">
+      <h2 id="h-watch"><span class="legend-label">{{ legend_icon(item.legend_icon) }}{{ item.title }}</span>{% if item.unfinished %} <span class="rec-tag inline">未完成</span>{% endif %}</h2>
+      <p class="note">{{ item.subtitle }} · <span class="num">{{ item.clock }}</span> · <span class="num">{{ item.size_text }}</span></p>
+    </div>
+    {% if item.match %}
+    <a class="rec-match" href="{{ url_for('matches', open=item.match.id) }}">
+      <span class="badge {{ item.badge }}">{{ '#' ~ item.match.placement if item.match.placement else '—' }}</span>
+      <span>击杀 <span class="num">{{ item.match.kills if item.match.kills is not none else '—' }}</span></span>
+      <span>伤害 <span class="num">{{ '{:,}'.format(item.match.damage) if item.match.damage is not none else '—' }}</span></span>
+      <span class="rec-match-go">在战绩里看</span>
+    </a>
+    {% endif %}
+  </div>
+
+  <div class="rec-video">
+    <video id="rec-video" controls preload="metadata" src="{{ url_for('recordings.video', v=item.id) }}"
+           aria-label="{{ item.title }} 的录像"></video>
+  </div>
+
+  <div class="rec-timeline" id="rec-timeline" data-duration="{{ item.duration }}" data-lead="{{ lead }}"
+       {% if start is not none %}data-start="{{ start }}"{% endif %}>
+    <div class="rec-track" id="rec-track">
+      <span class="rec-played" aria-hidden="true"></span>
+      {% for o in item.outages %}
+      <span class="rec-gap" style="left: {{ '%.3f' | format(o.left) }}%; width: {{ '%.3f' | format(o.width) }}%" title="这 {{ '%.0f' | format(o.seconds) }} 秒没录到（切窗口等）" aria-hidden="true"></span>
+      {% endfor %}
+      <span class="rec-head-line" aria-hidden="true"></span>
+      {% for e in item.events %}
+      <button type="button" class="rec-mark {{ e.css }}" style="left: {{ '%.3f' | format(e.left) }}%" data-t="{{ e.t }}"
+              data-label="{{ e.label }} {{ e.clock }}" aria-label="{{ e.label }}，{{ e.clock }}，从前 {{ lead }} 秒开始放"></button>
+      {% endfor %}
+    </div>
+    <div class="rec-ticks num" aria-hidden="true"><span>0:00</span><span id="rec-now">0:00</span><span>{{ item.clock }}</span></div>
+  </div>
+
+  {% if item.events %}
+  <ol class="rec-events" aria-label="这局的事件（点了从前 {{ lead }} 秒开始放）">
+    {% for e in item.events %}
+    <li><button type="button" class="rec-event {{ e.css }}" data-t="{{ e.t }}"><span class="rec-dot" aria-hidden="true"></span><span class="num">{{ e.clock }}</span> {{ e.label }}</button></li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="note rec-no-events">这一局没有记下事件（倒地、成盒、冠军这些发生时才有）。</p>
+  {% endif %}
+
+  <div class="actions rec-actions">
+    <form method="post" action="{{ url_for('recordings.show') }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="v" value="{{ item.id }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <button type="submit" class="btn">在资源管理器中显示</button>
+    </form>
+    <form method="post" action="{{ url_for('recordings.delete') }}" id="rec-delete"
+          data-confirm="{{ '确定删除这个录像吗？' ~ item.path.name ~ '（' ~ item.size_text ~ '）会从电脑上删掉，不能恢复。' }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="v" value="{{ item.id }}">
+      <button type="submit" class="btn btn-danger">删除</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var video = document.getElementById("rec-video");
+    var box = document.getElementById("rec-timeline");
+    var track = document.getElementById("rec-track");
+    var played = track.querySelector(".rec-played");
+    var head = track.querySelector(".rec-head-line");
+    var now = document.getElementById("rec-now");
+    var lead = parseFloat(box.dataset.lead) || 0;
+    var duration = parseFloat(box.dataset.duration) || 0;
+
+    function clock(s) {
+      s = Math.max(0, Math.floor(s));
+      var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+      return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(sec).padStart(2, "0");
+    }
+    function length() { return isFinite(video.duration) && video.duration > 0 ? video.duration : duration; }
+    function jump(t, play) {
+      video.currentTime = Math.max(0, Math.min(t, length() - 0.1));
+      if (play) video.play().catch(function () {});
+    }
+    // 播放的位置：已放过的一段（scaleX，不改宽度，不重新排版）和竖线
+    function paint() {
+      var f = length() ? Math.min(1, video.currentTime / length()) : 0;
+      played.style.transform = "scaleX(" + f + ")";
+      head.style.left = (f * 100) + "%";
+      now.textContent = clock(video.currentTime);
+    }
+    video.addEventListener("timeupdate", paint);
+    video.addEventListener("seeked", paint);
+    video.addEventListener("loadedmetadata", function () {
+      if (box.dataset.start) jump(parseFloat(box.dataset.start), false);
+      paint();
+    });
+    // 点事件（时间轴上的标记、下面的列表）：从它前几秒开始放
+    document.querySelectorAll(".rec-mark, .rec-event").forEach(function (b) {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        jump(parseFloat(b.dataset.t) - lead, true);
+      });
+    });
+    // 点时间轴的空白处：跳到那里
+    track.addEventListener("click", function (e) {
+      var r = track.getBoundingClientRect();
+      jump((e.clientX - r.left) / r.width * length(), !video.paused);
+    });
+    // 删除：先确认；删之前先让播放器放开文件（正在播放的文件 Windows 删不掉）
+    var del = document.getElementById("rec-delete");
+    del.addEventListener("submit", function (e) {
+      if (!confirm(del.dataset.confirm)) { e.preventDefault(); return; }
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    });
+  })();
+</script>
+{% endblock %}

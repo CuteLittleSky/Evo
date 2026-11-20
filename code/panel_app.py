@@ -38,6 +38,7 @@ import map_rotation
 import mirrorchyan
 import notice_check
 import panel_esports
+import panel_recordings
 import panel_seasons
 import radar
 import ranks
@@ -64,8 +65,8 @@ for _type, _ext in (("text/css", ".css"), ("text/javascript", ".js"), ("font/wof
 
 PER_PAGE = 20
 # 顶部导航：(页面, 显示名)。顺序也决定切换页面时，选中标签的底色从哪边滑过来
-NAV = (("overview", "总览"), ("matches", "战绩"), ("stats", "数据"), ("seasons.page", "赛季"), ("esports.page", "电竞"),
-       ("settings", "设置"))
+NAV = (("overview", "总览"), ("matches", "战绩"), ("recordings.page", "录像"), ("stats", "数据"), ("seasons.page", "赛季"),
+       ("esports.page", "电竞"), ("settings", "设置"))
 MODES ={"ranked": "排位", "pubs": "匹配", "other": "其他"}
 # 修正表单里可以改的字段：(显示名, 最小值, 最大值)
 EDITABLE = {
@@ -210,6 +211,7 @@ if panel_cloud is not None:
     app.register_blueprint(panel_cloud.bp)  # 设置页"微信小程序"：绑定、解绑、立即同步（panel_cloud.py）
 app.register_blueprint(panel_seasons.bp)  # "赛季"页面：录入历史赛季数据（panel_seasons.py）
 app.register_blueprint(panel_esports.bp)  # "电竞"页面：赛事列表，从这里进看直播页（panel_esports.py）
+app.register_blueprint(panel_recordings.bp)  # "录像"页面：整局录像的列表和播放（panel_recordings.py；内测中）
 
 
 # ---------- 数据库连接：每次网页请求打开一次，请求结束时关闭 ----------
@@ -261,6 +263,11 @@ def security_checks():
         return back_to_page()
 
 
+def nav_items():
+    """侧边栏的导航：录像页只在设置里打开了录像、或者已经有录像时显示（panel_recordings.visible；内测中，没打开的玩家看不到）。"""
+    return tuple(item for item in NAV if item[0] != "recordings.page" or panel_recordings.visible())
+
+
 @app.context_processor
 def template_globals():
     offer = update_check.available()
@@ -272,7 +279,7 @@ def template_globals():
         "token": app.config["TOKEN"],
         "is_demo": Path(app.config["DB"]).name != storage.DB_PATH.name,
         "db_name": Path(app.config["DB"]).name,
-        "nav": NAV,
+        "nav": nav_items(),
         "switch": page_switch(),
         "default_range": DEFAULT_RANGE,  # 范围按钮：默认的那个不写进网址（_range.html）
         # 检查更新：还没问过要不要自动检查 → 页面顶部问一次；已知有新版本 → 顶部提示条（一键更新的各个阶段见 updater.state）
@@ -414,7 +421,7 @@ def page_switch():
     came_from = urlparse(request.referrer or "").path
     if came_from == request.path:
         return {"enter": False, "shift": 0}
-    paths = [url_for(endpoint) for endpoint, _ in NAV]
+    paths = [url_for(endpoint) for endpoint, _ in nav_items()]  # 按显示出来的算（"录像"可能藏着）
     shift = paths.index(came_from) - paths.index(request.path) if came_from in paths and request.path in paths else 0
     return {"enter": True, "shift": shift}
 
@@ -1217,6 +1224,7 @@ def matches():
     return render_template(
         "matches.html",
         rows=rows,
+        recordings=panel_recordings.match_links(raw),  # 有录像的局：{编号: 录像}，行里多一个"看录像"的小按钮
         keep_shots=screenshots.keep_all(),  # 保留全部截图时，确认、删除一局不删截图，也不用提示
         total=total,
         page=page,

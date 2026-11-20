@@ -60,6 +60,7 @@ import test_telemetry
 import test_testers_1104
 import test_traditional
 import test_recorder
+import test_recordings_page
 import test_updater
 import test_watch_play
 import test_usage
@@ -73,6 +74,7 @@ TESTS = {"总结页停留": test_summary_page, "轻量（按需加载模型）":
          "0.3.0 新流程（对局中、冠军、大厅校准、各来源优先级）": test_in_match,
          "一键更新（下载、核对、安装、恢复、面板）": test_updater,
          "录像的录制核心（录成 MP4、断了重开、空档保留、声音对齐、拼回没拼完的、ffmpeg 跟着退；没有 ffmpeg 就只跑一部分）": test_recorder,
+         "录像页（导航什么时候有、列表、播放页的时间轴和事件、拖动、删除、战绩页的看录像按钮）": test_recordings_page,
          "国内渠道 Mirror酱（问版本、检查更新、一键更新、增量包、设置页、发版的文件清单）": test_mirrorchyan,
          "WebView2 检查（没有时问要不要装、不装用浏览器、不用 IE 内核、去掉 DLL 的下载标记）": test_webview2,
          "游戏画面比例（16:10、4:3：换算、自动检测、设置页、整局重放）": test_aspect,

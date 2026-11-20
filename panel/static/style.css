@@ -1450,3 +1450,84 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
   .watch-side { border-left: 0; border-top: 1px solid var(--border); }
   .watch-list { overflow: visible; }
 }
+
+/* ---------- 录像页（recordings.html、recordings_watch.html；panel_recordings.py，2026-11-20） ---------- */
+.rec-head-side { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.rec-empty p { margin: 0; }
+/* 列表：一格一个录像，按内容区的宽度排（窄了两列、一列） */
+.rec-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.rec-card { height: 100%; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card); }
+.rec-card:hover { border-color: var(--muted); }
+.rec-card:focus-within { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+/* 缩略图 16:9：图片还没出来、截不到时照样占好位置（不让下面的字跳） */
+.rec-thumb { position: relative; display: block; aspect-ratio: 16 / 9; background: var(--inset); overflow: hidden; }
+.rec-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.rec-thumb img.missing { visibility: hidden; }
+.rec-play { position: absolute; inset: 0; margin: auto; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  padding-left: 3px; background: rgba(0, 0, 0, 0.55); color: #FFFFFF; opacity: 0; transition: opacity 0.15s; }
+.rec-card:hover .rec-play { opacity: 1; }
+.rec-duration { position: absolute; right: 8px; bottom: 8px; padding: 2px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.72); color: #FFFFFF; font-size: 12px; }
+.rec-tag { position: absolute; left: 8px; top: 8px; padding: 2px 8px; border-radius: 999px; font-size: 12px;
+  background: var(--warn-pill-bg); border: 1px solid var(--warn-pill-border); color: var(--warn-text); }
+.rec-tag.inline { position: static; vertical-align: middle; font-weight: 400; }
+.rec-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; }
+.rec-title { margin: 0; font-size: 15px; font-weight: 600; }
+.rec-title a { color: var(--text); text-decoration: none; }
+.rec-title a:hover { text-decoration: underline; }
+.rec-title a:focus-visible { outline: none; }  /* 整张卡片有一圈（:focus-within） */
+.rec-sub { margin: 0; color: var(--muted); font-size: 13px; }
+.rec-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; }
+.rec-events-count { margin-left: auto; color: var(--muted); }
+
+/* 播放页 */
+.rec-watch { padding: 20px 24px 24px; }
+.rec-watch-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 16px; }
+.rec-back { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.rec-watch-title { flex: 1; min-width: 200px; }
+.rec-watch-title h2 { margin: 0 0 2px; font-size: 18px; font-weight: 600; }
+.rec-watch-title .note { margin: 0; }
+.rec-match { display: inline-flex; align-items: center; gap: 12px; padding: 6px 12px 6px 6px; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); text-decoration: none; font-size: 13px; }
+.rec-match:hover { border-color: var(--muted); }
+.rec-match-go { color: var(--info-text); }
+.rec-video { aspect-ratio: 16 / 9; background: #000000; border-radius: 6px; overflow: hidden; }
+.rec-video video { display: block; width: 100%; height: 100%; }
+/* 时间轴：已放过的一段、断掉的几段（斜线）、现在的位置（竖线）、事件标记（按钮） */
+.rec-timeline { margin-top: 14px; }
+.rec-track { position: relative; height: 28px; border-radius: 6px; background: var(--inset); border: 1px solid var(--border); cursor: pointer; }
+.rec-played { position: absolute; inset: 0; border-radius: 6px; background: color-mix(in srgb, var(--text) 10%, transparent); transform-origin: left center; transform: scaleX(0); pointer-events: none; }
+.rec-gap { position: absolute; top: 0; bottom: 0; pointer-events: auto; cursor: help;
+  background: repeating-linear-gradient(135deg, var(--dashed) 0 3px, transparent 3px 7px); }
+.rec-head-line { position: absolute; top: -3px; bottom: -3px; left: 0; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); pointer-events: none; }
+.rec-mark { position: absolute; top: 3px; bottom: 3px; width: 10px; margin-left: -5px; padding: 0; border: 2px solid var(--card); border-radius: 3px;
+  background: var(--ev, var(--muted)); cursor: pointer; }
+.rec-mark:hover, .rec-mark:focus-visible { z-index: 2; transform: scaleY(1.25); }
+.rec-mark:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 1px; }
+/* 标记上方的名字：鼠标指上去、键盘移过去时显示 */
+.rec-mark::after, .rec-link::after { content: attr(data-label); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  padding: 3px 8px; border-radius: 4px; background: var(--text); color: var(--card); font-size: 12px; white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity 0.12s; }
+.rec-mark:hover::after, .rec-mark:focus-visible::after, .rec-link:hover::after, .rec-link:focus-visible::after { opacity: 1; }
+.rec-ticks { display: flex; justify-content: space-between; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.rec-ticks #rec-now { color: var(--text); }
+/* 事件的颜色（名字照样写着，不只靠颜色分） */
+.ev-knocked { --ev: var(--warn-text); }
+.ev-revived { --ev: var(--good); }
+.ev-dead { --ev: var(--bad); }
+.ev-respawned { --ev: var(--info-text); }
+.ev-champion { --ev: var(--p2-bg); }
+.ev-kill { --ev: var(--accent); }
+.rec-events { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.rec-event { font: inherit; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; }
+.rec-event:hover { border-color: var(--muted); }
+.rec-event:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.rec-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--ev, var(--muted)); }
+.rec-no-events { margin: 16px 0 0; }
+.rec-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+/* 战绩页：有录像的局，传奇后面一个小按钮 */
+.rec-link { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: 4px;
+  border-radius: 4px; color: var(--muted); }
+.rec-link:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.rec-link:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .rec-play, .rec-mark::after, .rec-link::after { transition: none; } .rec-mark:hover { transform: none; } }
