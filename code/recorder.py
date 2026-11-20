@@ -37,6 +37,7 @@ from datetime import datetime
 from pathlib import Path
 
 import game_lang
+import paths
 import process_info
 
 CONFIG_NAME = "recording.json"
@@ -56,9 +57,10 @@ def load_rules():
 
 
 def find_ffmpeg(preferred=None, data_dir=None):
-    """ffmpeg.exe 的路径，找不到返回 None。依次看：preferred（设置里记的）、数据文件夹里下载的 ffmpeg\\ffmpeg.exe、
-    环境变量 EVO_FFMPEG、PATH、winget 装的（Gyan.FFmpeg，开发时用）。"""
-    candidates = [preferred]
+    """ffmpeg.exe 的路径，找不到返回 None。依次看：preferred（设置里记的）、Evo 自带的（测试版的安装包里
+    Evo\\ffmpeg\\ffmpeg.exe，tools/build_ffmpeg.py 编的精简版）、数据文件夹里的 ffmpeg\\ffmpeg.exe、
+    环境变量 EVO_FFMPEG、PATH、winget 装的（Gyan.FFmpeg，开发时用）。正式版不带 ffmpeg：一般都找不到。"""
+    candidates = [preferred, str(paths.EXE_DIR / "ffmpeg" / "ffmpeg.exe")]
     if data_dir:
         candidates.append(str(Path(data_dir) / "ffmpeg" / "ffmpeg.exe"))
     candidates += [os.environ.get("EVO_FFMPEG"), shutil.which("ffmpeg")]
