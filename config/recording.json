@@ -4,6 +4,9 @@
   "window_exe": "r5apex",
   "_说明_window_exe": "Windows Graphics Capture 只抓这个程序的窗口（程序名的正则，r5apex.exe 和 r5apex_dx12.exe 都匹配）",
 
+  "tail_seconds": 3,
+  "_说明_tail_seconds": "一局结束（结算画面、回到大厅）以后再录几秒才停：淘汰画面、冠军横幅也录进去",
+
   "keyframe_seconds": 2,
   "_说明_keyframe_seconds": "每隔几秒一个关键帧：播放时拖进度条能跳到的最小间隔",
 

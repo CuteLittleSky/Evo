@@ -22,6 +22,8 @@
     对局中存下的右上角见上；从经验值页切到总结页时，经验值页的最后一帧先留着，总结页存下了（或者离开了）再读
 - 各来源读到的数都记进 readings 表，每一项最后用哪个来源的数见 post_match.py（总结页、经验值页读得清楚时以它们为准，
   没有时用对局中的）
+- 录像（见 match_recording.py、recorder.py；设置里打开才录，默认关）：一局开始用独立的 ffmpeg 进程录，倒地、成盒等记进事件，
+  结束后在后台拼成 MP4。识别照旧用 dxcam 截图，和录像各抓各的
 - 提示音（见 SoundCues、sounds.py；设置页能关）：小队打完了响一声提醒去总结页，总结页读完了响一声，经验值页读全了响一声
 - 读结算画面、大厅时不让 Windows 降频（见 FullSpeed）：笔记本上识别可能慢 10 倍以上，玩家等不到提示音就离开了
 
@@ -50,6 +52,7 @@ import cv2
 import calibration
 import capture
 import evo_usage
+import match_recording
 import game_lang
 import ranks
 import screenshots
@@ -742,6 +745,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                               keep_all=lambda: other.keep_all, before_hand_over=summary.catch_up)
     lobby = LobbyWatcher(LobbyReader(engine, load_config("lobby.json", lang)), post, conn, log)
     seasons = SeasonWatcher(engine, conn, post, log, lang=lang)  # 录入历史赛季数据（设置页的按钮）
+    recording = match_recording.MatchRecorder(log)  # 录像（设置里打开才录，默认关；见 match_recording.py）
 
     def aspect_sources():
         """看游戏画面认比例时比哪些画面：认定了游戏语言就只比这种语言的；录入模式里加上数据页。"""
@@ -819,6 +823,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
                 if screen in ("match_start", "lobby"):
                     summary.catch_up()  # 存总结页时先留着的队友、名字：回到大厅、下一局开局时读，在交对局中的数据之前
                 in_match.update(screen, frame, now)  # 一局结束时先记下；回到大厅、下一局开局时交对局中的数据（先交才收尾）
+                recording.update(screen, in_match)  # 录像：一局开始开录、记事件、结束后在后台拼 MP4
                 other.update(None if on_summary else screen, frame, now)  # 总结页还没存下时，经验值页先不读
                 lobby.update(screen, frame, now)
                 seasons.update(screen, frame, now, in_match.active)  # 录入模式里：游戏里的数据页
@@ -849,6 +854,7 @@ def collect(db_path=storage.DB_PATH, interval=1.0, fast=0.3, summary_timeout=10.
         summary.finish()
         summary.catch_up()
         in_match.stop(now)
+        recording.close()  # 还在录的拼完，等后台拼 MP4 做完
         other.leave()
         post.finish()
         meter.finish(total())

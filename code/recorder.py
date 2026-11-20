@@ -217,6 +217,7 @@ class Recording:
         self.audio = None
         self.parts = 0
         self.events = []
+        self.hud_changes = []  # 右上角变了的时刻（秒，从 t0 算起）：以后从录像里找击杀用
         self.outages = []  # [开始, 结束]（秒，从 t0 算起）：ffmpeg 断了、重开之间录不到的
         self.restarts = 0
         self.stopping = False
@@ -344,6 +345,11 @@ class Recording:
         if hasattr(self, "t0_us"):
             self.events.append({"t": round(self.since_t0(), 3), "kind": kind, **info})
 
+    def hud_change(self):
+        """右上角变了（击杀、伤害、剩余小队数……）：记下时刻。"""
+        if hasattr(self, "t0_us"):
+            self.hud_changes.append(round(self.since_t0(), 2))
+
     # ---------- 结束 ----------
 
     def _kill(self):
@@ -409,6 +415,7 @@ class Recording:
             "first_frame": round(start, 4),  # MP4 第一帧在开始录以后第几秒（下面的时刻都已经减掉它）
             "events": [{**e, "t": round(e["t"] - start, 3)} for e in self.events],  # 时刻：MP4 里的位置（秒）
             "outages": [[round(a - start, 2), round(b - start, 2)] for a, b in self.outages],
+            "hud_changes": [round(t - start, 2) for t in self.hud_changes],
             "options": {**asdict(self.options), "extra": None}, "encoder": self.encoder, "size": list(self.size),
             "bitrate": self.bitrate, "parts": len(parts), "audio": audio_note,
         }

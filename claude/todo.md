@@ -7,7 +7,7 @@
 
 ## 〇、正在做、发版
 
-- [ ] **录像（整局录像 + 进度条上的事件）**（用户 11-20 说这是头号要做的；定下来的做法、分步都在 `docs/录像.md`，第 0 步实测在 `docs/录屏实测.md`）：在 main 上开发。录制核心 `code/recorder.py` 11-20 写好了初版（测试过，还没在游戏里跑）。等用户在对局里实测 Windows Graphics Capture 只抓游戏窗口（`python tools/rec_probe.py record --source gfxcapture --size 1080p --no-frames`）。之后：接进记录程序 → 录像页、设置页 → 精简版 ffmpeg 和下载（底座，先问） → 内测
+- [ ] **录像（整局录像 + 进度条上的事件）**（用户 11-20 说这是头号要做的；定下来的做法、分步都在 `docs/录像.md`，第 0 步实测在 `docs/录屏实测.md`）：在 main 上开发。录制核心 `code/recorder.py` 和接进记录程序的 `code/match_recording.py` 11-20 写好了（测试过，开关默认关，还没在游戏里跑）。等用户：① 对局里实测 Windows Graphics Capture 只抓游戏窗口（`python tools/rec_probe.py record --source gfxcapture --size 1080p --no-frames`）；② 用源码版 + `settings.json` 里 `"recording_enabled": true` 打一局（见 `docs/录像.md` 分步第 3 条）。之后：从录像里找击杀 → 录像页、设置页 → 精简版 ffmpeg 和下载（底座，先问） → 内测
 - [ ] **测试工具**（2026-11-02 开始：用户招了几位热心玩家帮忙测试，适配不同分辨率、语言和游戏的新内容）：诊断工具（`code/evo_diag.py`）升级成「Evo 测试工具」。用户 11-02 定的：
   - 一个 exe，排查问题和参加测试共用，打开时选项目；tkinter 小窗口（不用命令行，做界面用 ui-ux-pro-max）；不联网，测试项目写在工具里；不做测试版通道（不是开发重点）
   - 第一版的项目：**打一局、靶场：武器、赛季数据页、排查问题**（照旧）。第一次打开填档案（昵称、游戏语言、启动项），存在 exe 旁边

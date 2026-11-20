@@ -7,6 +7,8 @@
 - 声音：假录音在第 2 秒"嘀"一声，MP4 里嘀声的位置对得上画面（30 毫秒以内）
 - 上次崩了没拼的分段文件：拼成"_未完成"的 MP4
 - 作业对象：开 ffmpeg 的程序被强行结束，ffmpeg 也跟着退
+- 接进记录程序（match_recording.py）：开关默认关；一局开始开录、事件（倒地、被扶起、成盒、被复活、冠军）、右上角变了的时刻、
+  结束再录 3 秒、同一局不重开、靶场也录、录不了只说一次
 要 ffmpeg（找法见 recorder.find_ffmpeg）和显卡硬件编码器；没有就只跑不用 ffmpeg 的那些。
 
 运行：python tests/test_recorder.py
@@ -227,6 +229,133 @@ def record_checks(ffmpeg, tmp):
     return out
 
 
+class FakeInMatch:
+    """InMatchWatcher 里 match_recording 要看的那几项。"""
+
+    def __init__(self):
+        self.started, self.active, self.done, self.state, self.tops, self.legend = None, False, False, None, [], None
+        self.hud = type("H", (), {"legends": type("L", (), {"name": staticmethod(lambda k: {7: "恶灵"}.get(k))})()})()
+
+    @property
+    def pending(self):
+        return self.started is not None and not self.done
+
+
+class FakeRecording:
+    made = []
+
+    def __init__(self, ffmpeg, options, out_dir, log=None, rules=None):
+        self.options, self.out_dir, self.events, self.hud_changes, self.polls = options, out_dir, [], 0, 0
+        self.finished = None
+        self.fail = FakeRecording.fail
+        FakeRecording.made.append(self)
+
+    def start(self, pid):
+        if self.fail:
+            raise recorder.RecordingUnavailable(self.fail)
+        self.pid = pid
+
+    def mark(self, kind, **info):
+        self.events.append({"kind": kind, **info})
+
+    def hud_change(self):
+        self.hud_changes += 1
+
+    def poll(self):
+        self.polls += 1
+
+    def finish(self, info):
+        self.finished = info
+        return None
+
+
+def match_checks(tmp):
+    import match_recording
+    out = {}
+    clock = [0.0]
+    settings = {}
+    logs = []
+
+    def make():
+        FakeRecording.made, FakeRecording.fail = [], None
+        return match_recording.MatchRecorder(logs.append, settings=lambda: dict(settings), data_dir=tmp,
+                                             factory=FakeRecording, clock=lambda: clock[0], find_pid=lambda: 4321)
+
+    def step(m, screen, im, seconds=0.3):
+        clock[0] += seconds
+        m.update(screen, im)
+
+    # 开关关着：开局画面、自己的界面都不录
+    m, im = make(), FakeInMatch()
+    step(m, "match_start", im)
+    im.started, im.active, im.state = 1, True, "存活"
+    step(m, None, im)
+    out["开关关着（默认）：一局开始、对局中都不录"] = FakeRecording.made == []
+
+    # 开着：一整局
+    settings.update({"recording_enabled": True, "recording_size": "1080p"})
+    m, im = make(), FakeInMatch()
+    step(m, "match_start", im)
+    step(m, "match_start", im)  # 开局横幅还在
+    im.started, im.active, im.state, im.legend = 1, True, "存活", 7
+    step(m, None, im)
+    rec = FakeRecording.made[0] if FakeRecording.made else None
+    for state in ("倒地", "存活", "成盒", "存活"):
+        im.state = state
+        step(m, None, im)
+    im.tops = ["a"]
+    step(m, None, im)
+    step(m, None, im)  # 右上角没变
+    im.tops = ["a", "b"]
+    step(m, None, im)
+    step(m, "champion", im)
+    step(m, "champion", im)
+    im.done, im.active = True, False
+    step(m, "summary", im)
+    still = rec is not None and rec.finished is None
+    step(m, "summary", im, seconds=3.5)  # 结束以后再录 3 秒
+    m.close()
+    out["开着：看到开局画面就开录（只开一次，横幅还在也不重开），设置里的分辨率带过去、录 Apex 的声音"] = (
+        len(FakeRecording.made) == 1 and rec.options.size == "1080p" and rec.pid == 4321)
+    out["事件：倒地、被扶起、成盒、被复活、冠军（冠军只记一次）"] = rec is not None and [e["kind"] for e in rec.events] == [
+        "knocked", "revived", "dead", "respawned", "champion"]
+    out["右上角变了才记时刻（没变不记）"] = rec is not None and rec.hud_changes == 2
+    out["一局结束再录 3 秒才停，拼 MP4 时带上传奇（文件名用）；对局中按时看 ffmpeg"] = (
+        still and rec.finished == {"legend": "恶灵"} and rec.polls >= 2)
+    step(m, None, im)  # 同一局结束以后：不再开录
+    out["同一局结束以后不重开"] = len(FakeRecording.made) == 1
+    im2 = FakeInMatch()  # 下一局：开局画面（InMatchWatcher 已经清空）
+    step(m, "match_start", im2)
+    out["下一局开局：再开录"] = len(FakeRecording.made) == 2
+    m.close()
+
+    # 靶场：没有开局画面，看到自己的界面也录
+    m, im = make(), FakeInMatch()
+    im.started, im.active, im.state = 5, True, "存活"
+    step(m, None, im)
+    out["没有开局画面（靶场）：看到自己的界面就开录"] = len(FakeRecording.made) == 1
+    m.close()
+
+    # 录不了：一局最多试两次（横幅、看到自己的界面），日志里只说一次，下一局再试
+    m = make()
+    FakeRecording.fail = "这台电脑上没有能用的显卡硬件编码器"
+    im = FakeInMatch()
+    for _ in range(5):
+        step(m, "match_start", im)  # 横幅在屏幕上好几秒
+    im.started, im.active, im.state = 9, True, "存活"
+    for _ in range(3):
+        step(m, None, im)
+    first_match = len(FakeRecording.made)
+    im.done, im.active = True, False
+    step(m, "lobby", im)
+    for _ in range(3):
+        step(m, "match_start", FakeInMatch())
+    said = [line for line in logs if "录不了" in line]
+    out[f"录不了：一局最多试两次（横幅一次、看到自己的界面一次，试了 {first_match} 次），日志里说一次原因，下一局开始时再试"] = (
+        first_match == 2 and len(said) == 1 and len(FakeRecording.made) == 3)
+    return out
+
+
 JOB_CHILD = r"""
 import subprocess, sys, time
 sys.path.insert(0, sys.argv[1])
@@ -255,6 +384,7 @@ def main():
     with tempfile.TemporaryDirectory() as folder:
         tmp = Path(folder)
         checks = pure_checks(tmp)
+        checks.update(match_checks(tmp))
         ffmpeg = recorder.find_ffmpeg()
         if not ffmpeg:
             print("  （电脑上没有 ffmpeg：跳过真的录的那些）")
