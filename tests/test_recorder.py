@@ -2,6 +2,7 @@
 
 不开游戏、不抓屏幕：画面用 ffmpeg 自带的测试画面（testsrc2，按真实时间出帧），声音用假的录音（按给定的时刻写 WAV）。
 - 算码率、对齐声音（audio_offset、align_wav）、起文件名、读进度、抓屏滤镜、超过上限删最旧的：不用 ffmpeg
+- B 帧：按显卡厂家开几个，老显卡开了编不了时退回不开（假的 ffmpeg）；真录出来的 MP4 里有 B 帧
 - 录 3 秒拼成 MP4：时长、大小、.json 里事件的时刻（MP4 里的位置）
 - 中途 ffmpeg 退出：自己重开，断掉的那段记进 .json，MP4 里空档原样保留（断 11 秒也保留：ffmpeg 默认会把 10 秒以上的空档挤掉）
 - 声音：假录音在第 2 秒"嘀"一声，MP4 里嘀声的位置对得上画面（30 毫秒以内）
@@ -124,6 +125,40 @@ def audio_titles(ffmpeg, path):
     return out
 
 
+def b_frame_checks(rules):
+    """B 帧（不用 ffmpeg）：按显卡厂家开几个；老显卡开了 B 帧编不了时检测编码器那一步退回不开。"""
+    out = {}
+    nv = recorder.encoder_args("h264_nvenc", 60, 5_000_000, 2, 3)
+    off = recorder.encoder_args("h264_nvenc", 60, 5_000_000, 2)
+    out["B 帧：N 卡 3 个（B 帧也当参照）、AMD 2 个、Intel 不开；不开时 -bf 0、不带 b_ref_mode"] = (
+        [recorder.b_frames_wanted(rules, e) for e in ("h264_nvenc", "h264_amf", "h264_qsv")] == [3, 2, 0]
+        and nv[nv.index("-bf") + 1] == "3" and nv[nv.index("-b_ref_mode") + 1] == "middle"
+        and off[off.index("-bf") + 1] == "0" and "-b_ref_mode" not in off)
+
+    def fake_run(accepts_b):  # 假的 ffmpeg：accepts_b=False 像老显卡，开了 B 帧就报错
+        tried = []
+
+        def run(ffmpeg, args, timeout=30, cwd=None):
+            bf = args[args.index("-bf") + 1]
+            tried.append(bf)
+            return (0 if accepts_b or bf == "0" else 1), ""
+        return run, tried
+    real = recorder.run_ffmpeg
+    try:
+        opts = recorder.Options(source="lavfi:testsrc2")
+        recorder.run_ffmpeg, tried_old = fake_run(False)
+        old_enc = recorder.pick_encoder("假ffmpeg_老显卡", opts, rules)
+        recorder.run_ffmpeg, tried_new = fake_run(True)
+        new_enc = recorder.pick_encoder("假ffmpeg_新显卡", opts, rules)
+    finally:
+        recorder.run_ffmpeg = real
+    out[f"老显卡开了 B 帧编不了：再不开 B 帧试一次，照样能录、录的时候不开（试了 {tried_old}）；新显卡开 B 帧（试了 {tried_new}）"] = (
+        old_enc == new_enc == "h264_nvenc" and tried_old == ["3", "0"] and tried_new == ["3"]
+        and recorder.b_frames("假ffmpeg_老显卡", old_enc, rules) == 0
+        and recorder.b_frames("假ffmpeg_新显卡", new_enc, rules) == 3)
+    return out
+
+
 def pure_checks(tmp):
     out = {}
     rules = recorder.load_rules()
@@ -132,6 +167,7 @@ def pure_checks(tmp):
         and round(recorder.bitrate(rules, 1920, 1080, 60, "h264", "best") / 1e6) == 12
         and round(recorder.bitrate(rules, 1920, 1080, 60, "h264", "standard") / 1e5) == 56
         and recorder.bitrate(rules, 1920, 1080, 60, "av1", "best") == int(1920 * 1080 * 60 * 0.1 * 0.6))
+    out.update(b_frame_checks(rules))
     default = recorder.options_from({}, rules)
     old = recorder.options_from({"recording_quality": "low", "recording_size": "4k", "recording_fps": "144",
                                  "recording_codec": "h265"}, rules)
@@ -208,6 +244,13 @@ def frame_times(ffmpeg, path):
     return [float(x) for x in re.findall(r"pts_time:([\d.]+)", err or "")]
 
 
+def frame_types(ffmpeg, path):
+    """MP4 里每种帧（I / P / B）各有几个。"""
+    _, err = recorder.run_ffmpeg(ffmpeg, ["-i", str(path), "-map", "0:v", "-vf", "showinfo", "-f", "null", "-"], timeout=120)
+    kinds = re.findall(r"\btype:([IPB])\b", err or "")
+    return {k: kinds.count(k) for k in "IPB"}
+
+
 def beep_time(ffmpeg, path):
     """MP4 里声音第一次响的时刻（秒）。"""
     r = subprocess.run([ffmpeg, "-v", "error", "-i", str(path), "-map", "0:a", "-ac", "1", "-ar", "48000", "-f", "s16le", "-"],
@@ -250,6 +293,11 @@ def record_checks(ffmpeg, tmp):
     out[f".json 里的事件：时刻是 MP4 里的位置（倒地约 1 秒、击杀约 2 秒处；{[e['t'] for e in events]}），带着附加的说明"] = (
         [e["kind"] for e in events] == ["knocked", "kill"] and events[1].get("kills") == 1
         and 0.6 < events[0]["t"] < 1.1 and 1.6 < events[1]["t"] < 2.1 and meta.get("outages") == [])
+    want_b = recorder.b_frames(ffmpeg, meta.get("encoder", ""), rules)
+    kinds = frame_types(ffmpeg, video) if video else {}
+    out[f"B 帧：{meta.get('encoder')} 开 {meta.get('b_frames')} 个（写进 .json），MP4 里有 B 帧（{kinds}）"] = (
+        meta.get("b_frames") == want_b and (kinds.get("B", 0) > 0 if want_b else kinds.get("B") == 0)
+        and kinds.get("I", 0) > 0)
 
     # 2. 中途 ffmpeg 退出：重开，空档保留（断 11 秒：超过 ffmpeg 默认挤掉空档的 10 秒）
     long_rules = {**rules, "restart_wait_seconds": [11]}

@@ -11,7 +11,8 @@
 - 抓画面：默认 Windows Graphics Capture 只抓 Apex 的窗口（ffmpeg 的 gfxcapture，抓的时候就能缩放）；抓不到换桌面复制
   （ddagrab，只能录原画面）。两种都是 Windows 的被动接口，不碰游戏（原则 1）。Apex 的窗口由 find_window 按进程号找，
   只问 Windows 窗口归哪个进程，不打开游戏进程
-- 编码：显卡硬件编码（NVENC / AMF / QSV），画面不出显卡；没有硬件编码器就不录
+- 编码：显卡硬件编码（NVENC / AMF / QSV），画面不出显卡；没有硬件编码器就不录。H.264 开 B 帧（config 的 b_frames，
+  2026-11-21 实测同样码率略清楚、文件不变大；显卡不支持时自动不开）
 - 时间：每一帧的时间戳 = 抓到它时电脑的时钟 − 开始的时刻 t0（微秒；-enc_time_base filter 不取整，取整会丢帧），
   TS 里原样保存（-mpegts_copyts 1）。事件、声音用同一个起点，所以都能直接对上画面
 - 文件：每开一次 ffmpeg 写一个 .ts（程序崩了也不会坏）；断了重开就再写一个。结束时把它们首尾相连地读（concat: 协议；
@@ -190,13 +191,20 @@ def bitrate(rules, width, height, fps, codec, quality):
     return int(width * height * fps * rules["bits_per_pixel"][quality] * rules["codec_factor"][codec])
 
 
-def encoder_args(encoder, fps, rate, keyframe_seconds):
+def b_frames_wanted(rules, encoder):
+    """这个编码器想开几个 B 帧（config 的 b_frames，按显卡厂家：nvenc / amf / qsv，没写的不开）。"""
+    return int(rules.get("b_frames", {}).get(encoder.rsplit("_", 1)[1], 0))
+
+
+def encoder_args(encoder, fps, rate, keyframe_seconds, b_frames=0):
     args = ["-c:v", encoder, "-b:v", str(rate), "-maxrate", str(int(rate * 1.5)), "-bufsize", str(rate * 2),
-            "-g", str(fps * keyframe_seconds), "-bf", "0",
+            "-g", str(fps * keyframe_seconds), "-bf", str(b_frames),
             "-force_key_frames", f"expr:gte(t,n_forced*{keyframe_seconds})"]
     family = encoder.rsplit("_", 1)[1]
     if family == "nvenc":
         args += ["-preset", "p4", "-rc", "vbr", "-forced-idr", "1"]
+        if b_frames:  # B 帧也当参照（2026-11-21 实测比不加略好；老显卡不支持时检测编码器那一步会退回不开 B 帧）
+            args += ["-b_ref_mode", "middle"]
     elif family == "amf":
         args += ["-quality", "balanced", "-rc", "vbr_peak"]
     elif family == "qsv":
@@ -212,21 +220,33 @@ def gpu_chain(encoder, source):
 
 
 _encoder_cache = {}
+_no_b_frames = set()  # (ffmpeg, 编码器)：开 B 帧时编不了、不开才行的（老显卡）
 
 
 def pick_encoder(ffmpeg, options, rules, hwnd=None):
-    """这台电脑上这种编码格式能用的硬件编码器（按 config 里的顺序试，结果记住），都不能用返回 None。"""
+    """这台电脑上这种编码格式能用的硬件编码器（按 config 里的顺序试，结果记住），都不能用返回 None。
+    每个编码器先按 config 开 B 帧试，编不了再不开 B 帧试一次（不开才行的记进 _no_b_frames，见 b_frames）。"""
     key = (ffmpeg, options.source, options.codec)
     if key not in _encoder_cache:
         _encoder_cache[key] = None
         for encoder in rules["encoders"].get(options.codec, []):  # 配置里没有这种格式：当作编不了
             graph = source_filter(options, rules, hwnd=hwnd) + gpu_chain(encoder, options.source)
-            code, _ = run_ffmpeg(ffmpeg, ["-loglevel", "error", "-filter_complex", graph, "-frames:v", "20",
-                                          *encoder_args(encoder, 30, 4_000_000, 2), "-f", "null", "-"], timeout=20)
-            if code == 0:
-                _encoder_cache[key] = encoder
+            for bf in dict.fromkeys([b_frames_wanted(rules, encoder), 0]):
+                code, _ = run_ffmpeg(ffmpeg, ["-loglevel", "error", "-filter_complex", graph, "-frames:v", "20",
+                                              *encoder_args(encoder, 30, 4_000_000, 2, bf), "-f", "null", "-"], timeout=20)
+                if code == 0:
+                    _encoder_cache[key] = encoder
+                    if bf == 0 and b_frames_wanted(rules, encoder):
+                        _no_b_frames.add((ffmpeg, encoder))
+                    break
+            if _encoder_cache[key]:
                 break
     return _encoder_cache[key]
+
+
+def b_frames(ffmpeg, encoder, rules):
+    """录的时候开几个 B 帧：按 config；检测编码器时发现开了编不了的，不开。"""
+    return 0 if (ffmpeg, encoder) in _no_b_frames else b_frames_wanted(rules, encoder)
 
 
 def read_progress(path):
@@ -372,6 +392,7 @@ class Recording:
             self.encoder = pick_encoder(self.ffmpeg, opts, self.rules, hwnd)
         if not self.encoder:
             raise RecordingUnavailable("这台电脑上没有能用的显卡硬件编码器")
+        self.b_frames = b_frames(self.ffmpeg, self.encoder, self.rules)
         self.size = tuple(size) if size and opts.source == "window" else grabbed
         self.bitrate = opts.extra.get("bitrate") or bitrate(self.rules, *self.size, opts.fps, opts.codec, opts.quality)
         self.started = datetime.now()
@@ -389,7 +410,8 @@ class Recording:
         sounds = ([{"system": "电脑上所有的声音"}.get(opts.audio_source, "游戏声音")] if self.audio else []) + \
             (["麦克风"] if self.mic else [])
         self.log(f"录像：开始（{'只抓游戏窗口' if opts.source == 'window' else '桌面复制' if opts.source == 'desktop' else '测试画面'}，"
-                 f"{self.size[0]}×{self.size[1]} {opts.fps} 帧，{self.encoder}，{self.bitrate / 1e6:.0f} Mbps"
+                 f"{self.size[0]}×{self.size[1]} {opts.fps} 帧，{self.encoder}，{self.bitrate / 1e6:.0f} Mbps，"
+                 f"{f'B 帧 {self.b_frames}' if self.b_frames else '不开 B 帧'}"
                  f"{'，录' + '和'.join(sounds) if sounds else ''}）")
 
     def _start_audio(self, source):
@@ -426,7 +448,7 @@ class Recording:
                  + gpu_chain(self.encoder, opts.source) + "[v]")
         return [self.ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostats", "-stats_period", "1",
                 "-progress", str(self.work / f"progress_{n}.txt"), "-filter_complex", graph, "-map", "[v]",
-                *encoder_args(self.encoder, opts.fps, self.bitrate, self.rules["keyframe_seconds"]),
+                *encoder_args(self.encoder, opts.fps, self.bitrate, self.rules["keyframe_seconds"], self.b_frames),
                 "-fps_mode", "vfr", "-enc_time_base:v", "filter",
                 "-f", "mpegts", "-mpegts_copyts", "1", str(self.work / f"part_{n:03d}.ts")]
 
@@ -568,7 +590,8 @@ class Recording:
             "events": [{**e, "t": round(e["t"] - start, 3)} for e in self.events],  # 时刻：MP4 里的位置（秒）
             "outages": [[round(a - start, 2), round(b - start, 2)] for a, b in self.outages],
             "hud_changes": [round(t - start, 2) for t in self.hud_changes],
-            "options": {**asdict(self.options), "extra": None}, "encoder": self.encoder, "size": list(self.size),
+            "options": {**asdict(self.options), "extra": None}, "encoder": self.encoder, "b_frames": self.b_frames,
+            "size": list(self.size),
             "bitrate": self.bitrate, "parts": len(parts), "audio": audio_note,
         }
         meta["duration"] = round(mp4_duration(out) or 0, 2)
