@@ -347,7 +347,7 @@
   // 跟随系统时：Windows 切换深浅色，面板立即跟着变
   window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", applyTheme);
   // 视频全屏时按 Esc 退出（录像、看直播；2026-11-21）：浏览器自己会这样做，Evo 窗口（WebView2）里不一定，这里补上。
-  // 窗口跟着全屏、退回原样见 app_window.py 的 _set_fullscreen
+  // 窗口跟着撑满屏幕、退出后回到原来的大小见 app_window.py 的 _set_fullscreen
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
   });
