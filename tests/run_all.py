@@ -1,13 +1,21 @@
-"""运行全部测试：python tests/run_all.py（约 9–11 分钟）
+"""运行全部测试：python tests/run_all.py（约 15 分钟）；改了模型时只跑用到模型的几组：python tests/run_all.py --model
 
-什么时候跑全部、什么时候只跑相关的一组（python tests/test_xxx.py）、什么时候不用跑：见 docs/测试SOP.md。
-全部 ✅ 才说明没改坏。
+什么时候跑全部、什么时候跑 --model、什么时候只跑相关的一组（python tests/test_xxx.py）、什么时候不用跑：见 docs/测试SOP.md。
+全部 ✅ 才说明没改坏。结果表里每一组后面写着用了几秒。
+--model（2026-11-21 用户要的："只是改了录像，为什么还要测直播"）：代码地图（tools/code_map.py 的 SECTIONS）里"模型""引擎""录像"
+几节的程序算模型。跑两种组：① 用 fake_game 喂截图、整局重放的组（FAKE_GAME_MODEL 里那几个；它们把整个模型从头跑一遍），
+② 测试文件里直接 import 了这次改到的模型文件的组（git 里还没提交的改动，含新文件；改了 config/ 当作模型文件全改了；
+读不到 git 也当作全改了）。新加的测试不用登记，自动按 import 判断。
 
 测试用的截图不提交到仓库（太大，而且有其他玩家的名字和 ID），只在开发者电脑上项目文件夹的 captures/ 里；
 找不到截图的测试会显示"跳过"。测试文件只 import 项目代码，项目代码不 import 测试，所以测试不会被打进安装包。
 """
 
+import ast
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import fake_game  # noqa: F401  要在项目代码之前导入（设置临时数据文件夹）
 import test_accounts
@@ -133,15 +141,76 @@ except ImportError:
     pass
 
 
-def main():
+ROOT = Path(__file__).resolve().parent.parent
+MODEL_SECTIONS = ("模型", "引擎", "录像")  # 代码地图里这几节的程序算"模型"
+FAKE_GAME_MODEL = {"run_collect", "FakeCamera", "FakeClock", "shot", "load", "SHOTS", "screen_ready", "MissingShots",
+                   "BLACK"}  # fake_game 里喂截图、整局重放用的（ROOT、CODE、_TEMP、report 这些只是路径和打分，不算）
+
+
+def model_modules():
+    """代码地图（tools/code_map.py 的 SECTIONS，只读文件、不导入）里"模型""引擎""录像"几节的程序 → 模块名。"""
+    tree = ast.parse((ROOT / "tools" / "code_map.py").read_text(encoding="utf-8"))
+    sections = next(ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                    and any(getattr(t, "id", None) == "SECTIONS" for t in node.targets))
+    names = set()
+    for group, _, items in sections:
+        if group in MODEL_SECTIONS:
+            for item in items:
+                path = item[0] if isinstance(item, tuple) else item
+                if path.startswith("code/") and path.endswith(".py"):
+                    names.add(Path(path).stem)
+    return names
+
+
+def changed_modules(model):
+    """git 里还没提交的改动（含新文件）改到的模型文件 → 模块名。改了 config/、或者读不到 git：当作 model 全改了。"""
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", "code", "config"],
+                             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return set(model)
+    if out.returncode != 0:
+        return set(model)
+    paths = [line[3:].strip().strip('"').split(" -> ")[-1] for line in out.stdout.splitlines() if line.strip()]
+    if any(path.startswith("config/") for path in paths):
+        return set(model)
+    return {Path(path).stem for path in paths if path.startswith("code/") and path.endswith(".py")} & set(model)
+
+
+def uses_model(test, modules):
+    """这一组要跑吗：用了 fake_game 喂截图、整局重放的那几个（FAKE_GAME_MODEL），或者直接 import 了 modules 里的模块。"""
+    tree = ast.parse(Path(test.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name.split(".")[0] in modules for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module:
+            base = node.module.split(".")[0]
+            if base in modules or (base == "fake_game" and any(a.name in FAKE_GAME_MODEL for a in node.names)):
+                return True
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "fake_game" \
+                and node.attr in FAKE_GAME_MODEL:
+            return True
+    return False
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    tests = TESTS
+    if "--model" in argv:
+        changed = changed_modules(model_modules())
+        tests = {name: test for name, test in TESTS.items() if uses_model(test, changed)}
+        print(f"只跑用到模型的 {len(tests)} 组（共 {len(TESTS)} 组；这次改到的模型文件：{'、'.join(sorted(changed)) or '没有'}；"
+              f"跑全部去掉 --model）\n")
     start = time.perf_counter()
-    results = {}
-    for name, test in TESTS.items():
+    results, took = {}, {}
+    for name, test in tests.items():
+        began = time.perf_counter()
         results[name] = test.main()
+        took[name] = time.perf_counter() - began
         print()
     print(f"===== 结果（用时 {time.perf_counter() - start:.0f} 秒）=====")
     for name, ok in results.items():
-        print(f"  {'⏭ 跳过' if ok is None else ('✅ 通过' if ok else '❌ 没通过')}  {name}")
+        print(f"  {'⏭ 跳过' if ok is None else ('✅ 通过' if ok else '❌ 没通过')}  {name}（{took[name]:.0f} 秒）")
     return all(ok is not False for ok in results.values())
 
 
