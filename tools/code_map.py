@@ -96,6 +96,8 @@ SECTIONS = [
         "tools/diag_report.py", "tools/tester_preview.py", "tools/stats_report.py", "tools/summary_check.py", "tools/demo_data.py", "tools/demo_seasons.py",
         "tools/rec_probe.py",
         "tools/code_map.py"]),
+    ("开发用的脚本（tools/）", "训练小模型", [
+        "tools/train_data.py", "tools/train_web.py"]),
     ("测试（tests/）", None, [
         "tests/run_all.py", "tests/fake_game.py", "tests/test_*.py",
         ("tests/*.csv", "正确答案（整晚重放、数据页、武器）；队友名字的答案只在本机")]),
