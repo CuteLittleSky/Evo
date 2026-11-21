@@ -1018,8 +1018,11 @@
         var names = {};
         info.qualities.forEach(function (q) { names[q.id] = q.name; });
         qualityBtn.textContent = names[info.applied] || "清晰度";
-        qualityBtn.disabled = info.qualities.length < 2;
-        qualityBtn.title = info.qualities.length < 2 ? "这个直播间只有这一档" : "换清晰度";
+        // 只有一档的直播间（主播只推了一种清晰度）：按钮照样能点，点开写明白只有这一档。
+        // 原来是灰着点不动，2026-11-21 用户登录斗鱼以后正好在看这样的房间，以为是"调不了画质"
+        var single = info.qualities.length < 2;
+        qualityBtn.disabled = false;
+        qualityBtn.title = single ? "这个直播间只有这一档" : "换清晰度";
         menu.replaceChildren.apply(menu, info.qualities.map(function (q) {
           var item = el("button", "watch-quality-item" + (q.id === info.applied ? " on" : ""), q.name);
           item.type = "button";
@@ -1034,6 +1037,7 @@
         }));
         // 选了一档、平台给的却是另一档（斗鱼不登录不给原画）：说明白，不让人以为选了没反应。
         // 选的那一档这个房间根本没有（抖音有的房间没有蓝光）：不说，按钮上写着现在是哪一档
+        if (single) menu.append(el("p", "watch-quality-note", "这个直播间只有这一档：主播只推了这一种清晰度，没有别的可以换。"));
         // 斗鱼没选过清晰度时要的也是最好的那一档（编号 0，原画），不登录同样拿不到
         var asked = wanted || (optionalLogin(p.platform) ? "0" : "");
         if (asked && names[asked] && asked !== info.applied) {
