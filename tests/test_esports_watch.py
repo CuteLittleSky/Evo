@@ -119,7 +119,7 @@ def main():
         and "上一位" not in raw and "下一位" not in raw)
     brand = re.findall(r'<footer class="watch-brand">.*?</footer>', raw, re.S)
     out["最下面一行：Evo 的标志、标语\"APEX 爱好家\"和官网的网址（用浏览器打开）"] = (
-        len(brand) == 1 and text(brand[0]) == "EVO APEX 爱好家 evotracker.cn" and "<svg" in brand[0]
+        len(brand) == 1 and text(brand[0]) == "EVO evotracker.cn APEX 爱好家" and 'fill="#3B9EFF"' in brand[0]  # 原来的图标（蓝色的一横），网址紧挨着
         and 'href="https://evotracker.cn/" target="_blank" rel="noopener noreferrer"' in brand[0])
     apex = re.findall(r'<div class="watch-apex"[^>]*>.*?</div>', raw, re.S)[0]
     out["Apex 提示条先藏着，写着会占用显卡，有\"继续看\"和\"关闭直播\""] = (

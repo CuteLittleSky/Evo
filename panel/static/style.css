@@ -1324,10 +1324,10 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 /* 最下面一行：Evo 的标志、标语和官网（2026-11-21 用户要的）。内容矮时贴着这一栏的底（margin-top: auto），内容高了跟在后面 */
 .watch-brand { flex: none; margin-top: auto; padding-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 13px; color: var(--muted); }
 .watch-brand-mark { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
-.watch-brand-mark svg { flex: none; color: var(--accent); }
+.watch-brand-mark svg { flex: none; border-radius: 5px; box-shadow: 0 0 0 1px var(--border); }  /* 原来的图标，底是深色的：描一圈细边，深色主题里也看得出轮廓 */
 .watch-brand-name { font-family: "Chakra Petch", sans-serif; font-weight: 700; font-size: 15px; letter-spacing: 2px; }
 .watch-brand-slogan { padding-left: 14px; border-left: 1px solid var(--border); }
-.watch-brand-link { margin-left: auto; font-family: "Chakra Petch", "Microsoft YaHei UI", sans-serif; color: var(--muted); text-decoration: none; }
+.watch-brand-link { margin-left: 2px; font-family: "Chakra Petch", "Microsoft YaHei UI", sans-serif; font-size: 13px; color: var(--muted); text-decoration: none; }
 .watch-brand-link:hover { color: var(--text); text-decoration: underline; }
 .watch-brand-link:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; border-radius: 2px; }
 
