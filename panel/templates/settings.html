@@ -138,7 +138,7 @@
           <div class="setting-desc sound-file" id="sound-file-{{ one.key }}">
             {%- if one.file %}你的文件：<span class="sound-file-name">{{ one.file.file }}</span>
             {%- if one.file.seconds %}（<span class="num">{{ '%.1f'|format(one.file.seconds) }}</span> 秒）{% endif %}
-            {%- else %}还没选文件，响的是 Evo 默认的声音{% endif -%}
+            {%- else %}还没选文件，响的是默认的{{ sound.default_name }}{% endif -%}
           </div>
           <div class="setting-desc update-error" id="sound-error-{{ one.key }}" role="alert"{{ ' hidden' if not one.failed }}>{{ one.failed or '' }}</div>
           {% endif %}

@@ -1,4 +1,4 @@
-"""合成 Evo 的三段提示音（见 code/sounds.py）：python tools/make_sounds.py  →  assets/sounds/evo/*.wav（"Evo 默认"那套声音包）
+"""合成 Evo 的三段提示音（见 code/sounds.py）：python tools/make_sounds.py  →  assets/sounds/evo/*.wav（"简洁音效"那套声音包；2026-11-21 起默认的是"严肃女声"）
 
 自己合成，不用别人的音效（没有版权问题，和代码一样是 AGPL-3.0）。每次运行结果一样，改了下面的音符再运行一次就行。
 音色：正弦波加两个泛音，按指数衰减，像木琴 / 小钟；起音快慢、泛音多少每一声可以不一样。44.1 kHz、16 位、单声道。

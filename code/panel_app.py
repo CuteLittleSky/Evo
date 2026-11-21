@@ -1691,6 +1691,7 @@ def sound_view():
     return {
         "packs": sounds.packs(),
         "pack": sounds.pack(),
+        "default_name": next((one["name"] for one in sounds.packs() if one["key"] == sounds.DEFAULT_PACK), "声音"),
         "custom": sounds.CUSTOM,
         "volume": sounds.volume(),
         "volume_range": (sounds.VOLUME_MIN, sounds.VOLUME_MAX, sounds.VOLUME_STEP),
@@ -1759,7 +1760,7 @@ def sound_file():
 
 @app.post("/settings/sound-file/clear")
 def sound_file_clear():
-    """"恢复默认"：这一声不用自己的文件了，用回 Evo 默认的。"""
+    """"恢复默认"：这一声不用自己的文件了，用回默认的那套。"""
     name = request.form.get("name")
     if name not in sounds.SOUNDS:
         abort(400)
