@@ -15,8 +15,12 @@
 """
 
 import argparse
+import os
+import socket
 import sys
 import threading
+import time
+import urllib.request
 import webbrowser
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -687,13 +691,48 @@ def image(crop_id):
     return send_file(path, mimetype="image/png", max_age=3600)
 
 
+@app.route("/__quit", methods=["POST"])
+def quit_server():
+    """再运行一次本程序时，新的请旧的关掉（见 stop_old）。只认本机来的。"""
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        abort(403)
+    threading.Timer(0.3, os._exit, (0,)).start()
+    return "bye"
+
+
+def port_busy(port):
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def stop_old(port):
+    """这个端口上已经开着一个（以前运行的没关）：请它自己关掉。Windows 上两个程序能同时开在一个端口上，
+    请求会一直给旧的那个（2026-11-21：用户重新运行了几次，看到的一直是早上的旧网页）。关掉了返回 True。"""
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/__quit", method="POST"), timeout=2)
+    except OSError:
+        pass  # 旧版本没有这个地址
+    for _ in range(25):
+        if not port_busy(port):
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="训练小模型用的网页：核对答案、看考卷成绩")
+    parser = argparse.ArgumentParser(description="训练小模型用的网页：核对答案、复核、看训练进度和考卷成绩")
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
     args = parser.parse_args()
     url = f"http://127.0.0.1:{args.port}/"
+    if port_busy(args.port):
+        if stop_old(args.port):
+            print("关掉了以前开着的网页，换成新的")
+        else:
+            print(f"{url} 上已经开着一个旧的网页，关不掉它：先关掉以前运行网页的那个终端窗口，再运行一次")
+            return
     print(f"打开 {url}（Ctrl+C 关掉）")
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, (url,)).start()
