@@ -92,6 +92,25 @@ create table if not exists crops (
 create index if not exists crops_source on crops(source);
 create index if not exists crops_queue on crops(kind, pile, status, field);
 create table if not exists meta (key text primary key, value text);
+create table if not exists train_runs (  -- 每一次训练（tools/train_digits.py）
+  id integer primary key, started text, finished text,
+  status text,                     -- running / done / error
+  device text, params text, epochs integer, best_epoch integer,
+  threshold real,                  -- 把握的门槛（在验证用的视频上挑的）
+  val_right integer, val_wrong integer, val_missed integer, val_n integer,
+  model_path text, size_kb real,   -- 导出的 ONNX（相对 captures/train/）
+  model_ms real, model_mem_mb real,  -- 考卷上读一块几毫秒、加载以后多占多少内存（onnxruntime，1 个线程）
+  note text
+);
+create table if not exists train_epochs (
+  run integer, epoch integer, loss real, val_acc real, val_wrong integer, val_missed integer, val_n integer,
+  seconds real, primary key (run, epoch)
+);
+create table if not exists model_reads (  -- 小模型在考卷上读的
+  run integer, crop integer, text text, score real,
+  value text,                      -- Evo 会采用的读数（格式、范围、把握都过了），没有是空
+  ms real, primary key (run, crop)
+);
 """
 
 

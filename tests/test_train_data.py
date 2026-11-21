@@ -1,10 +1,13 @@
-"""训练小模型的素材和网页（tools/train_data.py、tools/train_web.py）：分堆的规则、考卷避开有视频的那几天、核对答案的网页。不用截图、不加载识别引擎。
+"""训练小模型的素材、训练和网页（tools/train_data.py、train_digits.py、train_web.py）：分堆的规则、考卷避开有视频的那几天、训练用哪些答案、小模型读数的规矩、网页。不用截图、不加载识别引擎和 PyTorch。
 
 - 分堆：同一个读数最多留 3 块（多的进 extra）；读出来、把握够、和前后对得上（伤害只增不减，剩余小队只减不增）才进
   "规则核对过"，其余"要人看"；隔了 90 秒以上算另一局，不跨局比
 - 日期：从视频文件名（Evo 的录像、月-日-年）、截图文件夹名看出是哪天；有视频的那几天的截图不进考卷（可能是同一局）
-- 网页：首页、核对页、考卷成绩页、小块图片打得开；保存这一页：改过的、空着的（这一块没有数字）、丢掉的都记对，
-  RP 的 + 号留着、伤害的逗号去掉，填的不是数字的不存、留在"没核对"里并提示
+- 训练用哪些答案：用户核对过的用用户的；规则核对过的用引擎的；多出来的同一个读数，同一个视频、同一项里有可信的同一个读数
+  才借答案，用户改过的读数不借；丢掉的、考卷都不用。RP 的正数补"+"
+- 小模型读数：缩成 32×96；CTC 解码合并重复、去掉"空"；格式、范围、把握的规矩和引擎一样，只有 RP 能带 + -
+- 网页：首页、核对页、训练进度页（两张小图）、考卷成绩页（引擎和小模型并排）、小块图片打得开；保存这一页：改过的、
+  空着的（这一块没有数字）、丢掉的都记对，RP 的 + 号留着、伤害的逗号去掉，填的不是数字的不存、留在"没核对"里并提示
 
 运行：python tests/test_train_data.py
 """
@@ -20,6 +23,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import train_data as data  # noqa: E402
+import train_digits as digits  # noqa: E402
 import train_web as web  # noqa: E402
 
 FOLDER = Path(tempfile.mkdtemp(prefix="evo-train-"))
@@ -102,8 +106,60 @@ def main():
     score = client.get("/score").get_data(as_text=True)
     checks["成绩页：读错 2 块（10 ≠ 1867；那块其实没有数字、引擎读出了 80），+19 算读对"] = (
         "引擎读错的（2）" in score and "引擎没读出的（0）" in score)
+
+    checks.update(digits_checks(conn))
+    run = conn.execute("insert into train_runs (started, status, device, epochs, best_epoch, threshold, model_ms, "
+                       "model_mem_mb, size_kb) values ('2026-11-21T15:00:00', 'done', 'GPU', 3, 2, 0.8, 0.4, 15, 470)").lastrowid
+    conn.executemany("insert into train_epochs (run, epoch, loss, val_acc, val_wrong, val_missed, val_n, seconds) "
+                     "values (?, ?, ?, ?, 0, 0, 10, 1)", [(run, 1, 3.0, 0.2), (run, 2, 1.0, 0.9), (run, 3, 0.8, 0.85)])
+    conn.executemany("insert into model_reads (run, crop, text, score, value, ms) values (?, ?, ?, .99, ?, .4)",
+                     [(run, a, "1867", "1867"), (run, b, "", None), (run, e, "+19", "+19")])
+    conn.commit()
+    train = client.get("/train").get_data(as_text=True)
+    checks["训练进度页：列出这次训练、两张小图（每一轮的分数、loss），最后一点标上数"] = (
+        "第 1 次" in train and train.count("<svg") == 2 and ">85%</text>" in train)
+    score = client.get("/score").get_data(as_text=True)
+    checks["成绩页：小模型那一列有数，列出小模型读对、引擎没读对的 2 块"] = (
+        "小模型读对、引擎没读对的（2）" in score and "小模型读错的（0）" in score)
     conn.close()
     return report(checks)
+
+
+def digits_checks(conn):
+    """训练用哪些答案、小模型读数的规矩（不用 PyTorch）。"""
+    sid = conn.execute("insert into sources (kind, path, name, status) values ('video', 'v', 'v.mp4', 'done')").lastrowid
+    rows = [  # (项, 读数, 堆, 状态, 答案)
+        ("damage", "55", "auto", "todo", None),          # 规则核对过：用引擎的读数
+        ("damage", "55", "extra", "todo", None),         # 多出来的 55：借答案
+        ("damage", "60", "check", "done", "68"),         # 用户把 60 改成了 68
+        ("damage", "60", "extra", "todo", None),         # 多出来的 60：用户改过，不借
+        ("damage", "70", "extra", "todo", None),         # 没有可信的 70：不借
+        ("damage", None, "check", "skip", None),         # 丢掉的：不用
+        ("rp_delta", "19", "check", "done", "19"),       # RP 正数补 +
+    ]
+    for field, value, pile, status, answer in rows:
+        conn.execute("insert into crops (source, kind, field, t, img, engine_value, engine_score, pile, status, answer) "
+                     "values (?, 'video', ?, 0, 'x.png', ?, .99, ?, ?, ?)", (sid, field, value, pile, status, answer))
+    conn.commit()
+    got = sorted((r["group"], r["label"]) for r in digits.training_rows(conn))
+    probs = np.full((6, len(digits.CHARS) + 1), 0.01)
+    for t, k in enumerate([2, 2, 0, 2, 0, 0]):  # "1" "1" 空 "1" 空 空 → "11"
+        probs[t, k] = 0.95
+    ranges = digits.field_ranges()
+    return {
+        "训练用：用户的答案、引擎的读数、借来的答案；用户改过的、没有可信读数的、丢掉的不用；RP 正数补 +":
+            got == [("auto", "55"), ("extra", "55"), ("human", "+19"), ("human", "68")],
+        "小模型的输入是 32×96、0–1 之间": digits.prepare(np.zeros((45, 68, 3), np.uint8)).shape == (digits.H, digits.W)
+                                         and float(digits.prepare(np.full((20, 400), 200, np.uint8)).max()) <= 1.0,
+        "CTC 解码：连着的同一个字算一个，中间隔了空的算两个": digits.decode(probs)[0] == "11",
+        "小模型读数的规矩：把握不够、格式不对、超出范围都不采用，只有 RP 能带号": (
+            digits.model_value("150", .99, "damage", .8, ranges) == ("150", False)
+            and digits.model_value("150", .5, "damage", .8, ranges) == (None, False)
+            and digits.model_value("+5", .99, "damage", .8, ranges) == (None, False)
+            and digits.model_value("+19", .99, "rp_delta", .8, ranges) == ("+19", False)
+            and digits.model_value("99", .99, "squads_left", .8, ranges) == (None, False)
+            and digits.model_value("", .99, "rp_delta", .8, ranges) == (None, True)),
+    }
 
 
 if __name__ == "__main__":

@@ -47,6 +47,8 @@ __pycache__/
 # 虚拟环境（每台电脑自己装）
 .venv/
 venv/
+# 训练小模型用的环境（PyTorch 显卡版，只在开发电脑上，不进安装包；见 tools/train_digits.py）
+.venv-train/
 
 # ===== 打包输出（PyInstaller）=====
 build/

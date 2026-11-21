@@ -1,4 +1,4 @@
-"""训练小模型用的网页（开发工具，只在本机）：核对答案、看考卷成绩，素材是 tools/train_data.py 裁好的小块。
+"""训练小模型用的网页（开发工具，只在本机）：核对答案、看训练进度和考卷成绩，素材是 tools/train_data.py 裁好的小块。
 
   python tools/train_web.py          打开 http://127.0.0.1:5091（--no-browser 不自动开浏览器）
 
@@ -6,8 +6,10 @@
 - 核对答案：一屏几十块，下面是引擎读的数；对的不用管，错的改掉，Enter 保存这一页、换下一页。
   空着 = 这一块里没有数字；在框里按 Esc（或点"丢掉"）= 这一块不能用（被挡住、裁歪了）
   考卷每一块都要核对（训练时不用，是量引擎和小模型的尺子）；训练素材核对"要人看"那堆，"规则核对过"那堆抽查
-- 考卷成绩：每一项引擎读对、读错、没读出几块，读一块多快、占多少内存；读错和没读出的并排列出来。
-  小模型那一列等第 5 步训练以后才有
+- 训练进度：每一次训练（tools/train_digits.py）的验证分数、考卷分数、速度；选中的那一次每一轮的分数和 loss（两张小图）。
+  正在训练时每 5 秒刷新
+- 考卷成绩：每一项引擎和小模型各读对、读错、没读出几块，读一块多快、占多少内存；读错、没读出、
+  小模型比引擎强的那些块并排列出来
 """
 
 import argparse
@@ -40,10 +42,22 @@ BASE = """<!doctype html>
 <style>
 :root { --bg:#0D0F13; --card:#151820; --inset:#0D0F13; --text:#ECEEF2; --muted:#9AA3B2; --border:#262C38;
   --accent:#FF5A5A; --good:#7CE8B8; --bad:#FF8A8A; --warn:#F4D68A; --warn-bg:#1E1A10; --info:#8EC0FF;
-  --info-bg:#0F1A2B; --focus:#8EC0FF; color-scheme: dark; }
+  --info-bg:#0F1A2B; --focus:#8EC0FF; --series:#3987e5; --grid:#262C38; color-scheme: dark; }
 @media (prefers-color-scheme: light) { :root { --bg:#F6F6F3; --card:#FFFFFF; --inset:#ECECE8; --text:#17191E;
   --muted:#5F6670; --border:#E4E4DF; --good:#11795A; --bad:#C0352F; --warn:#7A5A00; --warn-bg:#FFF6DA;
-  --info:#1F5FB0; --info-bg:#E8F1FF; --focus:#1F5FB0; color-scheme: light; } }
+  --info:#1F5FB0; --info-bg:#E8F1FF; --focus:#1F5FB0; --series:#2a78d6; --grid:#E4E4DF; color-scheme: light; } }
+.chart { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+.chart h3 { font-size:14px; margin:0 0 6px; font-weight:600; }
+.chart svg { width:100%; height:auto; display:block; }
+.chart .line { fill:none; stroke:var(--series); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+.chart .grid { stroke:var(--grid); stroke-width:1; }
+.chart text { fill:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.chart text.last { fill:var(--text); font-weight:600; font-size:12px; }
+.chart .dot { fill:var(--series); stroke:var(--card); stroke-width:2; opacity:0; }
+.chart .pt:hover .dot, .chart .pt:focus .dot, .chart .pt.end .dot { opacity:1; }
+.chart .hit { fill:transparent; }
+.charts { display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:16px; margin-top:12px; }
+tr.on td { background:var(--inset); }
 * { box-sizing: border-box; }
 html { scroll-padding-bottom: 96px; }
 body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 "Microsoft YaHei UI","PingFang SC",system-ui,sans-serif; }
@@ -108,6 +122,7 @@ kbd { border:1px solid var(--border); border-bottom-width:2px; border-radius:4px
 <a href="{{ url_for('home') }}" class="{{ 'on' if nav=='home' }}">首页</a>
 <a href="{{ url_for('check', kind='exam') }}" class="{{ 'on' if nav=='exam' }}">核对考卷</a>
 <a href="{{ url_for('check', kind='video') }}" class="{{ 'on' if nav=='video' }}">核对训练素材</a>
+<a href="{{ url_for('train') }}" class="{{ 'on' if nav=='train' }}">训练进度</a>
 <a href="{{ url_for('score') }}" class="{{ 'on' if nav=='score' }}">考卷成绩</a>
 </nav></header>
 <main>{{ body|safe }}</main></body></html>"""
@@ -150,6 +165,12 @@ HOME = """
   <div class="muted">中位数 {{ meta['engine_ms_median'] }} 毫秒；加载以后多占约 {{ meta['engine_mem_mb'] }} MB 内存<br>量于 {{ meta['engine_measured'] }}</div>
   {% else %}<div class="muted">还没量：<code>python tools/train_data.py exam --measure</code></div>{% endif %}
   <p><a class="btn" href="{{ url_for('score') }}">看考卷成绩</a></p></div>
+ <div class="card"><div class="muted">小模型{% if last %}（第 {{ last['id'] }} 次训练）{% endif %}</div>
+  {% if last_score %}<div class="big">{{ '%.2f' % last['model_ms'] }} 毫秒 / 块</div>
+  <div class="muted">考卷读对 {{ rate(last_score.total) }}（读错 {{ last_score.total['wrong'] }}，没读出 {{ last_score.total['missed'] }}）；
+  多占约 {{ '%.0f' % last['model_mem_mb'] }} MB 内存，模型文件 {{ '%.0f' % last['size_kb'] }} KB</div>
+  {% else %}<div class="muted">还没有训练好、考过的：<code>python tools/train_digits.py train</code></div>{% endif %}
+  <p><a class="btn" href="{{ url_for('train') }}">看训练进度</a></p></div>
 </div>
 
 <h2>考卷每一项</h2>
@@ -198,9 +219,12 @@ def home():
     def field_table(per):
         return render_template_string(FIELD_TABLE, per=per, fields=data.FIELDS, labels=data.LABELS, missing=missing)
 
+    runs = tested_runs(conn)
+    last = runs[-1] if runs else None
     return page("首页", "home", HOME, exam_per=exam_per, exam_total=exam_total, video_total=video_total,
                 videos=videos, exam_rows=exam_rows, exam_sources=sum(1 for s in exam_rows if s["status"] == "done"),
-                meta=meta, pct=pct, field_table=field_table)
+                meta=meta, pct=pct, field_table=field_table, last=last,
+                last_score=model_scores(conn, last["id"]) if last else None, rate=rate)
 
 
 CHECK = """
@@ -355,64 +379,203 @@ def save(kind):
     return redirect(back)
 
 
-SCORE = """
-<h1>考卷成绩</h1>
-<p class="muted">只算核对过的块（丢掉的不算）。<b>读错</b> = 引擎很有把握地读成了别的数（最危险：Evo 会记错）；
-<b>没读出</b> = 引擎读不出来（Evo 留空，不会记错，但漏了）。小模型那一列等第 5 步训练以后才有。</p>
-<div class="cards">
- <div class="card"><div class="muted">考卷核对了</div><div class="big">{{ total['n'] }} 块</div>
-  <div class="muted">还有 {{ todo }} 块没核对{% if todo %}，成绩还不全{% endif %}</div></div>
- <div class="card"><div class="muted">引擎读对</div><div class="big">{{ rate(total) }}</div>
-  <div class="muted">读错 <span class="bad">{{ total['wrong'] }}</span> 块，没读出 <span class="warn">{{ total['missed'] }}</span> 块</div></div>
- <div class="card"><div class="muted">引擎读一块（1 个线程）</div>
-  <div class="big">{{ meta.get('engine_ms', '-') }} 毫秒</div>
-  <div class="muted">加载以后多占约 {{ meta.get('engine_mem_mb', '-') }} MB 内存；笔记本慢 10–15 倍</div></div>
-</div>
-<h2>每一项</h2>
-<table><tr><th>项</th><th class="num">核对过</th><th class="num">引擎读对</th><th class="num">读错</th><th class="num">没读出</th><th class="num">读对的比例</th><th class="num">小模型</th></tr>
-{% for f in fields %}{% set c = per[f] %}<tr><td>{{ labels[f] }}</td><td class="num">{{ c['n'] }}</td><td class="num">{{ c['right'] }}</td>
-<td class="num {{ 'bad' if c['wrong'] }}">{{ c['wrong'] }}</td><td class="num {{ 'warn' if c['missed'] }}">{{ c['missed'] }}</td>
-<td class="num">{{ rate(c) }}</td><td class="num muted">还没有</td></tr>{% endfor %}
-<tr><th>合计</th><th class="num">{{ total['n'] }}</th><th class="num">{{ total['right'] }}</th><th class="num">{{ total['wrong'] }}</th>
-<th class="num">{{ total['missed'] }}</th><th class="num">{{ rate(total) }}</th><th></th></tr></table>
-{% for title, items in (('引擎读错的', wrong), ('引擎没读出的', missed)) %}
-<h2>{{ title }}（{{ items|length }}）</h2>
+TILES = """{% macro tiles(items, who) %}
 {% if items %}<div class="grid">{% for c in items[:150] %}
 <div class="tile"><div class="shot"><img src="{{ url_for('image', crop_id=c['id']) }}" alt="{{ labels[c['field']] }}" loading="lazy"></div>
 <div class="meta"><span>{{ labels[c['field']] }}</span><span>答案 <span class="ans">{{ c['answer'] if c['answer'] != '' else '（空）' }}</span></span></div>
-<div class="meta"><span class="eng" title="{{ c['engine_text'] }}">引擎：{{ c['engine_text'] or '什么也没读到' }}</span><span>{{ '%.2f' % c['engine_score'] if c['engine_score'] is not none else '' }}</span></div>
+{% if who != 'model' %}<div class="meta"><span class="eng" title="{{ c['engine_text'] }}">引擎：{{ c['engine_text'] or '什么也没读到' }}</span><span>{{ '%.2f' % c['engine_score'] if c['engine_score'] is not none else '' }}</span></div>{% endif %}
+{% if who != 'engine' and c['mtext'] is defined %}<div class="meta"><span class="eng">小模型：{{ c['mtext'] if c['mtext'] else '（空）' }}</span><span>{{ '%.2f' % c['mscore'] if c['mscore'] is not none else '' }}</span></div>{% endif %}
 </div>{% endfor %}</div>{% if items|length > 150 %}<p class="muted">只列前 150 块。</p>{% endif %}
-{% else %}<p class="muted">没有。</p>{% endif %}{% endfor %}
+{% else %}<p class="muted">没有。</p>{% endif %}
+{% endmacro %}"""
+
+SCORE = TILES + """
+<h1>考卷成绩</h1>
+<p class="muted">只算核对过的块（丢掉的不算）。<b>读错</b> = 很有把握地读成了别的数（最危险：Evo 会记错）；
+<b>没读出</b> = 读不出来，或者把握不够（Evo 留空，不会记错，但漏了）。图里没有数字、也没读出数的算读对。</p>
+{% if runs %}<div class="filters"><div><span class="lab">小模型</span><span class="seg">{% for r in runs %}
+<a href="{{ url_for('score', run=r['id']) }}" class="{{ 'on' if r['id'] == run }}">第 {{ r['id'] }} 次训练</a>{% endfor %}</span></div></div>{% endif %}
+<div class="cards">
+ <div class="card"><div class="muted">考卷核对了</div><div class="big">{{ eng.total['n'] }} 块</div>
+  <div class="muted">还有 {{ todo }} 块没核对{% if todo %}，成绩还不全{% endif %}</div></div>
+ <div class="card"><div class="muted">引擎读对</div><div class="big">{{ rate(eng.total) }}</div>
+  <div class="muted">读错 <span class="bad">{{ eng.total['wrong'] }}</span> 块，没读出 <span class="warn">{{ eng.total['missed'] }}</span> 块</div></div>
+ <div class="card"><div class="muted">小模型读对{% if run %}（第 {{ run }} 次训练）{% endif %}</div>
+  {% if mod %}<div class="big">{{ rate(mod.total) }}</div>
+  <div class="muted">读错 <span class="bad">{{ mod.total['wrong'] }}</span> 块，没读出 <span class="warn">{{ mod.total['missed'] }}</span> 块</div>
+  {% else %}<div class="muted">还没有训练好、考过的小模型（训练进度页）</div>{% endif %}</div>
+ <div class="card"><div class="muted">读一块（1 个线程）</div>
+  <div class="big">{{ meta.get('engine_ms', '-') }} → {{ '%.2f' % info['model_ms'] if info and info['model_ms'] else '-' }} 毫秒</div>
+  <div class="muted">引擎 → 小模型；加载以后多占内存 {{ meta.get('engine_mem_mb', '-') }} → {{ '%.0f' % info['model_mem_mb'] if info and info['model_mem_mb'] is not none else '-' }} MB；
+  模型文件 {{ '%.0f' % info['size_kb'] if info and info['size_kb'] else '-' }} KB</div></div>
+</div>
+<h2>每一项</h2>
+<table><tr><th rowspan="2">项</th><th class="num" rowspan="2">核对过</th><th class="num" colspan="4">现在的引擎</th><th class="num" colspan="4">小模型</th></tr>
+<tr><th class="num">读对</th><th class="num">读错</th><th class="num">没读出</th><th class="num">读对的比例</th>
+<th class="num">读对</th><th class="num">读错</th><th class="num">没读出</th><th class="num">读对的比例</th></tr>
+{% for f in fields + ['合计'] %}{% set c = eng.per[f] if f != '合计' else eng.total %}{% set m = (mod.per[f] if f != '合计' else mod.total) if mod else none %}
+<tr><td>{{ labels.get(f, f) }}</td><td class="num">{{ c['n'] }}</td><td class="num">{{ c['right'] }}</td>
+<td class="num {{ 'bad' if c['wrong'] }}">{{ c['wrong'] }}</td><td class="num {{ 'warn' if c['missed'] }}">{{ c['missed'] }}</td><td class="num">{{ rate(c) }}</td>
+{% if m %}<td class="num">{{ m['right'] }}</td><td class="num {{ 'bad' if m['wrong'] }}">{{ m['wrong'] }}</td>
+<td class="num {{ 'warn' if m['missed'] }}">{{ m['missed'] }}</td><td class="num"><b>{{ rate(m) }}</b></td>
+{% else %}<td class="num muted" colspan="4">还没有</td>{% endif %}</tr>{% endfor %}</table>
+{% if mod %}
+<h2>小模型读对、引擎没读对的（{{ wins|length }}）</h2>{{ tiles(wins, 'both') }}
+<h2>小模型读错的（{{ mod.wrong|length }}）</h2>{{ tiles(mod.wrong, 'both') }}
+<h2>小模型没读出的（{{ mod.missed|length }}）</h2>{{ tiles(mod.missed, 'both') }}
+{% endif %}
+<h2>引擎读错的（{{ eng.wrong|length }}）</h2>{{ tiles(eng.wrong, 'engine') }}
+<h2>引擎没读出的（{{ eng.missed|length }}）</h2>{{ tiles(eng.missed, 'engine') }}
 """
+
+
+class Scores:
+    """考卷上每一项读对、读错、没读出几块。rows 里每块要有 answer 和读数 v。"""
+
+    def __init__(self, rows):
+        self.per = {f: Counter() for f in data.FIELDS}
+        self.wrong, self.missed, self.right_ids = [], [], set()
+        for r in rows:
+            answer, read = data.number(r["answer"]), data.number(r["v"])
+            c = self.per[r["field"]]
+            c["n"] += 1
+            if answer == read:
+                c["right"] += 1
+                self.right_ids.add(r["id"])
+            elif read is not None:
+                c["wrong"] += 1
+                self.wrong.append(r)
+            else:
+                c["missed"] += 1
+                self.missed.append(r)
+        self.total = sum(self.per.values(), Counter())
+
+
+def engine_scores(conn):
+    return Scores(conn.execute("select *, engine_value as v from crops where kind='exam' and pile!='extra' "
+                               "and status='done' order by field, id").fetchall())
+
+
+def model_scores(conn, run):
+    rows = conn.execute("select c.*, m.value as v, m.text as mtext, m.score as mscore from crops c join model_reads m "
+                        "on m.crop=c.id and m.run=? where c.kind='exam' and c.pile!='extra' and c.status='done' "
+                        "order by c.field, c.id", (run,)).fetchall()
+    return Scores(rows) if rows else None
+
+
+def rate(c):
+    return f"{100 * c['right'] / c['n']:.1f}%" if c["n"] else "-"
+
+
+def tested_runs(conn):
+    return conn.execute("select * from train_runs where id in (select distinct run from model_reads) order by id").fetchall()
 
 
 @app.route("/score")
 def score():
     conn = db()
-    rows = conn.execute("select * from crops where kind='exam' and pile!='extra' and status='done' order by field, id").fetchall()
     todo = conn.execute("select count(*) from crops where kind='exam' and pile!='extra' and status='todo'").fetchone()[0]
-    per = {f: Counter() for f in data.FIELDS}
-    wrong, missed = [], []
-    for r in rows:
-        answer, read = data.number(r["answer"]), data.number(r["engine_value"])
-        c = per[r["field"]]
-        c["n"] += 1
-        if answer == read:
-            c["right"] += 1
-        elif read is not None:
-            c["wrong"] += 1
-            wrong.append(r)
-        else:
-            c["missed"] += 1
-            missed.append(r)
-    total = sum(per.values(), Counter())
-
-    def rate(c):
-        return f"{100 * c['right'] / c['n']:.1f}%" if c["n"] else "-"
-
+    runs = tested_runs(conn)
+    run = request.args.get("run", type=int) or (runs[-1]["id"] if runs else None)
+    info = conn.execute("select * from train_runs where id=?", (run,)).fetchone() if run else None
+    eng = engine_scores(conn)
+    mod = model_scores(conn, run) if run else None
+    wins = []
+    if mod:
+        model_right = mod.right_ids
+        rows = {r["id"]: r for r in conn.execute(
+            "select c.*, m.value as v, m.text as mtext, m.score as mscore from crops c join model_reads m "
+            "on m.crop=c.id and m.run=? where c.kind='exam' and c.pile!='extra' and c.status='done' order by c.field, c.id",
+            (run,)).fetchall()}
+        wins = [rows[r["id"]] for r in eng.wrong + eng.missed if r["id"] in model_right]
     meta = dict(conn.execute("select key, value from meta").fetchall())
-    return page("考卷成绩", "score", SCORE, per=per, total=total, todo=todo, wrong=wrong, missed=missed, rate=rate,
-                fields=data.FIELDS, labels=data.LABELS, meta=meta)
+    return page("考卷成绩", "score", SCORE, eng=eng, mod=mod, wins=wins, todo=todo, rate=rate, runs=runs, run=run,
+                info=info, fields=list(data.FIELDS), labels=data.LABELS, meta=meta)
+
+
+def line_chart(points, title, fmt, low=None, high=None):
+    """一条线的小图：points = [(第几轮, 值)]。只有一条线，不要图例，标题就是名字；最后一个点直接标上数；
+    悬停在点上看每一轮的数（SVG 的 title）。"""
+    if not points:
+        return ""
+    width, height, left, right, top, bottom = 560, 160, 46, 48, 10, 24
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    x0, x1 = 1, max(max(xs), 2)
+    y0 = min(ys) if low is None else low
+    y1 = max(ys) if high is None else high
+    if y1 - y0 < 1e-9:
+        y1 = y0 + 1
+
+    def sx(x):
+        return left + (x - x0) / (x1 - x0) * (width - left - right)
+
+    def sy(y):
+        return top + (1 - (y - y0) / (y1 - y0)) * (height - top - bottom)
+
+    parts = [f'<div class="chart"><h3>{title}</h3><svg viewBox="0 0 {width} {height}" role="img" aria-label="{title}">']
+    for v in (y0, (y0 + y1) / 2, y1):
+        parts.append(f'<line class="grid" x1="{left}" x2="{width - right}" y1="{sy(v):.1f}" y2="{sy(v):.1f}"/>'
+                     f'<text x="{left - 6}" y="{sy(v) + 4:.1f}" text-anchor="end">{fmt(v)}</text>')
+    for x in sorted({x0, round((x0 + x1) / 2), x1}):
+        parts.append(f'<text x="{sx(x):.1f}" y="{height - 6}" text-anchor="middle">第 {x} 轮</text>')
+    parts.append('<polyline class="line" points="' + " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in points) + '"/>')
+    for i, (x, y) in enumerate(points):
+        end = " end" if i == len(points) - 1 else ""
+        parts.append(f'<g class="pt{end}" tabindex="0"><title>第 {x} 轮：{fmt(y)}</title>'
+                     f'<circle class="hit" cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="9"/>'
+                     f'<circle class="dot" cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="4"/></g>')
+    x, y = points[-1]
+    parts.append(f'<text class="last" x="{sx(x) + 8:.1f}" y="{sy(y) + 4:.1f}">{fmt(y)}</text></svg></div>')
+    return "".join(parts)
+
+
+TRAIN = """
+<h1>训练进度</h1>
+<p class="muted">训练：<code>python tools/train_digits.py train</code>（用显卡，几分钟；完了自动考一遍考卷）。
+验证 = 留着不训练的那个视频（用来挑最好的一轮和"把握"的门槛）；考卷 = 我们自己的真实截图，小模型一块都没见过。
+{% if running %}<b>正在训练，这一页每 5 秒刷新。</b>{% endif %}</p>
+{% if not runs %}<div class="note">还没有训练过。</div>{% else %}
+<table><tr><th>第几次</th><th>开始</th><th>情况</th><th>用什么算</th><th class="num">最好的一轮</th><th class="num">门槛</th>
+<th class="num">验证 读对 / 读错 / 没读出</th><th class="num">考卷 读对 / 读错 / 没读出</th><th class="num">一块几毫秒</th><th class="num">内存</th><th class="num">大小</th></tr>
+{% for r in runs %}{% set s = exams.get(r['id']) %}<tr class="{{ 'on' if r['id'] == sel }}">
+<td><a href="{{ url_for('train', run=r['id']) }}">第 {{ r['id'] }} 次</a></td><td>{{ (r['started'] or '')[5:16]|replace('T', ' ') }}</td>
+<td class="{{ 'bad' if r['status'] == 'error' else ('warn' if r['status'] == 'running' else '') }}">{{ {'done':'训练好了','running':'正在训练','error':'出错'}.get(r['status'], r['status']) }}{% if r['note'] %}<br><span class="muted">{{ r['note'] }}</span>{% endif %}</td>
+<td>{{ r['device'] }}</td><td class="num">{{ r['best_epoch'] or '-' }} / {{ r['epochs'] }}</td><td class="num">{{ r['threshold'] or '-' }}</td>
+<td class="num">{% if r['val_n'] %}{{ r['val_right'] }} / <span class="{{ 'bad' if r['val_wrong'] }}">{{ r['val_wrong'] }}</span> / {{ r['val_missed'] }}（{{ r['val_n'] }}）{% else %}-{% endif %}</td>
+<td class="num">{% if s %}{{ s.total['right'] }} / <span class="{{ 'bad' if s.total['wrong'] }}">{{ s.total['wrong'] }}</span> / {{ s.total['missed'] }}（{{ rate(s.total) }}）{% else %}-{% endif %}</td>
+<td class="num">{{ '%.2f' % r['model_ms'] if r['model_ms'] else '-' }}</td><td class="num">{{ '%.0f MB' % r['model_mem_mb'] if r['model_mem_mb'] is not none else '-' }}</td>
+<td class="num">{{ '%.0f KB' % r['size_kb'] if r['size_kb'] else '-' }}</td></tr>{% endfor %}</table>
+<p class="muted">现在的引擎在考卷上：{{ eng.total['right'] }} / <span class="bad">{{ eng.total['wrong'] }}</span> / {{ eng.total['missed'] }}（{{ rate(eng.total) }}），一块 {{ meta.get('engine_ms', '-') }} 毫秒，多占 {{ meta.get('engine_mem_mb', '-') }} MB。</p>
+<h2>第 {{ sel }} 次训练：每一轮</h2>
+{% if epochs %}<div class="charts">{{ acc_chart|safe }}{{ loss_chart|safe }}</div>
+<details><summary class="muted">看表格</summary>
+<table><tr><th class="num">轮</th><th class="num">loss</th><th class="num">验证读对</th><th class="num">读错</th><th class="num">没读出</th><th class="num">秒</th></tr>
+{% for e in epochs %}<tr><td class="num">{{ e['epoch'] }}</td><td class="num">{{ '%.3f' % e['loss'] }}</td><td class="num">{{ '%.1f%%' % (100 * e['val_acc']) }}</td>
+<td class="num">{{ e['val_wrong'] }}</td><td class="num">{{ e['val_missed'] }}</td><td class="num">{{ '%.0f' % e['seconds'] }}</td></tr>{% endfor %}</table></details>
+<p class="muted">每一轮的验证分数按把握 0.8 算；训练完挑出最好的一轮，再在验证视频上挑门槛（读错一块算 20 块没读出那么糟）。</p>
+{% else %}<p class="muted">还没有跑完一轮。</p>{% endif %}
+{% endif %}
+"""
+
+
+@app.route("/train")
+def train():
+    conn = db()
+    runs = conn.execute("select * from train_runs order by id desc").fetchall()
+    sel = request.args.get("run", type=int) or (runs[0]["id"] if runs else None)
+    epochs = conn.execute("select * from train_epochs where run=? order by epoch", (sel,)).fetchall()
+    exams = {r["id"]: model_scores(conn, r["id"]) for r in runs}
+    exams = {k: v for k, v in exams.items() if v}
+    meta = dict(conn.execute("select key, value from meta").fetchall())
+    running = any(r["status"] == "running" for r in runs)
+    acc = line_chart([(e["epoch"], 100 * e["val_acc"]) for e in epochs], "验证视频上读对的比例（%）",
+                     lambda v: f"{v:.0f}%", 0, 100)
+    loss = line_chart([(e["epoch"], e["loss"]) for e in epochs], "loss（越小越好）", lambda v: f"{v:.2f}", 0)
+    body = page("训练进度", "train", TRAIN, runs=runs, sel=sel, epochs=epochs, exams=exams, eng=engine_scores(conn),
+                rate=rate, meta=meta, running=running, acc_chart=acc, loss_chart=loss)
+    if running:
+        body = body.replace("<head>", '<head><meta http-equiv="refresh" content="5">', 1)
+    return body
 
 
 @app.route("/img/<int:crop_id>")
