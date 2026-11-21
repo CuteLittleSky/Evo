@@ -58,8 +58,11 @@ EVENTS = {  # 事件 → (显示名, 样式)：颜色以外还写着名字（时
     "assist": ("助攻", "ev-assist"),
 }
 EVENT_LEAD = 3  # 点事件时从它前几秒开始放：看得到是怎么发生的
-GROUP_GAP = 0.012  # 进度条上相隔不到时长的这么多（约一个标记宽）的事件合成一个标记
+GROUP_GAP = 0.024  # 进度条上相隔不到时长的这么多（约一个标记宽：标记 2026-11-21 换成 22 像素的圆形图标）的事件合成一个标记
 GROUP_MIN_SECONDS = 1.0  # 再短的录像，相隔这么近的也合成一个
+# 合成一个的标记画哪个事件的图标：越靠前越要紧（击杀不会被旁边的击倒、助攻盖住）
+MARK_PRIORITY = ("ev-champion", "ev-kill", "ev-dead", "ev-respawned", "ev-knocked", "ev-revived", "ev-knock", "ev-assist-knock",
+                 "ev-assist")
 MATCH_SLACK = timedelta(minutes=2)  # 战绩里那一局的结束时刻比录像的结尾晚这么多以内，也算同一局（结算画面上才记下）
 MODES = {"ranked": "排位", "pubs": "匹配", "other": "其他"}
 DEFAULT_LIMIT_GB = 30  # 和 match_recording.DEFAULT_LIMIT_GB 一样（那个文件加载识别用的库，这里不导入）
@@ -164,7 +167,8 @@ def load(video):
 
 def group_marks(events, duration):
     """时间轴上的标记：events（按时间排好）里挨得很近的（和前一个相隔不到 GROUP_GAP 的时长、至少 GROUP_MIN_SECONDS 秒）
-    合成一个。每个标记 {"t": 第一个的时刻, "left": 位置, "events": [...], "label": 悬停写的}。"""
+    合成一个。每个标记 {"t": 第一个的时刻, "left": 位置, "events": [...], "css": 画哪个事件（MARK_PRIORITY 里最靠前的），
+    "label": 悬停写的}。"""
     gap = max(GROUP_MIN_SECONDS, (duration or 0) * GROUP_GAP)
     groups = []
     for e in events:
@@ -172,7 +176,10 @@ def group_marks(events, duration):
             groups[-1].append(e)
         else:
             groups.append([e])
-    return [{"t": g[0]["t"], "left": g[0]["left"], "events": g,
+    def rank(e):
+        return MARK_PRIORITY.index(e["css"]) if e["css"] in MARK_PRIORITY else len(MARK_PRIORITY)
+
+    return [{"t": g[0]["t"], "left": g[0]["left"], "events": g, "css": min(g, key=rank)["css"],
              "label": f"{g[0]['label']} {g[0]['clock']}" if len(g) == 1 else " · ".join(f"{e['clock']} {e['label']}" for e in g)}
             for g in groups]
 

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_legend.html" import legend_icon %}
+{% from "_rec_icons.html" import ev_icon %}
 {% block title %}{{ item.title }} · 录像 · Evo{% endblock %}
 
 {# 放一个录像（panel_recordings.watch）：播放器、自己画的时间轴（事件、断掉的那几段）、事件列表、显示文件、删除 #}
@@ -38,16 +39,17 @@
       <span class="rec-gap" style="left: {{ '%.3f' | format(o.left) }}%; width: {{ '%.3f' | format(o.width) }}%" title="这 {{ '%.0f' | format(o.seconds) }} 秒没录到（切窗口等）" aria-hidden="true"></span>
       {% endfor %}
       <span class="rec-head-line" aria-hidden="true"></span>
-      {# 挨得很近的事件合成一个标记（panel_recordings.group_marks）：上下分成几段颜色、角上写个数，点了从第一个前几秒开始放 #}
+      {# 每个标记是一个圆，里面是事件的图标（_rec_icons.html，2026-11-21 用户要的，以前是一道颜色）。
+         挨得很近的事件合成一个标记（panel_recordings.group_marks）：画其中最要紧的那个的图标（击杀优先于击倒、助攻……）、角上写个数，悬停写出全部，点了从第一个前几秒开始放 #}
       {% for m in item.marks %}
       {% if m.events | length == 1 %}{% set e = m.events[0] %}
       <button type="button" class="rec-mark {{ e.css }}" style="left: {{ '%.3f' | format(m.left) }}%" data-t="{{ m.t }}"
-              data-label="{{ m.label }}" aria-label="{{ e.label }}，{{ e.clock }}，从前 {{ lead }} 秒开始放"></button>
+              data-label="{{ m.label }}" aria-label="{{ e.label }}，{{ e.clock }}，从前 {{ lead }} 秒开始放">{{ ev_icon(e.css, 13) }}</button>
       {% else %}
-      <button type="button" class="rec-mark rec-mark-group" style="left: {{ '%.3f' | format(m.left) }}%" data-t="{{ m.t }}"
+      <button type="button" class="rec-mark rec-mark-group {{ m.css }}" style="left: {{ '%.3f' | format(m.left) }}%" data-t="{{ m.t }}"
               data-label="{{ m.label }}"
               aria-label="{{ m.events | length }} 个事件：{% for e in m.events %}{{ e.label }} {{ e.clock }}{{ '，' if not loop.last }}{% endfor %}；从前 {{ lead }} 秒开始放">
-        {% for e in m.events %}<span class="rec-seg {{ e.css }}" aria-hidden="true"></span>{% endfor %}
+        {{ ev_icon(m.css, 13) }}
         <span class="rec-mark-count num" aria-hidden="true">{{ m.events | length }}</span>
       </button>
       {% endif %}
@@ -59,7 +61,7 @@
   {% if item.events %}
   <ol class="rec-events" aria-label="这局的事件（点了从前 {{ lead }} 秒开始放）">
     {% for e in item.events %}
-    <li><button type="button" class="rec-event {{ e.css }}" data-t="{{ e.t }}"><span class="rec-dot" aria-hidden="true"></span><span class="num">{{ e.clock }}</span> {{ e.label }}</button></li>
+    <li><button type="button" class="rec-event {{ e.css }}" data-t="{{ e.t }}">{{ ev_icon(e.css, 16) }}<span class="num">{{ e.clock }}</span> {{ e.label }}</button></li>
     {% endfor %}
   </ol>
   {% else %}

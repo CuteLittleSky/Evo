@@ -380,12 +380,18 @@ def checks():
     marks = re.findall(r'<button type="button" class="rec-mark [^"]*"[^>]*>.*?</button>', raw, re.S)
     groups = [m for m in marks if "rec-mark-group" in m]
     listed = text("".join(re.findall(r'<ol class="rec-events".*?</ol>', raw, re.S)))
-    second = groups[1] if len(groups) > 1 else ""
-    out[f"挨得很近的合成一个标记：6 个事件 4 个标记，两段颜色、角上写 2、悬停写出全部、点了从第一个开始（{len(marks)} 个）"] = (
-        len(marks) == 4 and len(groups) == 2 and second.count('class="rec-seg') == 2
-        and "ev-knocked" in second and "ev-assist-knock" in second and '>2</span>' in second
+    first, second = (groups + ["", ""])[:2]
+    opening = second.split(">")[0]  # 第二个标记的 <button ...>：class 里写着画哪个事件
+    out[f"挨得很近的（相隔不到时长的 2.4%，这一局约 15 秒）合成一个标记：6 个事件 3 个标记；画最要紧的那个的图标"
+        f"（击杀优先于击倒、助攻；倒地优先于助攻击倒），角上写个数、悬停写出全部、点了从第一个开始（{len(marks)} 个）"] = (
+        len(marks) == 3 and len(groups) == 2
+        and "ev-kill" in first.split(">")[0] and '>3</span>' in first and 'data-t="160.4"' in first
+        and "ev-knocked" in opening and "ev-assist-knock" not in opening and '>2</span>' in second
         and 'data-label="6:21 倒地 · 6:22 助攻击倒"' in second and 'data-t="381.8"' in second
         and "2 个事件：倒地 6:21，助攻击倒 6:22" in second)
+    out["每个标记、下面列表的每一项都有图标（不只靠颜色分）"] = (
+        all(m.count('class="ev-icon"') == 1 for m in marks)
+        and raw.count('class="ev-icon"') == len(marks) + 6)
     out[f"下面的事件列表照样一条一条列，助攻击倒有自己的名字（{listed}）"] = (
         listed.count("助攻击倒") == 1 and listed.count(":") == 6 and "6:22 助攻击倒" in listed)
     for extra in (close, close.with_suffix(".json"), close.with_suffix(".jpg")):

@@ -1584,7 +1584,7 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .rec-video video { display: block; width: 100%; height: 100%; }
 /* 时间轴：已放过的一段、断掉的几段（斜线）、现在的位置（竖线）、事件标记（按钮） */
 .rec-timeline { margin-top: 14px; }
-.rec-track { position: relative; height: 28px; border-radius: 6px; background: var(--inset); border: 1px solid var(--border); cursor: pointer; }
+.rec-track { position: relative; height: 32px; border-radius: 6px; background: var(--inset); border: 1px solid var(--border); cursor: pointer; }
 .rec-played { position: absolute; inset: 0; border-radius: 6px; background: color-mix(in srgb, var(--text) 10%, transparent); transform-origin: left center; transform: scaleX(0); pointer-events: none; }
 .rec-gap { position: absolute; top: 0; bottom: 0; pointer-events: auto; cursor: help;
   background: repeating-linear-gradient(135deg, var(--dashed) 0 3px, transparent 3px 7px); }
@@ -1596,9 +1596,12 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .rec-track:hover .rec-head-line::before, .rec-track.dragging .rec-head-line::before { transform: scale(1); }
 .rec-track.dragging, .rec-track.dragging .rec-mark { cursor: grabbing; }
 .rec-track.dragging .rec-mark::after { opacity: 0; }
-.rec-mark { position: absolute; top: 3px; bottom: 3px; width: 10px; margin-left: -5px; padding: 0; border: 2px solid var(--card); border-radius: 3px;
-  background: var(--ev, var(--muted)); cursor: pointer; }
-.rec-mark:hover, .rec-mark:focus-visible { z-index: 2; transform: scaleY(1.25); }
+/* 标记：白底的圆、一圈事件的颜色、里面是图标（_rec_icons.html）；浅色主题图标颜色压暗一点，浅黄、浅粉在白底上也看得清 */
+.rec-mark { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; padding: 0; display: flex; align-items: center;
+  justify-content: center; border: 1.5px solid var(--ev, var(--muted)); border-radius: 50%; background: var(--card); color: var(--ev-ink, var(--ev, var(--muted)));
+  cursor: pointer; transition: transform 0.12s ease-out; }
+[data-theme="light"] .rec-mark, [data-theme="light"] .rec-event .ev-icon { --ev-ink: color-mix(in srgb, var(--ev) 72%, #000); }
+.rec-mark:hover, .rec-mark:focus-visible { z-index: 2; transform: scale(1.2); }
 .rec-mark:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 1px; }
 /* 标记上方的名字：鼠标指上去、键盘移过去时显示 */
 .rec-mark::after, .rec-link::after { content: attr(data-label); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
@@ -1617,17 +1620,15 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .ev-knock { --ev: var(--series-1); }  /* 击倒对手：橙色 */
 .ev-assist { --ev: var(--series-4); }  /* 助攻：粉色 */
 .ev-assist-knock { --ev: var(--series-3); }  /* 助攻击倒：琥珀色（和击倒的橙色一类） */
-/* 挨得很近的几个事件合成的标记：上下几段颜色（一个事件一段）、右上角个数（panel_recordings.group_marks） */
-.rec-mark-group { width: 14px; margin-left: -7px; display: flex; flex-direction: column; gap: 1px; background: var(--card); }
-.rec-seg { flex: 1; min-height: 0; border-radius: 1px; background: var(--ev, var(--muted)); }
-.rec-mark-count { position: absolute; top: -10px; right: -10px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+/* 挨得很近的几个事件合成的标记：最要紧的那个的图标、右上角个数（panel_recordings.group_marks） */
+.rec-mark-count { position: absolute; top: -8px; right: -9px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
   background: var(--text); color: var(--card); font-size: 10px; line-height: 15px; text-align: center; pointer-events: none; }
 .rec-events { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .rec-event { font: inherit; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
   background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; }
 .rec-event:hover { border-color: var(--muted); }
 .rec-event:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
-.rec-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--ev, var(--muted)); }
+.rec-event .ev-icon { flex: none; color: var(--ev-ink, var(--ev, var(--muted))); }
 .rec-no-events { margin: 16px 0 0; }
 .rec-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 20px; }
 /* 战绩页：有录像的局，传奇后面一个小按钮 */
