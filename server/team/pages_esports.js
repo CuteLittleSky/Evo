@@ -4,7 +4,7 @@
 import { can } from "./auth.js";
 import { EVENT_COLUMNS, MAIN_MAX, NO_STREAM, NO_STREAM_NAME, PLATFORMS, PLAYER_COLUMNS, STATUS_WORDS, TYPES, beijingText, checkPlayers, eventLabel, isoBeijing,
   parseBeijing, parseIso, roomUrl, status } from "./esports.js";
-import { teamsOf } from "./data.js";
+import { mainChoices, teamsOf } from "./data.js";
 import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
 import { ago, escape, layout, logList, noteList } from "./pages.js";
 import { PUBLIC_LOGO_URL } from "./logos.js";
@@ -195,16 +195,38 @@ function asIso(text) {
   return ms === null ? "" : isoBeijing(ms);
 }
 
-// 主舞台：播导播视角的直播间（Evo 看直播页队伍栏最上面一栏）。已有的几行 + 空着的两行，最多 8 行
+// 主舞台：播导播视角的直播间、观战的主播（Evo 看直播页队伍栏最上面一栏）。已有的几行 + 空着的几行（新的一场 8 行，改的时候 4 行），最多 24 行。
+// 名字那一格在最前面，下拉是记下的直播间和选手库里开直播的人（页面上一份 datalist main-rooms）：选了以后 /app.js 填好平台和房间号，
+// 没有脚本时保存的时候照名字补（data.js 的 fillMain）
 function mainFields(main) {
-  const rows = [...main, ...Array.from({ length: Math.min(2, MAIN_MAX - main.length) }, () => ({ platform: "", room: "", name: "" }))];
+  const blank = Math.min(main.length ? 4 : 8, MAIN_MAX - main.length);
+  const rows = [...main, ...Array.from({ length: blank }, () => ({ platform: "", room: "", name: "" }))];
   const row = (m, i) => `<div class="main-row">
+      <input class="input" name="main_name" value="${escape(m.name)}" list="main-rooms" placeholder="名字：打几个字从下拉里选" aria-label="主舞台第 ${i + 1} 路的名字" maxlength="40" autocomplete="off">
       <select class="input" name="main_platform" aria-label="主舞台第 ${i + 1} 路的平台"><option value="">平台</option>${platformOptions(m.platform)}</select>
-      <input class="input" name="main_room" value="${escape(m.room)}" placeholder="房间号" aria-label="主舞台第 ${i + 1} 路的房间号" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <input class="input" name="main_name" value="${escape(m.name)}" placeholder="名字，比如 官方直播" aria-label="主舞台第 ${i + 1} 路的名字" maxlength="40" autocomplete="off"></div>`;
+      <input class="input" name="main_room" value="${escape(m.room)}" placeholder="房间号" aria-label="主舞台第 ${i + 1} 路的房间号" maxlength="24" autocomplete="off" autocapitalize="off" spellcheck="false"></div>`;
   return `<fieldset><legend>主舞台（可以空着）</legend>
-    <span class="help">播导播视角的直播间，Evo 里放在队伍栏最上面。最多 ${MAIN_MAX} 路，不进选手库；第一路在播的话，Evo 默认先看它。空着的行不用管</span>
+    <span class="help">官方直播、解说、观战的主播，Evo 里放在队伍栏最上面，照这里的顺序。名字那一格打几个字，从下拉里选填过的直播间或选手库里的人，平台和房间号会自动填好；
+      新的直播间三格都填。最多 ${MAIN_MAX} 路（0.7.0 以前的 Evo 只显示前 8 路，官方直播、解说放前面）；第一路在播的话，Evo 默认先看它。空着的行不用管</span>
     ${rows.map(row).join("")}</fieldset>`;
+}
+
+// 主舞台名字的下拉：记下的直播间 + 选手库里开直播的人。data-p、data-r 给 /app.js 填平台和房间号
+function mainRoomList(choices) {
+  return `<datalist id="main-rooms">${choices.map((c) => `<option value="${escape(c.name)}" label="${escape(`${PLATFORMS[c.platform]?.name ?? c.platform} ${c.room}${c.from === "player" ? ` · 选手库（${c.team}）` : ""}`)}"
+    data-p="${escape(c.platform)}" data-r="${escape(c.room)}"></option>`).join("")}</datalist>`;
+}
+
+// 记下的直播间（11-21）：列出来，填错的、不用了的可以勾掉
+function roomsFold(rooms, editable) {
+  if (!rooms.length) return "";
+  const item = (r) => `<li class="row"><label class="pick-row">${editable ? `<input type="checkbox" name="forget" value="${escape(r.key)}">` : ""}
+    <span><b>${escape(r.name)}</b> <span class="muted small">${escape(PLATFORMS[r.platform]?.name ?? r.platform)} ${escape(r.room)}</span></span></label></li>`;
+  return `<details class="card fold" id="rooms"><summary class="fold-head"><span>记下的直播间（${rooms.length}）</span><span class="muted small">填主舞台时从下拉里选</span></summary>
+    <form class="stack" method="post" action="/events/rooms/forget">
+      <p class="small muted">填过的主舞台直播间都记在这里，名字用最近一次填的；选手库里开直播的人不用记，下拉里本来就有。填错的、不用了的勾上点"忘掉"，赛程里已经填着的不动。</p>
+      <ul class="list">${rooms.map(item).join("")}</ul>
+      ${editable ? '<div><button class="btn" type="submit">忘掉勾选的</button></div>' : ""}</form></details>`;
 }
 
 function eventForm(action, e, teams, submit) {
@@ -231,7 +253,7 @@ function eventForm(action, e, teams, submit) {
 }
 
 // copy：点了某一场的"复制"（2026-11-19 用户要的：A 组、B 组，每天的训练赛，队伍和主舞台不用再录一遍），添加表单照它填好
-export function eventsPage(me, items, playerItems, { now, error = "", ok = "", draft = null, draftTable = "", banner = "", copy = null }) {
+export function eventsPage(me, items, playerItems, { now, error = "", ok = "", draft = null, draftTable = "", banner = "", copy = null, rooms = [] }) {
   const editable = can(me, "edit");
   const teams = teamsOf(playerItems);
   const groups = { live: [], upcoming: [], ended: [] };
@@ -239,38 +261,18 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
   groups.live.sort((a, b) => parseIso(a.start) - parseIso(b.start));
   groups.upcoming.sort((a, b) => parseIso(a.start) - parseIso(b.start));
   groups.ended.sort((a, b) => parseIso(b.end) - parseIso(a.end));
-  // 观战的人（11-19 用户要的）：开直播的选手才能选（选手名用页面上那一份下拉 streamer-names），看的队从这场的参赛队里选
-  const nameOf = (pid) => playerItems.find((p) => p.id === pid)?.name ?? "（已删的选手）";
-  const streaming = playerItems.filter((p) => p.platform && p.platform !== NO_STREAM);
-  const observerRow = (e, o, i) => `<div class="obs-row">
-      <input class="input" name="obs_player" value="${escape(o ? nameOf(o.player) : "")}" list="streamer-names" placeholder="选手（开直播的）"
-        aria-label="观战的第 ${i + 1} 位选手" maxlength="40" autocomplete="off">
-      <select class="input" name="obs_team" aria-label="第 ${i + 1} 位在看哪支队"><option value="">看哪支队</option>
-        ${e.teams.map((t) => `<option value="${escape(t)}"${o?.team === t ? " selected" : ""}>${escape(t)}</option>`).join("")}</select></div>`;
-  const observersPanel = (e) => {
-    const list = e.observers ?? [];
-    const rows = [...list.map((o, i) => observerRow(e, o, i)), ...Array.from({ length: 2 }, (_, i) => observerRow(e, null, list.length + i))].join("");
-    return `<details class="act"><summary class="btn">观战${list.length ? `（${list.length}）` : ""}</summary><div class="panel panel-wide">
-      <form class="stack" method="post" action="/events/${e.id}/observers"><input type="hidden" name="rev" value="${e.rev}">
-        <p class="small muted">正在看别的队比赛、开着直播的选手（比如替补、别的队的选手）：放到他看的那支队下面，Evo 看直播页标"观战"。
-          换了看谁就在这里改；保存以后要再发布一次，Evo 最慢 5 分钟更新。清空一行就是去掉他。</p>
-        ${rows}
-        <div><button class="btn btn-primary" type="submit">保存观战</button></div></form></div></details>`;
-  };
   const row = (e) => {
     const old = now - parseIso(e.end) > 7 * 24 * 3600 * 1000;
-    return `<li class="row">
+    return `<li class="row" id="e-${e.id}">
     <div class="row-main">
       <div class="row-name"><span class="badge badge-${status(e, now)}">${STATUS_WORDS[status(e, now)]}</span>${escape(e.name)}</div>
       <div class="row-meta"><span>${escape(e.type)}${e.stage ? ` · ${escape(e.stage)}` : ""}</span>
         <span>${escape(beijingText(parseIso(e.start)))}–${escape(beijingText(parseIso(e.end)).slice(11))}</span>
         <span>${e.teams.length} 支队</span>${e.main?.length ? `<span>主舞台 ${e.main.length} 路</span>` : ""}
-        ${e.observers?.length ? `<span>观战：${e.observers.map((o) => `${escape(nameOf(o.player))} 看 ${escape(o.team)}`).join("、")}</span>` : ""}
         ${old ? '<span class="badge">结束超过 7 天，不会发布</span>' : ""}<span>${by(e, now)}</span></div>
     </div>
     ${editable ? `<div class="row-actions">
       <details class="act"><summary class="btn">改</summary><div class="panel panel-wide">${eventForm(`/events/${e.id}/save`, e, teams, "保存")}</div></details>
-      ${status(e, now) === "ended" ? "" : observersPanel(e)}
       <a class="btn" href="/events?copy=${e.id}#add" title="照这一场填好添加表单（队伍、主舞台都带上）">复制</a>
       ${confirmDelete(`/events/${e.id}/delete`, e.name)}</div>` : ""}
   </li>`;
@@ -290,9 +292,10 @@ export function eventsPage(me, items, playerItems, { now, error = "", ok = "", d
 <div class="stack"><h1>赛程</h1>
   <p class="muted">时间都是北京时间。进行中、即将开始的会出现在 Evo 的赛事页；结束超过 7 天的不会发布。</p></div>
 ${notes({ error, ok })}
-${editable ? `<datalist id="streamer-names">${streaming.map((p) => `<option value="${escape(p.name)}">${escape(p.team)}</option>`).join("")}</datalist>` : ""}
+${editable ? mainRoomList(mainChoices(rooms, playerItems)) : ""}
 ${add}
 ${section("live", "进行中")}${section("upcoming", "即将开始")}${section("ended", "已结束")}
+${roomsFold(rooms, editable)}
 ${items.length ? "" : `<p class="muted">还没有赛事。</p>`}
 ${editable ? importBox("/events/import", [...EVENT_COLUMNS, "主舞台（可以没有：平台 房间号 名字，多路用顿号隔开）"], "亚太北区职业联赛 第 3 周\t联赛\tB 组对 C 组\t2026-11-17 19:00\t2026-11-17 23:00\t星火电竞、北辰\tB站 7734200 官方直播", draftTable) : ""}` });
 }

@@ -5,7 +5,7 @@
 - 抖音的房间号可以写抖音号（字母、数字、下划线），两边都转成小写；XXFPS 和 xxfps 算同一个房间；带点的、斗鱼写字母的两边都不收
 - 队徽：同一份 {队名: {"logo"}} 给两边，只放这次用到、文件名写法对的队（多出来的键丢掉），键按队名排
 - 主舞台：同一格「主舞台」的写法两边拆出来一样（抖音号转小写、名字里可以有空格），生成的 main 一样（编号、放在 teams 后面）；
-  几种写错（超过 8 路、只有两段、不认识的平台、斗鱼写字母、抖音号带点、名字太长、重复）两边都不收
+  几种写错（超过上限、只有两段、不认识的平台、斗鱼写字母、抖音号带点、名字太长、重复）两边都不收
 - 不直播的选手：平台写「不直播」、房间号空着，两边生成的编号一样（none- + 选手名 sha256 的前 12 位），两个不直播的不算重复，
   不直播还写了房间号、主舞台写不直播两边都不收
 - 平台名单（英文名、中文名、直播间地址、房间号的写法、顺序）和 config/watch.json 一样
@@ -60,7 +60,7 @@ def sample():
         for name, platform, room, liquipedia in people:
             players.append({"name": name, "team": team, "platform": platform, "room": room, "liquipedia": liquipedia})
     events = [
-        ("联赛 第 3 周", "联赛", "B 组对 C 组", at(17, 19), at(17, 23), ["北辰", "星火电竞"], MAIN, "Ace@北辰、北一@星火电竞"),
+        ("联赛 第 3 周", "联赛", "B 组对 C 组", at(17, 19), at(17, 23), ["北辰", "星火电竞"], MAIN),
         ("同时的杯赛 一", "杯赛", "", at(18, 19), at(18, 21), ["北辰"]),
         ("训练赛", "训练赛", "", at(17, 10), at(17, 13), ["星火电竞", "安静队"]),
         ("同时的杯赛 二", "杯赛", "决赛", at(18, 19), at(18, 22), ["星火电竞"]),
@@ -68,7 +68,7 @@ def sample():
         ("8 天前结束", "杯赛", "", at(9, 10), at(9, 12), ["北辰"]),
     ]
     events = [{"name": e[0], "type": e[1], "stage": e[2], "start": e[3].isoformat(), "end": e[4].isoformat(), "teams": e[5],
-               "mainText": e[6] if len(e) > 6 else "", "observersText": e[7] if len(e) > 7 else ""} for e in events]
+               "mainText": e[6] if len(e) > 6 else ""} for e in events]
     return players, events
 
 
@@ -94,8 +94,7 @@ def main():
     rows, _ = tool.check_players(table, errors)
     plans = [{"line": i + 2, "name": e["name"], "type": e["type"], "stage": e["stage"],
               "start": datetime.fromisoformat(e["start"]), "end": datetime.fromisoformat(e["end"]), "teams": e["teams"],
-              "main": tool.check_main(" ".join(e["mainText"].split()), "赛程.csv", errors),
-              "observers": tool.check_observers(e["observersText"], e["teams"], rows, "赛程.csv", errors)}
+              "main": tool.check_main(" ".join(e["mainText"].split()), "赛程.csv", errors)}
              for i, e in enumerate(events)]
     # 选手放全部（2026-11-19 起网页这样发布：Evo 电竞页的"主播"一块列开直播的选手）
     python = tool.build(rows, plans, switches, [], now=NOW, teams=teams, everyone=True)
@@ -122,16 +121,11 @@ def main():
     checks.append(("主舞台：两路、抖音号转小写、名字里有空格、放在 teams 后面",
                    league.get("main") == [{"id": "bilibili-7734200", "name": "官方直播", "platform": "bilibili", "room": "7734200"},
                                           {"id": "douyin-xxfps", "name": "某某 解说", "platform": "douyin", "room": "xxfps"}]
-                   and list(league)[-3:] == ["teams", "main", "observers"], league))
-    checks.append(("观战：选手的 id 和他看的队、放在主舞台后面",
-                   league.get("observers") == [{"id": "bilibili-100", "team": "北辰"}, {"id": "douyin-xxfps", "team": "星火电竞"}]
-                   and list(league)[-1] == "observers", league.get("observers")))
-    checks.append(("Evo 读的时候观战一位都不去掉",
-                   next(e for e in cleaned["events"] if e["name"] == "联赛 第 3 周").get("observers") == league.get("observers"), None))
+                   and list(league)[-2:] == ["teams", "main"], league))
     checks.append(("Evo 读的时候主舞台一路都不去掉",
                    next(e for e in cleaned["events"] if e["name"] == "联赛 第 3 周").get("main") == league["main"], None))
 
-    cases = {"超过 8 路": "、".join(f"B站 {9000 + i} 第{i}路" for i in range(9)), "只有两段": "只有两段 1", "不认识的平台": "快手 1 某某",
+    cases = {"超过上限（25 路）": "、".join(f"B站 {9000 + i} 第{i}路" for i in range(25)), "只有两段": "只有两段 1", "不认识的平台": "快手 1 某某",
              "斗鱼写字母": "斗鱼 abc 某某", "抖音号带点": "抖音 a.b 某某", "名字太长": "B站 1 " + "名" * 41,
              "同一个抖音号大小写不同": "抖音 XXFPS 一、抖音 xxfps 二", "正常的一路": "虎牙 520 某某 解说", "写不直播": "不直播 1 某某"}
     with tempfile.TemporaryDirectory() as folder:

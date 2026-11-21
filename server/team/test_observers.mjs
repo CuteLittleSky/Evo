@@ -1,11 +1,14 @@
-// 发布全部选手、赛事里"观战的人"的测试（2026-11-19 用户在「赛事页和看直播」窗口定的："默认职业选手就是主播"，
-// "给正在 OB 的职业选手一个观战的标签……每场比赛里手动放"）。由 test.mjs 运行。
-// 走一遍：发布时选手放全部（没比赛的队、直播间待填的也在）、队徽照旧只放用到的队；观战：权限、保存、写错的几种、rev、
-// 发布出去的写法（按选手的 id，换了直播间也跟着变）、Evo 读的规则、页面上显示、改赛事去掉了队、战队改名、删选手、复制不带观战。
+// 发布全部选手（2026-11-19 用户在「赛事页和看直播」窗口定的："默认职业选手就是主播"），和主舞台的直播间记忆（2026-11-21：
+// 赛管毛毛要的"直播间记忆功能，保存主播直播间号，在发布赛事时直接选择"、"主播直播间最多八路，可能塞不下"；用户定的：观战并进主舞台、
+// 主舞台最多 24 路）。由 test.mjs 运行。文件名还是 11-19 做"观战"时起的。
+// 走一遍：发布时选手放全部（没比赛的队、直播间待填的也在）、队徽照旧只放用到的队、不再写 observers（存着的老数据也不发、保存时去掉）；
+// 赛程页没有观战按钮；主舞台名字的下拉（记下的直播间 + 选手库里开直播的人）、只写名字时照名字补平台和房间号、认不出的名字、
+// 记下的直播间（从已有的赛程算一份、用新名字、忘掉、权限）、新的一场 8 行空行、改完回到那一场。
 
 import { hash, newToken, update } from "./auth.js";
-import { EVENTS, LOG, PLAYERS } from "./data.js";
-import { clean } from "./esports.js";
+import { EVENTS, LOG, MAIN_ROOMS, PLAYERS } from "./data.js";
+import { MAIN_MAX } from "./esports.js";
+import { APP_JS } from "./pages.js";
 import { FakeBucket, check, makeBrowser } from "./testkit.mjs";
 
 const HOUR = 3600 * 1000;
@@ -14,8 +17,8 @@ const env = { DATA: new FakeBucket(), PUBLIC: new FakeBucket() };
 const browser = () => makeBrowser(env, () => now);
 const P = () => env.DATA.json(PLAYERS, '{"items":[]}').items;
 const E = () => env.DATA.json(EVENTS, '{"items":[]}').items;
+const rooms = () => env.DATA.json(MAIN_ROOMS, '{"items":{}}').items;
 const logs = () => env.DATA.json(LOG, '{"items":[]}').items.map((x) => x.text);
-const who = (name) => P().find((p) => p.name === name);
 
 async function join(name, role) {
   const token = newToken();
@@ -45,93 +48,86 @@ await add("闲人", "没比赛的队", "huya", "777");
   await env.DATA.put(PLAYERS, JSON.stringify(d));
 }
 await env.DATA.put("manual/teams.json", JSON.stringify({ items: { 星火: { logo: "aaaaaaaaaaaaaaaa.png" }, 没比赛的队: { logo: "bbbbbbbbbbbbbbbb.png" } } }));
-const form = (name, stage, teams) => [["name", name], ["type", "联赛"], ["stage", stage], ["start", "2026-11-20T17:00"], ["end", "2026-11-20T20:00"],
-  ...teams.map((t) => ["teams", t])];
+// mains：主舞台的几行 [名字, 平台, 房间号]（表单上名字在最前面）
+const form = (name, stage, teams, mains = [], more = []) => [["name", name], ["type", "联赛"], ["stage", stage], ["start", "2026-11-20T17:00"],
+  ["end", "2026-11-20T20:00"], ...teams.map((t) => ["teams", t]),
+  ...mains.flatMap(([n, platform, room]) => [["main_name", n], ["main_platform", platform], ["main_room", room]]), ...more];
+
+// ---------- 从已有的赛程算一份"记下的直播间"（还没有 main_rooms.json 的时候） ----------
 await editor.post("/events/add", form("LCQ胜者组第1轮", "A组", ["星火", "北辰"]));
+{  // 11-21 以前存的赛程：有主舞台、还有 11-19 到 11-21 的"观战"
+  const d = env.DATA.json(EVENTS);
+  Object.assign(d.items[0], { main: [{ platform: "douyu", room: "9999", name: "快乐滋崩在这里" }],
+                              observers: [{ player: P().find((p) => p.name === "皮特").id, team: "星火" }] });
+  await env.DATA.put(EVENTS, JSON.stringify(d));
+  await env.DATA.delete?.(MAIN_ROOMS);
+}
 const ev = () => E().find((e) => e.stage === "A组");
 
-// ---------- 发布：选手放全部 ----------
+// ---------- 发布：选手放全部；不再写观战 ----------
 let r = await admin.post("/publish/test");
 let sent = env.PUBLIC.json("esports_test.json");
 check("发布：选手放全部（没比赛的队、不直播、直播间待填的都在）", r.location === "/publish?ok=test" && sent.players.length === 7
   && sent.players.some((p) => p.name === "闲人" && p.platform === "huya") && sent.players.find((p) => p.name === "待填").platform === "none");
 check("发布：队徽照旧只放用到的队", JSON.stringify(sent.teams) === JSON.stringify({ 星火: { logo: "aaaaaaaaaaaaaaaa.png" } }));
-check("发布：没有人观战的赛事不写 observers", sent.events.every((e) => !("observers" in e)));
+check("发布：不再写观战（存着的老数据也不发；11-21 观战并进了主舞台）", sent.events.every((e) => !("observers" in e))
+  && sent.events[0].main.length === 1);
 
-// ---------- 观战：权限、保存 ----------
-r = await viewer.get("/events");
-check("只读的看不到观战的按钮", !r.text.includes("/observers"));
+// ---------- 赛程页：没有观战；主舞台名字的下拉 ----------
 r = await editor.get("/events");
-check("编辑：每场还没结束超过 7 天的赛事有观战；选手下拉只有开直播的人", r.text.includes(`action="/events/${ev().id}/observers"`)
-  && r.text.includes('<datalist id="streamer-names">') && r.text.includes('<option value="皮特">') && !r.text.includes('<option value="不播">')
-  && !r.text.includes('<option value="待填">'));
-const obs = (rows, rev = ev().rev) => [["rev", String(rev)], ...rows.flatMap(([player, team]) => [["obs_player", player], ["obs_team", team]])];
-r = await viewer.post(`/events/${ev().id}/observers`, obs([["皮特", "星火"]]));
-check("只读的不能改观战", r.status === 403);
-r = await editor.post(`/events/${ev().id}/observers`, obs([["皮特", "星火"], ["Kite", "北辰"], ["", ""]]));
-check("保存：皮特看星火（不是这场的人也行）、Kite 看北辰（看别的队）", r.location === "/events?ok=observers"
-  && JSON.stringify(ev().observers) === JSON.stringify([{ player: who("皮特").id, team: "星火" }, { player: who("Kite").id, team: "北辰" }]));
-check("改动记录写清楚", logs()[0] === "修改赛事「LCQ胜者组第1轮 · A组」的观战：加了 皮特（看 星火）、Kite（看 北辰）");
-r = await editor.get(r.location);
-check("赛程页上写着谁在看哪队、提醒要发布", r.text.includes("观战：皮特 看 星火、Kite 看 北辰") && r.text.includes("发布以后 Evo 里才看得到")
-  && r.text.includes("有改动还没发布到 Evo"));
-r = await editor.post(`/events/${ev().id}/observers`, obs([["皮特", "北辰"], ["Kite", "北辰"]]));
-check("改看别的队 → 记下来", logs()[0] === "修改赛事「LCQ胜者组第1轮 · A组」的观战：皮特 改看 北辰");
-r = await editor.post(`/events/${ev().id}/observers`, obs([["皮特", "北辰"], ["Kite", "北辰"]]));
-check("没改 → 说没有改动、不记", r.location === "/events?ok=nochange" && logs()[0].includes("皮特 改看 北辰"));
+check("赛程页上没有观战的按钮、没有观战的字样", !r.text.includes("/observers") && !r.text.includes("观战：") && !r.text.includes("streamer-names"));
+const list = r.text.split('<datalist id="main-rooms">')[1]?.split("</datalist>")[0] ?? "";
+check("主舞台名字的下拉：记下的直播间（从已有的赛程算的）+ 选手库里开直播的人；不直播、待填的不在",
+  list.includes('value="快乐滋崩在这里" label="斗鱼 9999"') && list.includes('value="皮特" label="B站 23097212 · 选手库（DF）"')
+  && list.includes('data-p="bilibili" data-r="23097212"') && !list.includes('value="不播"') && !list.includes('value="待填"')
+  && list.indexOf("快乐滋崩在这里") < list.indexOf("皮特"));
+check("名字那一格用这个下拉、排在平台前面", /<input class="input" name="main_name" value="" list="main-rooms"[^>]*>\s*<select class="input" name="main_platform"/.test(r.text));
+const addForm = r.text.split('id="add"')[1].split("</details>")[0];
+check("新的一场：主舞台 8 行空行；写着最多 24 路、老版本只显示前 8 路", (addForm.match(/name="main_name"/g) ?? []).length === 8
+  && addForm.includes(`最多 ${MAIN_MAX} 路`) && MAIN_MAX === 24 && addForm.includes("0.7.0 以前的 Evo 只显示前 8 路"));
+const editForm = r.text.split(`action="/events/${ev().id}/save"`)[1].split("</form>")[0];
+check("改的时候：已有的 1 行 + 4 行空行", (editForm.match(/name="main_name"/g) ?? []).length === 5);
+check("记下的直播间列在赛程页最下面", r.text.includes("记下的直播间（1）") && r.text.includes('value="douyu-9999"'));
+check("/app.js：从下拉里选了就填平台和房间号", APP_JS.includes("input[name=main_name]") && APP_JS.includes("option.dataset.p"));
+r = await viewer.get("/events");
+check("只读的：没有下拉、没有忘掉的勾", !r.text.includes('<datalist id="main-rooms">') && !r.text.includes('name="forget"') && r.text.includes("记下的直播间（1）"));
 
-// ---------- 写错的几种 ----------
-const bad = async (rows, text, name) => {
-  const res = await editor.post(`/events/${ev().id}/observers`, obs(rows));
-  check(name, res.status === 400 && res.text.includes(text));
-};
-await bad([["不播", "星火"]], "「不播」不开直播", "不直播的人 → 不能观战");
-await bad([["待填", "星火"]], "「待填」的直播间还没填", "直播间待填的人 → 不能观战");
-await bad([["皮特", "DF"]], "「DF」不是这场的参赛队伍", "看的队不在这场里 → 提示");
-await bad([["皮特", "星火"], ["皮特", "北辰"]], "「皮特」写了两次", "同一位写两次 → 提示");
-await bad([["皮特", ""]], "少了一样", "只写了选手没写队 → 提示");
-await bad([["没有这人", "星火"]], "选手库里没有「没有这人」", "选手库里没有的人 → 提示");
-r = await editor.post(`/events/${ev().id}/observers`, obs([["皮特", "星火"]], 1));
-check("别人刚改过（rev 对不上）→ 不存", r.status === 400 && r.text.includes("刚改过") && ev().observers[0].team === "北辰");
+// ---------- 只写名字：照名字补平台和房间号 ----------
+r = await editor.post(`/events/${ev().id}/save`, form("LCQ胜者组第1轮", "A组", ["星火", "北辰"],
+  [["快乐滋崩在这里", "", ""], ["皮特", "", ""], ["kite", "", ""], ["官方直播", "bilibili", "7734200"], ["", "", ""]], [["rev", String(ev().rev)]]));
+check("保存：只写名字的照记下的直播间、选手库补上（大小写不管）；新的照填的；改完回到这一场", r.location === `/events?ok=saved#e-${ev().id}`
+  && JSON.stringify(ev().main) === JSON.stringify([{ platform: "douyu", room: "9999", name: "快乐滋崩在这里" },
+    { platform: "bilibili", room: "23097212", name: "皮特" }, { platform: "douyu", room: "520013", name: "kite" },
+    { platform: "bilibili", room: "7734200", name: "官方直播" }]));
+check("保存时顺手去掉 11-19 的观战", !("observers" in ev()));
+check("记下的直播间：新填的都记下（选手库里的人也记，名字用这次填的）", rooms()["bilibili-7734200"]?.name === "官方直播"
+  && rooms()["douyu-9999"]?.name === "快乐滋崩在这里" && rooms()["bilibili-23097212"]?.name === "皮特" && Object.keys(rooms()).length === 4);
+r = await editor.get("/events");
+check("页面上那一行有编号，地址后面的 #e-… 跳得到", r.text.includes(`<li class="row" id="e-${ev().id}">`));
+r = await editor.post(`/events/${ev().id}/save`, form("LCQ胜者组第1轮", "A组", ["星火", "北辰"], [["没有这个人", "", ""]], [["rev", String(ev().rev)]]));
+check("只写了名字、哪里都没有 → 说清楚，不存", r.status === 400 && r.text.includes("主舞台「没有这个人」：记下的直播间和选手库里都没有这个名字")
+  && ev().main.length === 4);
+r = await editor.post("/events/add", form("新的一场", "B组", ["星火"], [["官方直播", "", ""]]));
+check("添加赛事也能只写名字", r.location === "/events?ok=added" && E().find((e) => e.stage === "B组").main[0].room === "7734200");
+await editor.post(`/events/${ev().id}/save`, form("LCQ胜者组第1轮", "A组", ["星火", "北辰"],
+  [["官方直播间", "bilibili", "7734200"]], [["rev", String(ev().rev)]]));
+check("同一个直播间换了名字 → 记新的名字", rooms()["bilibili-7734200"].name === "官方直播间" && Object.keys(rooms()).length === 4);
 
-// ---------- 发布出去的写法 ----------
-r = await admin.post("/publish/official");
-sent = env.PUBLIC.json("esports.json");
-let a = sent.events.find((e) => e.stage === "A组");
-check("发布：observers 写选手的 id 和他看的队，放在 teams（主舞台）后面", r.location === "/publish?ok=official"
-  && JSON.stringify(a.observers) === JSON.stringify([{ id: "bilibili-23097212", team: "北辰" }, { id: "douyu-520013", team: "北辰" }])
-  && Object.keys(a).at(-1) === "observers");
-check("Evo 读的时候照样留着（同 esports_data.clean）", JSON.stringify(clean(sent).events.find((e) => e.stage === "A组").observers) === JSON.stringify(a.observers));
-r = await editor.get("/players");
-check("发布以后不再提醒", !r.text.includes("有改动还没发布"));
-const kite = who("Kite");
-await editor.post(`/players/${kite.id}/save`, { name: "Kite", team: "星火", platform: "douyu", room: "520099", rev: String(kite.rev) });
-r = await admin.post("/publish/test");
-a = env.PUBLIC.json("esports_test.json").events.find((e) => e.stage === "A组");
-check("Kite 换了直播间：观战里的 id 跟着变（按选手存的）", a.observers[1].id === "douyu-520099");
-// 存的数据里观战的人后来不开直播了：这次不放、提醒
-{
-  const d = env.DATA.json(PLAYERS);
-  d.items.find((p) => p.name === "皮特").platform = "none";
-  d.items.find((p) => p.name === "皮特").room = "";
-  await env.DATA.put(PLAYERS, JSON.stringify(d));
-}
-r = await admin.get("/publish");
-check("观战的人后来不开直播了 → 这次不放、提醒", r.text.includes("的观战：「皮特」不开直播（或直播间还没填），这次不放"));
-{
-  const d = env.DATA.json(PLAYERS);
-  Object.assign(d.items.find((p) => p.name === "皮特"), { platform: "bilibili", room: "23097212" });
-  await env.DATA.put(PLAYERS, JSON.stringify(d));
-}
+// ---------- 24 路 ----------
+const many = Array.from({ length: 24 }, (_, i) => [`第 ${i + 1} 路`, "bilibili", String(5000 + i)]);
+r = await editor.post("/events/add", form("大赛", "C组", ["星火"], many));
+check("24 路存得下，发布出去也是 24 路", r.location === "/events?ok=added" && E().find((e) => e.stage === "C组").main.length === 24);
+await admin.post("/publish/test");
+check("（发布的文件里 24 路都在）", env.PUBLIC.json("esports_test.json").events.find((e) => e.stage === "C组").main.length === 24);
 
-// ---------- 跟着改：赛事去掉了队、战队改名、删选手；复制不带观战 ----------
-r = await editor.get(`/events?copy=${ev().id}`);
-check("复制赛事不带观战（每场看谁不一样）", !/action="\/events\/add"[\s\S]*?obs_player[\s\S]*?<\/form>/.test(r.text.split('id="add"')[1].split("</details>")[0]));
-await editor.post("/teams/rename", { from: "北辰", to: "北辰电竞" });
-check("战队改名：观战看的队跟着改", ev().observers.every((o) => o.team === "北辰电竞"));
-await editor.post(`/events/${ev().id}/save`, [...form("LCQ胜者组第1轮", "A组", ["星火"]), ["rev", String(ev().rev)]]);
-check("改赛事去掉了那支队 → 看它的人也去掉、记下来", (ev().observers ?? []).length === 0
-  && logs()[0].includes("观战的 2 位（看的队不在这场里了）也去掉了"));
-await editor.post(`/events/${ev().id}/observers`, obs([["皮特", "星火"]]));
-await editor.post(`/players/${who("皮特").id}/delete`);
-check("删选手 → 他在赛事里的观战也去掉", (ev().observers ?? []).length === 0);
+// ---------- 忘掉记下的直播间 ----------
+r = await viewer.post("/events/rooms/forget", [["forget", "bilibili-7734200"]]);
+check("只读的不能忘掉", r.status === 403 && rooms()["bilibili-7734200"]);
+r = await editor.post("/events/rooms/forget", []);
+check("一个都没勾 → 提示", r.status === 400 && r.text.includes("没有勾选要忘掉的直播间"));
+r = await editor.post("/events/rooms/forget", [["forget", "bilibili-7734200"], ["forget", "douyu-9999"], ["forget", "没有这个"]]);
+check("忘掉勾选的：下拉里没了、记下来；赛程里已经填着的不动", r.location === "/events?ok=forgot#rooms" && !rooms()["bilibili-7734200"]
+  && !rooms()["douyu-9999"] && logs()[0] === "忘掉记下的直播间：官方直播间（B站 7734200）、快乐滋崩在这里（斗鱼 9999）"
+  && ev().main[0].room === "7734200");
+r = await editor.get("/events");
+check("（下拉里不再有它们）", !r.text.includes('value="官方直播间" label') && !r.text.includes('value="快乐滋崩在这里" label'));

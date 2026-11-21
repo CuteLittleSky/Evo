@@ -26,8 +26,8 @@ import { APP_JS, homePage, invitePage, layout, loginPage, membersPage, messagePa
 import { eventsPage, logPage, playersPage, publishPage, roomsPage } from "./pages_esports.js";
 import { importEvents, importPlayers } from "./esports.js";
 import {
-  addEvent, addPlayer, deleteEvent, deletePlayer, events, importEventRows, importPlayerRows, mergeTeam, movePlayer, players, published, recentLog, saveObservers, saveRooms,
-  renameTeam, saveEvent, savePlayer, teamsOf,
+  addEvent, addPlayer, deleteEvent, deletePlayer, events, forgetRooms, importEventRows, importPlayerRows, mergeTeam, movePlayer, players, published, recentLog,
+  saveRooms, savedRooms, renameTeam, saveEvent, savePlayer, teamsOf,
 } from "./data.js";
 import { preview, publish, setPlatform, unpublished } from "./publish.js";
 import { liquipediaPage } from "./pages_lp.js";
@@ -89,7 +89,7 @@ async function readFields(request) {
   const out = { teams: [] };
   if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") ?? "")) return out;
   const form = await request.formData();
-  const lists = { main_platform: [], main_room: [], main_name: [], obs_player: [], obs_team: [] };
+  const lists = { main_platform: [], main_room: [], main_name: [], forget: [] };
   for (const [key, value] of form.entries()) {
     if (typeof value !== "string") continue;
     if (key === "teams") out.teams.push(value);
@@ -99,9 +99,7 @@ async function readFields(request) {
   if (form.has("main_platform")) {  // 赛事表单里主舞台的几行
     out.main = lists.main_platform.map((platform, i) => ({ platform, room: lists.main_room[i] ?? "", name: lists.main_name[i] ?? "" }));
   }
-  if (form.has("obs_player")) {  // 赛事里观战的几行（11-19）
-    out.observers = lists.obs_player.map((player, i) => ({ player, team: lists.obs_team[i] ?? "" }));
-  }
+  out.forget = lists.forget;  // 赛程页"记下的直播间"里勾了要忘掉的（11-21）
   if ((out.table ?? "").length > MAX_FORM) throw new Refuse("提交的内容太长了：一次少粘贴一些");
   return out;
 }
@@ -111,7 +109,7 @@ const OK = {
   added: "加好了", saved: "保存好了", deleted: "删掉了", renamed: "队名改好了，赛程里也跟着改了",
   moved: "换好队了（赛程没动）", moved_emptied: "换好队了。原来那支队没人了：赛程里还写着它的话，在赛程里换掉，或者用\"并到另一支队\"",
   merged: "并好了：选手都挪过去了，赛程里也跟着改了",
-  observers: "观战保存好了：发布以后 Evo 里才看得到（Evo 最慢 5 分钟更新）", nochange: "没有改动",
+  forgot: "忘掉了：主舞台的下拉里不再有它们（赛程里已经填着的不动）", nochange: "没有改动",
   test: "测试文件发好了（写进去以后读回来核对过，一字不差）", official: "正式文件发好了：玩家下次打开 Evo 的赛事页就能看到",
   platform: "平台开关改好了",
   tracked: "收录了：几分钟内开始抓（每 3 分钟抓一步）", untracked: "不再收录了", refresh: "排上了：几分钟内开始新的一轮",
@@ -340,8 +338,8 @@ export async function handle(request, env, now = Date.now()) {
   // ---------- 赛程 ----------
   if (path === "/events" || path.startsWith("/events/")) {
     const show = async (options = {}, status = 200) => {
-      const [eventItems, playerItems, changed] = await Promise.all([events(bucket), players(bucket), unpublished(env, now)]);
-      return respond(eventsPage(me, eventItems, playerItems, { now, banner: publishBanner(me, changed, now), ...options }), { status });
+      const [eventItems, playerItems, changed, rooms] = await Promise.all([events(bucket), players(bucket), unpublished(env, now), savedRooms(bucket)]);
+      return respond(eventsPage(me, eventItems, playerItems, { now, rooms, banner: publishBanner(me, changed, now), ...options }), { status });
     };
     if (method === "GET") {
       if (path !== "/events") return notFound();
@@ -365,15 +363,16 @@ export async function handle(request, env, now = Date.now()) {
         const result = await importEventRows(bucket, me, rows, now);
         return redirect(`/events?ok=imported&added=${result.added}&changed=${result.changed}`);
       }
-      const action = path.match(/^\/events\/([0-9a-f]{8})\/(save|delete|observers)$/);
-      if (!action) return notFound();
-      if (action[2] === "observers") {
-        const changed = await saveObservers(bucket, me, action[1], form, now);
-        return redirect(`/events?ok=${changed ? "observers" : "nochange"}`);
+      if (path === "/events/rooms/forget") {  // 忘掉几个记下的主舞台直播间（11-21）
+        await forgetRooms(bucket, me, form.forget ?? [], now);
+        return redirect("/events?ok=forgot#rooms");
       }
+      const action = path.match(/^\/events\/([0-9a-f]{8})\/(save|delete)$/);
+      if (!action) return notFound();
       if (action[2] === "save") await saveEvent(bucket, me, action[1], form, now);
       else await deleteEvent(bucket, me, action[1], now);
-      return redirect(`/events?ok=${action[2] === "save" ? "saved" : "deleted"}`);
+      // 改完回到那一场（11-21：赛管说保存以后跳回最上面、又要往下找）
+      return redirect(action[2] === "save" ? `/events?ok=saved#e-${action[1]}` : "/events?ok=deleted");
     } catch (error) {
       if (!(error instanceof Refuse)) throw error;
       return show({ error: error.message, draft: path === "/events/add" ? form : null,

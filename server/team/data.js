@@ -13,7 +13,7 @@
 // rev：每改一次加 1。表单里带着打开时的 rev，保存时对不上（别人刚改过）就不保存，提示看一眼再改。
 
 import { Refuse, randomHex, readDoc, updateDoc } from "./store.js";
-import { NO_STREAM, PLATFORMS, cleanEventFields, cleanObservers, cleanPlayerFields, eventLabel, platformName, squash } from "./esports.js";
+import { NO_STREAM, PLATFORMS, cleanEventFields, cleanPlayerFields, eventLabel, normalRoom, platformName, squash } from "./esports.js";
 import { pageFromInput } from "./liquipedia.js";
 
 export const PLAYERS = "manual/players.json";
@@ -142,12 +142,6 @@ export async function deletePlayer(bucket, by, id, now) {
     list.items = list.items.filter((x) => x !== item);
     return item;
   });
-  // 赛事里他在观战的，一起去掉
-  if ((await events(bucket)).some((e) => (e.observers ?? []).some((o) => o.player === gone.id))) {
-    await updateDoc(bucket, EVENTS, emptyList, (list) => {
-      for (const e of list.items) if (e.observers?.some((o) => o.player === gone.id)) e.observers = e.observers.filter((o) => o.player !== gone.id);
-    });
-  }
   await writeLog(bucket, by, now, `删除选手 ${playerText(gone)}`);
 }
 
@@ -249,7 +243,6 @@ export async function mergeTeam(bucket, by, from, to, now) {
     for (const e of list.items) {
       if (!e.teams.includes(oldName)) continue;
       e.teams = [...new Set(e.teams.map((t) => (t === oldName ? newName : t)))];
-      if (e.observers) e.observers = e.observers.map((o) => (o.team === oldName ? { ...o, team: newName } : o));  // 观战看的队跟着改
       stamp(e, by, now);
       n++;
     }
@@ -284,7 +277,6 @@ export async function renameTeam(bucket, by, from, to, now) {
     for (const e of list.items) {
       if (e.teams.includes(oldName)) {
         e.teams = e.teams.map((t) => (t === oldName ? newName : t));
-        if (e.observers) e.observers = e.observers.map((o) => (o.team === oldName ? { ...o, team: newName } : o));
         stamp(e, by, now);
       }
     }
@@ -370,7 +362,85 @@ async function knownTeams(bucket) {
   return [...teamsOf(await players(bucket)).keys()];
 }
 
+// ---------- 主舞台记下的直播间（2026-11-21 赛管毛毛要的"直播间记忆，保存主播直播间号，在发布赛事时直接选择"）----------
+// manual/main_rooms.json {"items": {"平台-房间号": {platform, room, name, at}}}：填过的主舞台直播间，名字用最近一次填的。
+// 还没有这个文件时，从赛程里已有的主舞台算一份（第一次用就有）。主舞台名字那一格的下拉 = 这些 + 选手库里开直播的人（mainChoices）；
+// 只写了名字、平台和房间号空着的行，保存时照名字补上（fillMain；网页上 /app.js 选了就先填好）
+export const MAIN_ROOMS = "manual/main_rooms.json";
+const roomKey = (platform, room) => `${platform}-${normalRoom(platform, room)}`;
+
+function seedRooms(eventItems) {
+  const items = {};
+  for (const e of [...eventItems].sort((a, b) => (a.updated ?? 0) - (b.updated ?? 0))) {
+    for (const m of e.main ?? []) {
+      items[roomKey(m.platform, m.room)] = { platform: m.platform, room: normalRoom(m.platform, m.room), name: m.name, at: e.updated ?? 0 };
+    }
+  }
+  return { items };
+}
+
+// 记下的直播间：[{key, platform, room, name, at}]，最近用过的在前
+export async function savedRooms(bucket) {
+  const doc = (await readDoc(bucket, MAIN_ROOMS, () => null)).data ?? seedRooms(await events(bucket));
+  return Object.entries(doc.items ?? {}).map(([key, r]) => ({ key, ...r })).sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || (a.name < b.name ? -1 : 1));
+}
+
+async function rememberMain(bucket, main, now) {
+  if (!main?.length) return;
+  const seed = seedRooms(await events(bucket));
+  await updateDoc(bucket, MAIN_ROOMS, () => seed, (doc) => {
+    for (const m of main) doc.items[roomKey(m.platform, m.room)] = { platform: m.platform, room: normalRoom(m.platform, m.room), name: m.name, at: now };
+  });
+}
+
+// 忘掉几个记下的直播间（keys 是"平台-房间号"）。赛程里已经填着的不动
+export async function forgetRooms(bucket, by, keys, now) {
+  const seed = seedRooms(await events(bucket));
+  const gone = await updateDoc(bucket, MAIN_ROOMS, () => seed, (doc) => {
+    const out = [];
+    for (const key of keys) {
+      if (!Object.hasOwn(doc.items, key)) continue;
+      out.push(doc.items[key]);
+      delete doc.items[key];
+    }
+    return out;
+  });
+  if (!gone.length) throw new Refuse("没有勾选要忘掉的直播间");
+  await writeLog(bucket, by, now, `忘掉记下的直播间：${gone.map(streamText).join("、")}`);
+  return gone.length;
+}
+
+// 主舞台名字那一格能选的：记下的直播间在前，选手库里开直播的人在后（同一个直播间只列一次，用记下的名字）
+export function mainChoices(rooms, playerItems) {
+  const out = rooms.map((r) => ({ name: r.name, platform: r.platform, room: r.room, from: "saved" }));
+  const seen = new Set(rooms.map((r) => r.key));
+  for (const p of playerItems) {
+    if (!p.platform || p.platform === NO_STREAM || !p.room || seen.has(roomKey(p.platform, p.room))) continue;
+    seen.add(roomKey(p.platform, p.room));
+    out.push({ name: p.name, platform: p.platform, room: normalRoom(p.platform, p.room), from: "player", team: p.team });
+  }
+  return out;
+}
+
+// 只写了名字、平台和房间号都空着的行：照名字从能选的里补上；认不出的名字说清楚
+export function fillMain(rows, choices) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => {
+    const name = squash(row.name);
+    if (!name || squash(row.platform) || squash(row.room)) return row;
+    const found = choices.find((c) => c.name === name) ?? choices.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (!found) throw new Refuse(`主舞台「${name}」：记下的直播间和选手库里都没有这个名字。新的直播间要把平台和房间号也填上`);
+    return { platform: found.platform, room: found.room, name };
+  });
+}
+
+async function withMain(bucket, form) {
+  if (!Array.isArray(form.main) || !form.main.some((r) => squash(r.name) && !squash(r.platform) && !squash(r.room))) return form;
+  return { ...form, main: fillMain(form.main, mainChoices(await savedRooms(bucket), await players(bucket))) };
+}
+
 export async function addEvent(bucket, by, form, now) {
+  form = await withMain(bucket, form);
   const fields = cleanEventFields(form, await knownTeams(bucket));
   const item = await updateDoc(bucket, EVENTS, emptyList, (list) => {
     if (list.items.length >= MAX_ITEMS) throw new Refuse(`赛事最多 ${MAX_ITEMS} 场`);
@@ -379,10 +449,12 @@ export async function addEvent(bucket, by, form, now) {
     return record;
   });
   await writeLog(bucket, by, now, `添加赛事${eventText(item)}，${item.teams.length} 支队${item.main.length ? `，主舞台 ${item.main.length} 路` : ""}`);
+  await rememberMain(bucket, item.main, now);
   return item;
 }
 
 export async function saveEvent(bucket, by, id, form, now) {
+  form = await withMain(bucket, form);
   const known = await knownTeams(bucket);
   const diff = await updateDoc(bucket, EVENTS, emptyList, (list) => {
     const item = findItem(list, id, "赛事");
@@ -401,43 +473,15 @@ export async function saveEvent(bucket, by, id, form, now) {
     if (item.teams.join("\n") !== oldTeams.join("\n") && lines.some((l) => l.startsWith("队伍：加了") || l.startsWith("队伍：去掉了"))) {
       lines[lines.findIndex((l) => l.startsWith("队伍："))] += `（现在 ${item.teams.length} 支）`;
     }
-    // 观战的人看的队从这场里去掉了：他也去掉
-    const dropped = (item.observers ?? []).filter((o) => !item.teams.includes(o.team));
-    if (dropped.length) {
-      item.observers = item.observers.filter((o) => item.teams.includes(o.team));
-      lines.push(`观战的 ${dropped.length} 位（看的队不在这场里了）也去掉了`);
-    }
+    // 11-19 到 11-21 有过"观战"（后来并进主舞台）：存着的那一项保存时顺手去掉
+    if (item.observers) delete item.observers;
     if (lines.length) stamp(item, by, now);
-    return { label: eventLabel(item), lines };
+    return { label: eventLabel(item), lines, main: item.main ?? [] };
   });
-  if (diff.lines.length) await writeLog(bucket, by, now, `修改赛事${diff.label}：${diff.lines.join("；")}`);
-}
-
-// 一场赛事里观战的人（2026-11-19 用户要的）：form.observers 是表单里的几行 {player: 选手名, team}，整组换掉
-export async function saveObservers(bucket, by, id, form, now) {
-  const roster = await players(bucket);
-  const nameOf = (pid) => roster.find((p) => p.id === pid)?.name ?? "（已删的选手）";
-  const diff = await updateDoc(bucket, EVENTS, emptyList, (list) => {
-    const item = findItem(list, id, "赛事");
-    checkRev(item, form.rev, `「${item.name}」`);
-    const next = cleanObservers(form.observers ?? [], roster, item.teams);
-    const before = new Map((item.observers ?? []).map((o) => [o.player, o.team]));
-    const after = new Map(next.map((o) => [o.player, o.team]));
-    const parts = [];
-    const added = next.filter((o) => !before.has(o.player)).map((o) => `${nameOf(o.player)}（看 ${o.team}）`);
-    const removed = [...before.keys()].filter((p) => !after.has(p)).map(nameOf);
-    const moved = next.filter((o) => before.has(o.player) && before.get(o.player) !== o.team).map((o) => `${nameOf(o.player)} 改看 ${o.team}`);
-    if (added.length) parts.push(`加了 ${added.join("、")}`);
-    if (removed.length) parts.push(`去掉了 ${removed.join("、")}`);
-    if (moved.length) parts.push(moved.join("、"));
-    if (!parts.length && JSON.stringify(item.observers ?? []) !== JSON.stringify(next)) parts.push("顺序换了");
-    if (!parts.length) return null;
-    item.observers = next;
-    stamp(item, by, now);
-    return { label: eventLabel(item), text: parts.join("，") };
-  });
-  if (diff) await writeLog(bucket, by, now, `修改赛事${diff.label}的观战：${diff.text}`);
-  return Boolean(diff);
+  if (diff.lines.length) {
+    await writeLog(bucket, by, now, `修改赛事${diff.label}：${diff.lines.join("；")}`);
+    await rememberMain(bucket, diff.main, now);
+  }
 }
 
 export async function deleteEvent(bucket, by, id, now) {
@@ -473,5 +517,6 @@ export async function importEventRows(bucket, by, rows, now) {
     return { added, changed };
   });
   await writeLog(bucket, by, now, `从表格导入赛程：新加 ${result.added} 场，更新 ${result.changed} 场`);
+  await rememberMain(bucket, rows.flatMap((r) => r.main ?? []), now);
   return result;
 }

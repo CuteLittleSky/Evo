@@ -1,5 +1,5 @@
 // 主舞台的测试（2026-11-18）。由 test.mjs 运行。和 tools/esports.py 逐项对照的在 tests/test_team_publish.py。
-// 走一遍：赛事表单里加几路（抖音号转小写、空行不管）、各种写错（超过 8 路、没写全、名字空着、重复、平台写字母）、出错时留着、
+// 走一遍：赛事表单里加几路（抖音号转小写、空行不管）、各种写错（超过 24 路、没写全、名字空着、重复、平台写字母）、出错时留着、
 // 老页面没有主舞台那几格时照旧、改了记下来、粘贴导入认第 7 列（没有这一列照旧）、发布时带上（编号、放在 teams 后面）、
 // 和选手同一个直播间时提醒、名字带"示例"不发。
 
@@ -49,9 +49,9 @@ r = await editor.get("/events");
 check("赛程上写着主舞台几路", r.text.includes("主舞台 2 路"));
 
 // ---------- 写错 ----------
-const nine = Array.from({ length: 9 }, (_, i) => ["bilibili", String(9000 + i), `第 ${i + 1} 路`]);
+const nine = Array.from({ length: 25 }, (_, i) => ["bilibili", String(9000 + i), `第 ${i + 1} 路`]);
 r = await editor.post("/events/add", form("太多", nine));
-check("超过 8 路 → 提示", r.status === 400 && r.text.includes("主舞台最多 8 路（现在 9 路）"));
+check("超过 24 路 → 提示（11-21 从 8 路改成 24 路）", r.status === 400 && r.text.includes("主舞台最多 24 路（现在 25 路）"));
 r = await editor.post("/events/add", form("没写全", [["bilibili", "", "官方直播"]]));
 check("房间号空着 → 提示", r.status === 400 && r.text.includes("主舞台的房间号「」只能是数字"));
 r = await editor.post("/events/add", form("没名字", [["bilibili", "1", ""]]));

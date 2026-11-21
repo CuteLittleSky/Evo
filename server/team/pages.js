@@ -135,10 +135,14 @@ a.tile:hover { border-color: var(--muted); }
 .logo-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; border: 1px solid var(--border);
   border-radius: 8px; text-align: center; overflow-wrap: anywhere; }
 .logo-item form { margin: 0; }
-.main-row { display: grid; grid-template-columns: 7em 1fr; gap: 6px; }
+.main-row { display: grid; grid-template-columns: 7em 1fr; gap: 6px; }  /* 主舞台一行：名字（手机上占一整行）、平台、房间号 */
 .main-row + .main-row { margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--border); }
 .main-row input[name="main_name"] { grid-column: 1 / -1; }
-@media (min-width: 560px) { .main-row { grid-template-columns: 7em 10em 1fr; } .main-row input[name="main_name"] { grid-column: auto; } }
+@media (min-width: 560px) { .main-row { grid-template-columns: 1fr 7em 10em; } .main-row input[name="main_name"] { grid-column: auto; } }
+.row[id], section[id] { scroll-margin-top: 72px; }  /* 保存以后跳回那一行（地址后面的 #），别被顶上的导航挡住 */
+.row:target { background: var(--target, rgba(59, 130, 246, .10)); border-radius: 6px; }
+.pick-row { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.pick-row input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--accent); }
 .logo-link { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; color: var(--muted); text-decoration: none; }
 .logo-empty { color: #9AA3B2; font-size: 18px; }
 .search-row .input { flex: 1; min-width: 0; }
@@ -231,7 +235,6 @@ details.note > summary .help { color: inherit; opacity: .85; }
 .match-row > a { min-height: 44px; display: inline-flex; align-items: center; }
 .banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .links { display: flex; flex-wrap: wrap; gap: 4px 20px; }
-.obs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }  /* 观战：选手、看哪支队 */
 /* 「数据」页（pages_stats.js）：图、图例、横条、数字表、悬停的小框 */
 .tiles.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }  /* 手机上两个一行 */
 .tile p.hero { font-size: 28px; line-height: 1.2; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -289,6 +292,21 @@ document.addEventListener("click", async (event) => {
   catch { try { copied = document.execCommand("copy"); } catch { copied = false; } }
   button.textContent = copied ? "已复制" : "请长按复制";
   setTimeout(() => { button.textContent = "复制"; }, 2500);
+});
+// 主舞台名字那一格从下拉（datalist main-rooms）里选了一位（名字一字不差）：平台、房间号换成他的（11-21 直播间记忆；
+// 复制来的一场把某一行换成别人时也跟着换）
+document.addEventListener("input", (event) => {
+  const input = event.target;
+  if (!input.matches || !input.matches("input[name=main_name]") || !input.list) return;
+  const option = [...input.list.options].find((o) => o.value === input.value.trim());
+  const row = input.closest(".main-row");
+  if (!option || !row) return;
+  const platform = row.querySelector("select[name=main_platform]");
+  const room = row.querySelector("input[name=main_room]");
+  if (platform && room) {
+    platform.value = option.dataset.p;
+    room.value = option.dataset.r;
+  }
 });
 // 上传队徽：先在浏览器里缩到最长边 256（不放大）、60 KB 以内，存成 WebP（导不出 WebP 的浏览器存 PNG），再换掉要上传的文件
 document.addEventListener("change", async (event) => {

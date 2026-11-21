@@ -12,7 +12,7 @@
 //                      换队并队、批量填直播间、一键配队徽
 //   test_manualpros.mjs  Liquipedia 上没有页面的选手：手动建资料
 //   test_stats.mjs     「数据」页：从匿名统计的数据库增量算数（Node 自带的 SQLite 当 D1）、页面
-//   test_observers.mjs 发布全部选手、赛事里观战的人
+//   test_observers.mjs 发布全部选手；主舞台 24 路、记下的直播间（观战 11-21 并进了主舞台）
 //
 // 另外几个用法（tests/test_team_publish.py 用，和 tools/esports.py 对照）：
 //   --build 输入.json          输入 {"players", "events", "switches", "now", "teams"}，打印生成的 esports.json 和检查结果
@@ -21,7 +21,7 @@
 //   --platforms                打印平台名单（和 config/watch.json 比）
 
 import { readFileSync } from "node:fs";
-import { PLATFORMS, build, checkPlayers, cleanObservers, cleanPlayerFields, parseMainText } from "./esports.js";
+import { PLATFORMS, build, checkPlayers, cleanPlayerFields, parseMainText } from "./esports.js";
 import { summary } from "./testkit.mjs";
 
 const args = process.argv.slice(2);
@@ -29,11 +29,8 @@ if (args[0] === "--build") {
   // 选手先过一遍保存时的检查（平台写中文名也认、抖音房间号转小写），和网页上存下来的一样
   const input = JSON.parse(readFileSync(args[1], "utf-8"));
   const players = input.players.map((p, i) => ({ id: `p${i}`, ...p, ...cleanPlayerFields(p) }));
-  // 赛事的 mainText 是表格第 7 列「主舞台」的写法，先拆成主舞台；observersText 是「观战」那一格（选手名@队名，顿号隔开，
-  // 同 tools/esports.py 的 check_observers），过一遍网页保存观战时的检查
-  const events = input.events.map((e) => ({ ...e, ...(e.mainText !== undefined ? { main: parseMainText(e.mainText) } : {}),
-    ...(e.observersText ? { observers: cleanObservers(e.observersText.split("、").map((x) => x.split("@")).map(([player, team]) => ({ player, team })),
-      players, e.teams) } : {}) }));
+  // 赛事的 mainText 是表格第 7 列「主舞台」的写法，先拆成主舞台
+  const events = input.events.map((e) => ({ ...e, ...(e.mainText !== undefined ? { main: parseMainText(e.mainText) } : {}) }));
   console.log(JSON.stringify(build(players, events, input.switches, input.now, input.teams ?? {})));
 } else if (args[0] === "--check-main") {
   // 几格「主舞台」的写法 → 每格 {main} 或 {error}
@@ -82,7 +79,7 @@ if (args[0] === "--build") {
   await import("./test_manualpros.mjs");
   console.log("\n数据页");
   await import("./test_stats.mjs");
-  console.log(String.fromCharCode(10) + "发布全部选手、观战");
+  console.log(String.fromCharCode(10) + "发布全部选手、主舞台的直播间记忆");
   await import("./test_observers.mjs");
   process.exit(summary());
 }
