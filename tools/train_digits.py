@@ -165,6 +165,10 @@ def augment(gray, rng):
         img = img[y0:y1, x0:x1]
         img = cv2.copyMakeBorder(img, max(0, top), max(0, bottom), max(0, left), max(0, right), cv2.BORDER_REPLICATE)
     h, w = img.shape
+    if rng.random() < 0.7:  # 画面比例：4:3 拉伸的字横着宽约 1.2 倍，16:9 窄约 0.9 倍（训练素材全是 16:10）
+        f = float(np.exp(rng.uniform(np.log(0.8), np.log(1.4))))
+        img = cv2.resize(img, (max(4, round(w * f)), h), interpolation=cv2.INTER_LINEAR)
+        w = img.shape[1]
     if rng.random() < 0.5:  # 低分辨率：先缩小再放大
         f = rng.uniform(0.3, 1.0)
         small = cv2.resize(img, (max(4, round(w * f)), max(4, round(h * f))), interpolation=cv2.INTER_AREA)
@@ -182,6 +186,21 @@ def augment(gray, rng):
         q = int(rng.integers(25, 95))
         img = cv2.imdecode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])[1], cv2.IMREAD_GRAYSCALE)
     return img
+
+
+EMPTY_SHARE = 0.06  # 每一批里有这么多块换成"抹掉数字"的，答案是空（训练素材里"空着"的太少，2026-11-21 是 0 块）
+EMPTY_FIELDS = {"damage", "kills", "assists", "participation", "squads_left"}  # RP 那一格边框比字还亮，抹不干净，不用
+
+
+def erase_digits(gray):
+    """把小块里的数字抹掉、用旁边的背景补上，当作"这一块没有数字"。亮的地方太多（亮背景）或太少时抹不准，返回 None。"""
+    thr = max(150.0, float(np.percentile(gray, 85)))
+    mask = (gray >= thr).astype(np.uint8) * 255
+    share = float(np.mean(mask > 0))
+    if not 0.03 <= share <= 0.35:
+        return None
+    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=2)
+    return cv2.inpaint(gray, mask, 5, cv2.INPAINT_TELEA)
 
 
 # ---------- 小模型（只在训练环境里用 PyTorch） ----------
@@ -320,11 +339,18 @@ def cmd_train(args):
 
     def make_batch(idx, seed):
         local = np.random.default_rng(seed)
-        picked = [train_items[i] for i in idx]
-        x = np.stack([prepare(augment(images[it["id"]], local)) for it in picked])[:, None]
-        targets = [CHARS.index(ch) + 1 for it in picked for ch in it["label"]]
-        lengths = [len(it["label"]) for it in picked]
-        return x, targets, lengths
+        imgs, labels = [], []
+        for i in idx:
+            it = train_items[i]
+            img, label = images[it["id"]], it["label"]
+            if it["field"] in EMPTY_FIELDS and local.random() < EMPTY_SHARE:
+                erased = erase_digits(img)
+                if erased is not None:
+                    img, label = erased, ""
+            imgs.append(prepare(augment(img, local)))
+            labels.append(label)
+        targets = [CHARS.index(ch) + 1 for label in labels for ch in label]
+        return np.stack(imgs)[:, None], targets, [len(label) for label in labels]
 
     pool = ThreadPoolExecutor(8)
     try:
@@ -355,9 +381,12 @@ def cmd_train(args):
                          "values (?, ?, ?, ?, ?, ?, ?, ?)",
                          (run, epoch, total / steps, right / len(val_items), wrong, missed, len(val_items), time.time() - t0))
             conn.commit()
-            score = (right - 20 * wrong, -missed)
-            if best is None or score > best[0]:
-                best = (score, epoch)
+            # 挑最好的一轮：每一轮先挑好"把握"门槛再比（读错一块算 20 块没读出那么糟）。
+            # 不能固定用 0.8 比：那样后面学得好、只是门槛该更高的几轮会被前面还没学会的一轮比下去（第 1 次训练就是这样）
+            _, _, w_best, m_best = pick_threshold(val_items, reads, ranges)
+            cost = w_best * 20 + m_best
+            if best is None or cost <= best[0]:  # 一样好时选后面的（学得更久）
+                best = (cost, epoch)
                 torch.save(model.state_dict(), best_path)
             print(f"第 {epoch}/{args.epochs} 轮：loss {total / steps:.3f}，验证 读对 {right}/{len(val_items)}，"
                   f"读错 {wrong}，没读出 {missed}（{time.time() - t0:.0f} 秒）", flush=True)

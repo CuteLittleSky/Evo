@@ -146,7 +146,13 @@ def digits_checks(conn):
     for t, k in enumerate([2, 2, 0, 2, 0, 0]):  # "1" "1" 空 "1" 空 空 → "11"
         probs[t, k] = 0.95
     ranges = digits.field_ranges()
+    crop = np.full((40, 60), 30, np.uint8)
+    cv2.putText(crop, "57", (8, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, 255, 2)
+    erased = digits.erase_digits(crop)
     return {
+        "造空块：暗底白字的数字抹得掉（抹完没有亮笔画），整块都亮的不抹，RP 不造空块":
+            erased is not None and erased.shape == crop.shape and int(erased.max()) < 150
+            and digits.erase_digits(np.full((40, 60), 230, np.uint8)) is None and "rp_delta" not in digits.EMPTY_FIELDS,
         "训练用：用户的答案、引擎的读数、借来的答案；用户改过的、没有可信读数的、丢掉的不用；RP 正数补 +":
             got == [("auto", "55"), ("extra", "55"), ("human", "+19"), ("human", "68")],
         "小模型的输入是 32×96、0–1 之间": digits.prepare(np.zeros((45, 68, 3), np.uint8)).shape == (digits.H, digits.W)
