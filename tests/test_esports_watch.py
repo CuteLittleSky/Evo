@@ -115,7 +115,12 @@ def main():
         and "es-live-tag" not in soon_head and len(page_data(soon)["players"]) == 3)
     out["三个去平台的按钮（用浏览器打开）、同队视角；没有延迟的说明（用户删了）、没有\"上一位 / 下一位\""] = (
         all(word in words for word in ("发送弹幕", "给主播送礼物", "同队视角")) and "延迟" not in words
-        and raw.count('target="_blank" rel="noopener noreferrer"') == 3 and "上一位" not in raw and "下一位" not in raw)
+        and raw.count('target="_blank" rel="noopener noreferrer"') == 4  # 三个去平台的按钮，加最下面的官网
+        and "上一位" not in raw and "下一位" not in raw)
+    brand = re.findall(r'<footer class="watch-brand">.*?</footer>', raw, re.S)
+    out["最下面一行：Evo 的标志、标语\"APEX 爱好家\"和官网的网址（用浏览器打开）"] = (
+        len(brand) == 1 and text(brand[0]) == "EVO APEX 爱好家 evotracker.cn" and "<svg" in brand[0]
+        and 'href="https://evotracker.cn/" target="_blank" rel="noopener noreferrer"' in brand[0])
     apex = re.findall(r'<div class="watch-apex"[^>]*>.*?</div>', raw, re.S)[0]
     out["Apex 提示条先藏着，写着会占用显卡，有\"继续看\"和\"关闭直播\""] = (
         " hidden" in apex.split(">")[0] and "Apex 正在运行。看直播会占用显卡，可能让游戏掉帧。" in text(apex)
