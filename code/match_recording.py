@@ -14,6 +14,8 @@
   比前一块大就是一次（count_events：读错的不标），写进那一局的 .json。停止记录时还没读完的一次读完。
   不解码录像，时刻精确到截图的间隔（0.3 秒）
 - 停：这一局结束（结算画面、回到大厅、停止记录）以后再录 tail_seconds 秒，拼 MP4 在后台线程里做，不耽误读结算画面
+- 录制模式"只录高光"（highlights.py，2026-11-21）：照样录整局；击杀、助攻读完（没有要读的就是 MP4 拼好）以后在后台
+  切出高光、删掉整局（一个勾了的事件都没有、切不成：整局留着）。和画质一样，每局开录时读设置
 - 设置里录不了（找不到 ffmpeg、没有硬件编码器、抓不到画面）：日志里说一次，每局开始时再试
 """
 
@@ -26,6 +28,7 @@ import numpy as np
 
 import app_settings
 import game_detect
+import highlights
 import recorder
 from in_match import END_SCREENS, STATE_ALIVE, STATE_DEAD, STATE_KNOCKED
 from paths import DATA_DIR
@@ -113,6 +116,7 @@ class MatchRecorder:
         self.kp_snips, self.kp_last = [], {}  # 这一局击杀 / 助攻那一行变了的时候存下的 (时刻, 小块)；{项: 上一块存下时那一格的白字}
         self.pending = []  # 录完了、还没读击杀数的几局（回到大厅后读，见 _read_kills）
         self.hud = None  # 读击杀数用（InMatchWatcher 的 hud，停止记录时还要用）
+        self.keep_only = None  # 这一局的录制模式是"只录高光"时：勾了哪些事件、前后几秒（highlights.choices）
 
     # ---------- 记录程序调用的 ----------
 
@@ -151,6 +155,8 @@ class MatchRecorder:
             self._read_kills(10 ** 6)
             if len(self.pending) == before:  # 那一局的 MP4 没拼成：不读了
                 self.pending.pop(0)
+        for worker in self.workers:  # 读完以后开的（只录高光时剪高光）
+            worker.join(wait)
 
     # ---------- 里面的 ----------
 
@@ -184,6 +190,8 @@ class MatchRecorder:
         self.knock_seen, self.knock_x, self.knock_event = None, None, None
         self.kp_snips, self.kp_last = [], {}
         self.limit = float(settings.get("recording_limit_gb", DEFAULT_LIMIT_GB)) * 2 ** 30
+        # 只录高光：这一局结束、击杀读完以后剪（勾哪些事件、前后几秒也按开录时的设置）
+        self.keep_only = highlights.choices(settings, self.rules) if highlights.mode(settings) == "highlights" else None
         self.next_poll = self.clock() + POLL_SECONDS
         if not self.recovered and ffmpeg:  # 上次 Evo 崩了没拼完的：这次第一次开录时在后台拼好
             self.recovered = True
@@ -270,13 +278,20 @@ class MatchRecorder:
                 said.append(f"{len(found)} 次{label}")
         if events and add_events(job["path"], events):
             self.log(f"录像：标上了 {'、'.join(said)}（读了 {len(job['values'])} 块右上角）")
+        if job["keep_only"] is not None:  # 只录高光：击杀、助攻都标上了，现在剪（几秒，放后台）
+            self._background(lambda: self._keep_only(job), "录像剪高光")
+
+    def _keep_only(self, job):
+        highlights.keep_only(job["ffmpeg"], job["path"], job["keep_only"], log=self.log)
+        recorder.enforce_limit(job["out_dir"], job["limit"], log=self.log)
 
     def _finish(self):
         rec, self.rec = self.rec, None
         info = {"legend": self.legend_name} if self.legend_name else {}
         self.legend_name, self.stop_at = None, None
-        limit, out_dir = self.limit, rec.out_dir
-        job = {"snips": self.kp_snips, "next": 0, "values": [], "path": None, "finished": threading.Event()}
+        job = {"snips": self.kp_snips, "next": 0, "values": [], "path": None, "finished": threading.Event(),
+               "keep_only": self.keep_only, "ffmpeg": getattr(rec, "ffmpeg", None), "out_dir": rec.out_dir,
+               "limit": self.limit}
         self.kp_snips, self.kp_last = [], {}
         if job["snips"]:
             self.pending.append(job)
@@ -285,7 +300,9 @@ class MatchRecorder:
             try:
                 job["path"] = path = rec.finish(info)
                 if path is not None:
-                    recorder.enforce_limit(out_dir, limit, log=self.log)
+                    if job["keep_only"] is not None and not job["snips"]:  # 只录高光、没有要读的击杀：拼好就剪
+                        highlights.keep_only(job["ffmpeg"], path, job["keep_only"], log=self.log)
+                    recorder.enforce_limit(job["out_dir"], job["limit"], log=self.log)
             finally:
                 job["finished"].set()
 

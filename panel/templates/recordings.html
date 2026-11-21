@@ -2,7 +2,8 @@
 {% from "_legend.html" import legend_icon %}
 {% block title %}录像 · Evo{% endblock %}
 
-{# "录像"页（panel_recordings.py，2026-11-20 用户要求）：整局录像的列表，点开在 recordings_watch.html 里放 #}
+{# "录像"页（panel_recordings.py，2026-11-20 用户要求）：整局录像的列表，点开在 recordings_watch.html 里放。
+   一局一张卡片（panel_recordings.groups）：有高光片段的写"高光 N 段"；整局删了（只录高光）的标"只有高光"，点了放第一段 #}
 
 {% block content %}
 <section class="card list-card rec-list" aria-labelledby="h-rec">
@@ -37,11 +38,11 @@
             <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5Z"></path></svg>
           </span>
           <span class="rec-duration num">{{ r.clock }}</span>
-          {% if r.unfinished %}<span class="rec-tag">未完成</span>{% endif %}
+          {% if r.unfinished %}<span class="rec-tag">未完成</span>{% elif r.only_clips %}<span class="rec-tag rec-tag-clips">只有高光</span>{% endif %}
         </a>
         <div class="rec-body">
           <h3 class="rec-title" id="rt-{{ loop.index }}">
-            <a href="{{ url_for('recordings.watch', v=r.id) }}"><span class="legend-label">{{ legend_icon(r.legend_icon) }}{{ r.title }}</span><span class="sr-only">，{{ r.subtitle }}，时长 {{ r.clock }}</span></a>
+            <a href="{{ url_for('recordings.watch', v=r.id) }}"><span class="legend-label">{{ legend_icon(r.legend_icon) }}{{ r.title }}</span><span class="sr-only">，{{ r.subtitle }}，{{ '只有高光，共' if r.only_clips else '时长' }} {{ r.clock }}</span></a>
           </h3>
           <p class="rec-sub">{{ r.subtitle }}</p>
           <div class="rec-stats">
@@ -52,7 +53,8 @@
             {% else %}
             <span class="muted">没对上战绩</span>
             {% endif %}
-            <span class="rec-events-count">{{ r.events | length }} 个事件</span>
+            {% if r.clips %}<span class="rec-events-count rec-clip-count">高光 <span class="num">{{ r.clips | length }}</span> 段</span>
+            {% else %}<span class="rec-events-count">{{ r.events | length }} 个事件</span>{% endif %}
           </div>
         </div>
       </article>

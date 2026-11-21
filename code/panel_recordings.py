@@ -11,6 +11,10 @@
   用户选的）。事件也按时间一条一条列在下面（按钮，键盘、读屏软件都能用）
 - 网址带 t=秒：从那一刻开始（战绩页以后可以直接跳到某个事件）
 - "在资源管理器中显示"、"删除"（先确认；删 MP4 和同名的 .json、.jpg）
+高光片段（highlights.py，2026-11-21）：片段也是一个录像（旁边的 .json 里有 highlight），按它是哪一局的（highlight.of）和整局归成一组：
+- 列表一局一张卡片（groups）：有片段的写"高光 N 段"；整局删了（只录高光）的标"只有高光"，点了放第一段
+- 播放页下面"高光片段"：这一局的每一段（缩略图、名字"击杀 1"、在整局里的哪一段、时长、里面的事件），正在放的那段标出来；
+  整局录像上"保存高光"（POST /recordings/highlights，按设置页现在勾的切，整局留着；已经存过的不能再点，2026-11-21 用户定的）
 录像文件 /recordings/video?v=…（send_file 支持 Range：播放器能拖进度条）、缩略图 /recordings/thumb?v=…
 和战绩对上：按时间（.json 里的开始时刻 + 时长），战绩里那一局的结束时刻落在录像里（往后留 MATCH_SLACK）就算同一局。
 不改数据库。战绩页有录像的局显示一个小按钮（match_links）
@@ -19,7 +23,8 @@
 带 ffmpeg；0.7.0 起正式版也带，2026-11-21 用户定的，照旧标"实验"）。开关（默认关，原则 2）；打开以后才显示画质
 （分辨率、帧数、画质、编码格式，下面估一局多大）、硬盘上限、保存位置。打开时检测一次这台电脑能用哪些显卡硬件编码器
 （CHECK_KEY，记在 settings.json），没有 ffmpeg、没有硬件编码器时打不开。编码格式只有一种（现在只有 H.264，AV1 2026-11-20
-先拿掉了）时不显示那一项；有几种时显卡编不了的那种不能选。
+先拿掉了）时不显示那一项；有几种时显卡编不了的那种不能选。录制模式（整局录像 / 只录高光）、高光包括哪些事件、每种事件前后录几秒
+（滑块，2026-11-21 用户要的），一起保存（/settings/recording/highlights）。
 改了从下一局开始生效（match_recording 每局开录时才读设置）。保存的结果写在那一项下面（NOTE_KEY），不用页面最上面的提示
 （保存完跳回这一栏，最上面看不到）
 这个文件不加载识别用的库。规则见 docs/面板.md"录像页"。
@@ -28,6 +33,7 @@
 import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -41,6 +47,7 @@ from flask import (Blueprint, abort, current_app, flash, g, jsonify, redirect, r
 
 import app_settings
 import data_move
+import highlights
 import recorder
 import storage
 from paths import DATA_DIR, EXE_DIR
@@ -83,6 +90,9 @@ MIC_FACTORY = None  # 测试用：换掉录音（默认 process_audio.ProcessAud
 FAMILY_NAMES = {"nvenc": "NVIDIA", "amf": "AMD", "qsv": "Intel"}
 MATCH_MINUTES = 20  # 估一局多大时按多少分钟算（打满一局约 20 分钟）
 LIMIT_RANGE = (1, 10000)  # 硬盘上限能填多少（GB）
+MODE_NAMES = {"full": "整局录像", "highlights": "只录高光"}  # 录制模式（2026-11-21 用户定的，默认整局）
+HIGHLIGHT_NAMES = {"knocked": "自己倒地"}  # 设置页"高光包括"里和事件名不一样的（倒地 → 自己倒地，免得以为是击倒对手）
+CLIP_NOTE_KEY = "recording_clip_note"  # 刚点完"保存高光"的结果，显示在播放页"高光片段"下面一次
 
 
 def folder():
@@ -155,14 +165,51 @@ def load(video):
     outages = [{"left": a / duration * 100, "width": max(0.4, (b - a) / duration * 100), "seconds": b - a}
                for a, b in meta.get("outages", []) if duration and b > a]
     legend = (meta.get("match") or {}).get("legend")
+    # 高光片段：开始时刻、"哪一局"都按整局算（和战绩对上、和整局归成一组）
+    hl = meta["highlight"] if highlights.is_clip(meta) else None
+    span = (hl.get("of_duration") if hl else None) or duration
+    clip = None
+    if hl:
+        start, stop = hl.get("from") or 0, hl.get("to") or 0
+        clip = {"name": spaced(hl.get("name") or "高光"), "index": hl.get("index") or 0, "from": start,
+                "range": f"{clock(start)}–{clock(stop)}", "kinds": list(dict.fromkeys(e["css"] for e in events))}
+    group = f"{video.parent.name}/{Path(hl['of']).stem}" if hl and hl.get("of") else f"{video.parent.name}/{video.stem}"
     return {
         "id": f"{video.parent.name}/{video.stem}", "path": video, "started": started,
-        "end": started + timedelta(seconds=(meta.get("first_frame") or 0) + duration),
+        "end": started + timedelta(seconds=(meta.get("first_frame") or 0) + span),
         "when": when_text(started), "duration": duration, "clock": clock(duration),
         "size": video.stat().st_size, "size_text": size_text(video.stat().st_size),
         "legend": legend, "title": legend or "录像", "unfinished": "_未完成" in video.stem,
         "events": events, "marks": marks, "outages": outages, "match": None,
+        "clip": clip, "group": group,
     }
+
+
+def spaced(name):
+    """"击杀1" → "击杀 1"（汉字和数字之间空一格，和面板别处一样）。"""
+    return re.sub(r"(\D)(\d)", r"\1 \2", name)
+
+
+def groups(items):
+    """列表页一局一张卡片：整局录像和它的高光片段归成一组。每组是领头的那个（有整局是整局，没有是第一段）加上
+    "clips"（片段，按在整局里的先后）、"only_clips"（整局删了）、"group_size"（整局和片段一共多大）。"""
+    by = {}
+    for r in items:
+        g = by.setdefault(r["group"], {"full": None, "clips": []})
+        if r["clip"]:
+            g["clips"].append(r)
+        else:
+            g["full"] = r
+    out = []
+    for g in by.values():
+        clips = sorted(g["clips"], key=lambda r: r["clip"]["from"])
+        lead = g["full"] or clips[0]
+        card = {**lead, "clips": clips, "only_clips": g["full"] is None,
+                "group_size": sum(r["size"] for r in clips) + (g["full"]["size"] if g["full"] else 0)}
+        if card["only_clips"]:  # 只有高光：时长写几段加起来的
+            card["clock"] = clock(sum(r["duration"] for r in clips))
+        out.append(card)
+    return sorted(out, key=lambda r: r["started"], reverse=True)
 
 
 def group_marks(events, duration):
@@ -226,11 +273,13 @@ def match_links(rows):
     """战绩页：{战绩编号: 录像的 id}（有录像的局）。没打开录像、也没有录像时不扫文件夹，返回 {}。"""
     if not visible():
         return {}
-    links = {}
+    links = {}  # 战绩编号 → (整局排在片段前面、片段按先后, 录像的 id)：有整局去整局，只有高光去第一段
     for r in attach_matches(entries()):
         if r["match"]:
-            links[r["match"]["id"]] = r["id"]
-    return {row["match_id"]: links[row["match_id"]] for row in rows if row["match_id"] in links}
+            rank = (1, r["clip"]["from"]) if r["clip"] else (0, 0)
+            if r["match"]["id"] not in links or rank < links[r["match"]["id"]][0]:
+                links[r["match"]["id"]] = (rank, r["id"])
+    return {row["match_id"]: links[row["match_id"]][1] for row in rows if row["match_id"] in links}
 
 
 def resolve(rid):
@@ -262,11 +311,17 @@ def _decorate(r):
 
 @bp.route("/recordings")
 def page():
-    items = [_decorate(r) for r in attach_matches(entries())]
+    items = attach_matches(entries())
+    cards = [_decorate(r) for r in groups(items)]
     total = sum(r["size"] for r in items)
     limit = float(app_settings.get("recording_limit_gb", DEFAULT_LIMIT_GB))
-    return render_template("recordings.html", items=items, total=size_text(total), limit=f"{limit:g} GB",
+    return render_template("recordings.html", items=cards, total=size_text(total), limit=f"{limit:g} GB",
                            enabled=bool(app_settings.get("recording_enabled")))
+
+
+def _full_path(item):
+    """这个录像是哪一局的整局录像（片段的 highlight.of；整局就是它自己）的路径；那个文件可能已经删了。"""
+    return folder() / f"{item['group']}.mp4"
 
 
 @bp.route("/recordings/watch")
@@ -277,8 +332,40 @@ def watch():
         return redirect(url_for("recordings.page"))
     item = _decorate(attach_matches([load(video)])[0])
     start = request.args.get("t", type=float)
+    full = _full_path(item)
+    clips = [load(c) for c in highlights.existing(full)]
+    note = session.pop(CLIP_NOTE_KEY, None)
     return render_template("recordings_watch.html", item=item, lead=EVENT_LEAD,
-                           start=start if start is not None and 0 <= start < item["duration"] else None)
+                           start=start if start is not None and 0 <= start < item["duration"] else None,
+                           clips=clips, full_id=item["group"] if full.is_file() else None,
+                           clip_total=clock(sum(c["duration"] for c in clips)),
+                           clip_size=size_text(sum(c["size"] for c in clips)),
+                           can_save=not item["clip"] and not item["unfinished"] and bool(item["events"]),
+                           clip_note=note if isinstance(note, dict) else None)
+
+
+@bp.post("/recordings/highlights")
+def save_clips():
+    """整局录像上的"保存高光"：按设置页现在勾的事件、前后秒数切，整局留着。已经存过的不再切（2026-11-21 用户定的：按钮不能点）。"""
+    rid = request.form.get("v")
+    path = resolve(rid)
+    if path is None:
+        flash("找不到这个录像（可能已经删掉了）。", "error")
+        return redirect(url_for("recordings.page"))
+
+    def done(text, error=False):
+        session[CLIP_NOTE_KEY] = {"text": text, "error": error}
+        return redirect(url_for("recordings.watch", v=rid) + "#h-clips")
+    if highlights.existing(path):
+        return done("这一局已经存过高光了", error=True)
+    try:
+        clips = highlights.save(_ffmpeg(), path, highlights.choices(app_settings.load()), log=lambda line: None)
+    except highlights.HighlightError as e:
+        return done(f"没存成：{e}", error=True)
+    if not clips:
+        return done("这一局没有设置页里勾选的事件，没有存", error=True)
+    seconds = sum(recorder.mp4_duration(c) or 0 for c in clips)
+    return done(f"存好了 {len(clips)} 段高光（共 {clock(seconds)}，{size_text(sum(c.stat().st_size for c in clips))}）")
 
 
 @bp.route("/recordings/video")
@@ -318,6 +405,9 @@ def delete():
     for extra in (path.with_suffix(".json"), path.with_suffix(".jpg")):
         extra.unlink(missing_ok=True)
     flash(f"删掉了 {path.name}", "ok")
+    back = request.form.get("back")  # 删一段高光：回到整局（或者这一局别的片段）那一页（录像的 id）
+    if back and resolve(back):
+        return redirect(url_for("recordings.watch", v=back) + "#h-clips")
     return redirect(url_for("recordings.page"))
 
 
@@ -431,7 +521,14 @@ def settings_view():
     videos = _videos(base)
     used = sum(v.stat().st_size for v in videos)
     note = session.pop(NOTE_KEY, None)
+    settings = app_settings.load()
+    picked = highlights.choices(settings, rules)
     return {
+        # 剪高光（2026-11-21）：录制模式、高光包括哪些事件、每种事件前后录几秒（滑块）
+        "mode": highlights.mode(settings), "modes": [{"value": k, "name": MODE_NAMES.get(k, k)} for k in highlights.MODES],
+        "hl_events": [{"kind": k, "name": HIGHLIGHT_NAMES.get(k) or EVENTS.get(k, (k, ""))[0], "css": EVENTS.get(k, ("", ""))[1], **c}
+                      for k, c in picked.items()],
+        "hl_max": highlights.config(rules).get("max_seconds", 60),
         "shown": bool(ffmpeg) or enabled,  # 正式版不带 ffmpeg：没开着就整栏不显示（开着时照样显示，能关掉）
         "enabled": enabled, "blocked": blocked,
         "encoder": f"{FAMILY_NAMES.get(encoder.rsplit('_', 1)[-1], encoder)} 显卡" if encoder else None,
@@ -546,6 +643,35 @@ def save_quality():
                        ("recording_codec", codec), ("recording_audio_source", audio_source)):
         app_settings.set_value(key, value)
     return _done("quality", "保存了：从下一局开始按这个录")
+
+
+@bp.post("/settings/recording/highlights")
+def save_highlights():
+    """录制模式、高光包括哪些事件、每种事件前后录几秒，一起保存（玩家改的存 settings.json，默认在 config/recording.json）。
+    reset=1（高级选项里的"恢复默认"）：秒数改回默认，勾的照表单上的。只录高光时至少要勾一种。"""
+    rules = recorder.load_rules()
+    cfg = highlights.config(rules)
+    form, top = request.form, cfg.get("max_seconds", 60)
+    mode = form.get("mode")
+    if mode not in highlights.MODES:
+        return _done("highlights", "没保存：选项不对，刷新一下页面再试", error=True)
+    reset = bool(form.get("reset"))
+    picked = {}
+    for kind, default in cfg["events"].items():
+        seconds = {}
+        for key in ("before", "after"):
+            value = default[key] if reset else form.get(f"{key}_{kind}", type=float)
+            if value is None or not 0 <= value <= top:
+                return _done("highlights", f"没保存：前后几秒要在 0 到 {top} 之间", error=True)
+            seconds[key] = int(value) if value == int(value) else value
+        picked[kind] = {"on": form.get(f"on_{kind}") == "1", **seconds}
+    if mode == "highlights" and not any(c["on"] for c in picked.values()):
+        return _done("highlights", "没保存：只录高光时至少要勾一种事件", error=True)
+    app_settings.set_value(highlights.MODE_KEY, mode)
+    app_settings.set_value(highlights.CHOICES_KEY, picked)
+    if reset:
+        return _done("highlights", "每种事件前后录几秒改回默认了")
+    return _done("highlights", "保存了：从下一局开始只录高光" if mode == "highlights" else "保存了")
 
 
 @bp.post("/settings/recording/mic")

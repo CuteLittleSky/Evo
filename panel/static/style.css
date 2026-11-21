@@ -1646,6 +1646,32 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .rec-event:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
 .rec-event .ev-icon { flex: none; color: var(--ev-ink, var(--ev, var(--muted))); }
 .rec-no-events { margin: 16px 0 0; }
+/* 高光片段（2026-11-21，highlights.py）：列表上"高光 N 段"、只剩高光的标"只有高光"；播放页下面一排片段，正在放的那段描一圈 */
+.rec-tag-clips { background: var(--info-bg); border-color: color-mix(in srgb, var(--info-text) 30%, transparent); color: var(--info-text); }
+.rec-clip-count { color: var(--info-text); }
+.rec-watch-clip { font-weight: 500; }
+.rec-clips { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--row-border); }
+.rec-clips-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rec-clips-head h3 { margin: 0; font-size: 15px; font-weight: 600; scroll-margin-top: 16px; }
+.rec-clips-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.rec-clip-note { margin: 8px 0 0; font-size: 13px; }
+.rec-no-clips { margin: 8px 0 0; }
+.rec-clip-grid { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 12px; }
+.rec-clip { height: 100%; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  background: var(--card); color: var(--text); text-decoration: none; transition: border-color 0.12s; }
+.rec-clip:hover { border-color: var(--muted); }
+.rec-clip:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.rec-clip.current { border-color: var(--p3-bg); box-shadow: 0 0 0 1px var(--p3-bg); }
+.rec-clip-thumb { position: relative; display: block; aspect-ratio: 16 / 9; background: var(--inset); overflow: hidden; }
+.rec-clip-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.rec-clip-thumb img.missing { visibility: hidden; }
+.rec-clip-body { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; padding: 8px 10px 10px; }
+.rec-clip-name { font-size: 14px; font-weight: 600; }
+.rec-clip-range { font-size: 12px; color: var(--muted); font-weight: 500; }
+.rec-clip-icons { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.rec-clip-icons .ev-icon { display: block; color: var(--ev-ink, var(--ev)); }
+[data-theme="light"] .rec-clip-icons > span { --ev-ink: color-mix(in srgb, var(--ev) 72%, #000); }  /* 要写在带 .ev-* 的那一层 */
+@media (prefers-reduced-motion: reduce) { .rec-clip { transition: none; } }
 .rec-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 20px; }
 /* 战绩页：有录像的局，传奇后面一个小按钮 */
 .rec-link { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: 4px;
@@ -1674,3 +1700,47 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .rec-mic-actions input[type="range"] { width: 160px; min-height: 38px; margin: 0; accent-color: var(--p3-bg); cursor: pointer; }
 .rec-mic-actions input[type="range"]:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .rec-meter span { transition: none; } }
+/* 剪高光（2026-11-21）：高光包括哪些事件（带录像页那套图标的复选框，勾上的染上事件的颜色）、高级选项里每种事件前后录几秒
+   （两个滑块夹着事件的图标：左边那个从右往左填，往外拖是录得多，和 Outplayed 一样） */
+.rec-hl-pick { display: block; }
+.rec-hl-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.rec-hl-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px 6px 10px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--card); color: var(--muted); font-size: 13px; cursor: pointer; transition: border-color 0.12s, background-color 0.12s; }
+.rec-hl-chip:hover { border-color: var(--muted); }
+.rec-hl-chip input { width: 16px; height: 16px; margin: 0; accent-color: var(--p3-bg); cursor: pointer; }
+.rec-hl-chip .ev-icon, .rec-hl-mark { color: var(--ev-ink, var(--ev)); }
+.rec-hl-chip:has(input:checked) { color: var(--text); border-color: color-mix(in srgb, var(--ev) 60%, var(--border));
+  background: color-mix(in srgb, var(--ev) 10%, var(--card)); }
+.rec-hl-chip:has(input:focus-visible) { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+[data-theme="light"] .rec-hl-chip, [data-theme="light"] .rec-hl-row { --ev-ink: color-mix(in srgb, var(--ev) 72%, #000); }
+.rec-hl-lang { margin: 10px 0 0; }
+.rec-hl-lang a { color: var(--info-text); }
+.rec-hl-more { border-top: 1px solid var(--row-border); padding-top: 10px; }
+.rec-hl-more + .setting { border-top: 1px solid var(--row-border); }
+.rec-hl-rows { display: grid; gap: 2px; margin: 6px 0 6px; }
+.rec-hl-row { display: grid; grid-template-columns: 5.5em 4.5em minmax(48px, 1fr) 26px minmax(48px, 1fr) 4.5em; align-items: center; gap: 4px 8px;
+  min-height: 40px; transition: opacity 0.12s; }
+.rec-hl-row.off { opacity: 0.5; }  /* 没勾的事件：照样能调，淡一点 */
+.rec-hl-name { font-size: 13px; }
+.rec-hl-value { font-size: 13px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.rec-hl-before-value { text-align: right; }
+/* 滑块自己画（浏览器自带的按颜色深浅换底色，深色主题下橙色那一行的底是亮白的）：细轨道，从中间的图标往外填事件的颜色
+   （--fill 是填到百分之几，模板先写好、拖的时候脚本跟着改），圆形把手 */
+.rec-hl-row input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 32px; margin: 0; background: transparent;
+  cursor: pointer; --fill: 50%; --ink: var(--ev-ink, var(--ev)); }
+.rec-hl-row input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, var(--ink) var(--fill), var(--border) var(--fill)); }
+.rec-hl-row input.rec-hl-before::-webkit-slider-runnable-track { background: linear-gradient(to left, var(--ink) var(--fill), var(--border) var(--fill)); }
+.rec-hl-row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin-top: -6px;
+  border-radius: 50%; border: 2px solid var(--ink); background: var(--card); transition: transform 0.12s ease-out; }
+.rec-hl-row input[type="range"]:hover::-webkit-slider-thumb, .rec-hl-row input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
+.rec-hl-row input[type="range"]:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; border-radius: 4px; }
+.rec-hl-before { direction: rtl; }
+.rec-hl-mark { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1.5px solid var(--ev); border-radius: 50%;
+  background: var(--card); }
+.rec-hl-reset { margin-top: 2px; }
+@container page (max-width: 560px) {  /* 窄了：名字单独一行，下面是两个滑块 */
+  .rec-hl-row { grid-template-columns: 4.2em minmax(40px, 1fr) 26px minmax(40px, 1fr) 4.2em; padding: 4px 0; }
+  .rec-hl-name { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) { .rec-hl-chip, .rec-hl-row, .rec-hl-row input[type="range"]::-webkit-slider-thumb { transition: none; } }

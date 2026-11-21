@@ -11,6 +11,9 @@
 - 找窗口：按进程号找到一个测试窗口（不打开那个进程），只抓这个窗口抓得到
 - 接进记录程序（match_recording.py）：开关默认关；一局开始开录、事件（倒地、被扶起、成盒、被复活、冠军、击倒对手、击杀）、右上角变了的时刻、
   结束再录 3 秒、同一局不重开、靶场也录、录不了只说一次
+- 剪高光（highlights.py）：默认勾哪些、前后几秒，算片段（重叠的合成一段、开头挪到关键帧），按事件起名；真录一段再剪：关键帧读得对、
+  片段开头是关键帧、画面和原片逐帧一样、时长对、声音对得上；只录高光切完删整局，没有勾了的事件、切不成时整局留着；
+  记录程序里只录高光等击杀读完才剪，整局录像不剪
 要 ffmpeg（找法见 recorder.find_ffmpeg）和显卡硬件编码器；没有就只跑不用 ffmpeg 的那些。
 
 运行：python tests/test_recorder.py
@@ -604,6 +607,227 @@ def match_checks(tmp):
     return out
 
 
+def highlight_checks():
+    """剪高光（highlights.py）不用 ffmpeg 的部分：设置、算片段、起名字。"""
+    import highlights
+    out = {}
+    rules = recorder.load_rules()
+    default = highlights.choices({}, rules)
+    on = [k for k, c in default.items() if c["on"]]
+    out[f"高光的默认：勾上击杀、击倒、助攻击倒、冠军、自己倒地、成盒（{on}），秒数照 Outplayed（击杀前 30 后 10、被复活前 9 后 20）"] = (
+        sorted(on) == sorted(["kill", "knock", "assist_knock", "champion", "knocked", "dead"])
+        and list(default) == ["kill", "knock", "assist_knock", "assist", "champion", "knocked", "revived", "respawned", "dead"]
+        and (default["kill"]["before"], default["kill"]["after"]) == (30, 10)
+        and (default["respawned"]["before"], default["respawned"]["after"]) == (9, 20)
+        and (default["dead"]["before"], default["dead"]["after"]) == (10, 5))
+    mine = highlights.choices({"recording_highlights": {"kill": {"on": False, "before": 5, "after": 999},
+                                                        "dead": {"on": "yes", "before": True}, "bogus": {"on": True}}}, rules)
+    out["玩家改过的用玩家的；超出 0–60 秒、不是数、不是真假的用默认；不认得的事件不要"] = (
+        mine["kill"] == {"on": False, "before": 5, "after": 10} and mine["dead"] == default["dead"] and "bogus" not in mine)
+    out["录制模式：默认整局录像，设成只录高光才是只录高光，不认得的当整局"] = (
+        highlights.mode({}) == "full" and highlights.mode({"recording_mode": "highlights"}) == "highlights"
+        and highlights.mode({"recording_mode": "其他"}) == "full")
+
+    events = [{"t": 10, "kind": "knock"}, {"t": 25, "kind": "kill"}, {"t": 26, "kind": "assist"}, {"t": 40, "kind": "knock"},
+              {"t": 100, "kind": "dead"}]
+    segs = highlights.plan(events, 104, default)
+    out[f"算片段：每个勾了的事件前后几秒，重叠的合成一段，不超出录像，没勾的（助攻）不算（{[(s['start'], s['end']) for s in segs]}）"] = (
+        [(s["start"], s["end"]) for s in segs] == [(0.0, 50), (90, 104.0)]
+        and [[e["kind"] for e in s["hits"]] for s in segs] == [["knock", "kill", "knock"], ["dead"]])
+    keys = [float(k) for k in range(0, 120, 2)]
+    snapped = highlights.plan([{"t": 50.7, "kind": "kill"}, {"t": 85.5, "kind": "knock"}], 104, default, keys)
+    out[f"开头挪到前面最近的关键帧（击杀 50.7 秒前 30 秒 → 20.7 → 20、击倒 85.5 前 20 → 65.5 → 64；{[(s['start'], s['end']) for s in snapped]}）"] = (
+        [(s["start"], s["end"]) for s in snapped] == [(20.0, 60.7), (64.0, 95.5)])
+    touching = highlights.plan([{"t": 20, "kind": "dead"}, {"t": 35, "kind": "dead"}], 100, default)
+    out["刚好接上的两段（前一段到 25 秒、后一段从 25 秒）也合成一段"] = [(s["start"], s["end"]) for s in touching] == [(10, 40)]
+    out["一个勾了的事件都没有：没有片段"] = highlights.plan([{"t": 5, "kind": "assist"}], 60, default) == []
+    named = highlights.names([{"hits": [{"kind": "knock"}, {"kind": "kill"}]}, {"hits": [{"kind": "knock"}]},
+                              {"hits": [{"kind": "kill"}, {"kind": "champion"}]}, {"hits": [{"kind": "kill"}]}])
+    out[f"片段按里面最要紧的事件起名，每种各自数（{[n for _, n in named]}）"] = (
+        [n for _, n in named] == ["击杀1", "击倒1", "冠军1", "击杀2"])
+    return out
+
+
+def checksums(ffmpeg, path):
+    """MP4 画面里每一帧：(时刻, 帧的种类 I/P/B, 校验和)。"""
+    _, err = recorder.run_ffmpeg(ffmpeg, ["-i", str(path), "-map", "0:v", "-vf", "showinfo", "-f", "null", "-"], timeout=120)
+    return [(float(t), k, c) for t, k, c in re.findall(r"pts_time:(-?[\d.]+) .*?type:([IPB]).*?checksum:([0-9A-F]+)", err or "")]
+
+
+def highlight_record_checks(ffmpeg, tmp):
+    """真录一段（测试画面、N 卡 B 帧、第 5 秒嘀一声），再剪高光：开头落在关键帧、画面和原片逐帧一样、声音对得上。"""
+    import highlights
+    import shutil
+    out, quiet = {}, []
+    rules = recorder.load_rules()
+    fake = FakeAudio(beep_at=5.0)
+    rec = recorder.Recording(ffmpeg, recorder.Options(source=TEST_SOURCE, quality="best"), tmp / "hl", log=quiet.append,
+                             rules=rules, audio_factory=fake)
+    rec.start(apex_pid=1234)
+    time.sleep(1.6)
+    rec.mark("knock")
+    time.sleep(4.0)
+    rec.mark("kill", kills=1)
+    time.sleep(2.6)
+    rec.poll()
+    video = rec.finish({"mode": "排位", "legend": "恶灵"})
+    if video is None:
+        return {"剪高光：先录一段测试录像": False}
+    meta = json.loads(video.with_suffix(".json").read_text(encoding="utf-8"))
+    events = {e["kind"]: e["t"] for e in meta["events"]}
+
+    keys = highlights.keyframe_times(video)
+    real = highlights.keyframe_times
+    highlights.keyframe_times = lambda path: None  # 读不了索引时用 ffmpeg 只解关键帧
+    try:
+        by_ffmpeg = highlights.keyframes(ffmpeg, video)
+    finally:
+        highlights.keyframe_times = real
+    out[f"关键帧：直接读 MP4 的索引，和 ffmpeg 解出来的一样（{keys}）"] = (
+        bool(keys) and by_ffmpeg is not None and len(keys) == len(by_ffmpeg) >= 3
+        and all(abs(a - b) < 1e-5 for a, b in zip(keys, by_ffmpeg)) and keys[0] == 0)
+
+    picked = {k: {"on": False, "before": 0, "after": 0} for k in highlights.choices({}, rules)}
+    picked["knock"] = {"on": True, "before": 1, "after": 1}
+    picked["kill"] = {"on": True, "before": 1, "after": 1.5}
+    said = []
+    clips = highlights.save(ffmpeg, video, picked, log=said.append)
+    metas = [json.loads(c.with_suffix(".json").read_text(encoding="utf-8")) for c in clips]
+    out[f"剪出两段，按事件起名（{[c.name for c in clips]}），旁边有 .json、缩略图，整局留着"] = (
+        [c.name for c in clips] == [video.stem + "_击倒1.mp4", video.stem + "_击杀1.mp4"]
+        and all(c.with_suffix(".jpg").exists() for c in clips) and video.exists()
+        and highlights.existing(video) == clips and not list(video.parent.glob("*.part")))
+    if len(clips) != 2:
+        return out
+    h = metas[1]["highlight"]
+    kill_from = max(k for k in keys if k <= events["kill"] - 1 + 1e-6)
+    out[f"击杀那一段：从击杀前 1 秒之前最近的关键帧（{kill_from}）到击杀后 1.5 秒（{h['from']}–{h['to']}），记着第几段、哪一局"] = (
+        abs(h["from"] - kill_from) < 1e-3 and abs(h["to"] - (events["kill"] + 1.5)) < 1e-3
+        and h["of"] == video.name and h["index"] == 2 and h["count"] == 2 and h["name"] == "击杀1"
+        and metas[1]["match"] == {"mode": "排位", "legend": "恶灵"} and metas[1]["started"] == meta["started"])
+    clip_events = {e["kind"]: e["t"] for e in metas[1]["events"]}
+    out[f"片段里事件的时刻是片段里的位置（击杀在 {clip_events.get('kill')} 秒）"] = (
+        abs(clip_events.get("kill", -1) - (events["kill"] - h["from"])) < 0.01 and "knock" not in clip_events)
+    whole, part = checksums(ffmpeg, video), checksums(ffmpeg, clips[1])
+    at = next((i for i, f in enumerate(whole) if abs(f[0] - h["from"]) < 0.002), None)
+    n = len(part) - 4  # 结尾因为 B 帧可能少两三帧
+    out[f"片段开头是关键帧、在 0 秒（{part[0][:2] if part else None}），前面 {n} 帧和原片逐帧一样（没有花屏、不缺帧）"] = (
+        bool(part) and part[0][1] == "I" and abs(part[0][0]) < 1e-6 and at is not None
+        and [f[2] for f in part[:n]] == [f[2] for f in whole[at:at + n]])
+    duration = metas[1]["duration"]
+    out[f"片段的时长对（{duration} 秒，应约 {h['to'] - h['from']:.2f} 秒）"] = abs(duration - (h["to"] - h["from"])) < 0.15
+    beep_whole, beep_clip = beep_time(ffmpeg, video), beep_time(ffmpeg, clips[1])
+    out[f"声音对得上：嘀声在整局 {beep_whole} 秒、片段 {beep_clip} 秒（差 {h['from']}）"] = (
+        beep_whole is not None and beep_clip is not None and abs((beep_whole - h["from"]) - beep_clip) < 0.03)
+
+    # 只录高光：切好再删整局；一个勾了的事件都没有、切不成：整局留着
+    def copy_to(name):
+        folder = tmp / name / video.parent.name
+        folder.mkdir(parents=True)
+        for suffix in (".mp4", ".json"):
+            shutil.copy(video.with_suffix(suffix), folder / video.with_suffix(suffix).name)
+        return folder / video.name
+    only = copy_to("hl-only")
+    kept = highlights.keep_only(ffmpeg, only, picked, log=said.append)
+    out["只录高光：切出高光以后整局删了（MP4、.json 都删）"] = (
+        len(kept) == 2 and not only.exists() and not only.with_suffix(".json").exists() and all(c.exists() for c in kept))
+    none = copy_to("hl-none")
+    nothing = {k: {**c, "on": False} for k, c in picked.items()}
+    out["只录高光、一个勾了的事件都没有：整局留着，日志里说一句"] = (
+        highlights.keep_only(ffmpeg, none, nothing, log=said.append) == [] and none.exists()
+        and any("整局留着" in line for line in said))
+    broken = copy_to("hl-broken")
+    real_run = recorder.run_ffmpeg
+    recorder.run_ffmpeg = lambda *a, **k: (1, "假装切的时候出错")
+    try:
+        failed = highlights.keep_only(ffmpeg, broken, picked, log=said.append)
+    finally:
+        recorder.run_ffmpeg = real_run
+    out["只录高光、切不成：整局留着，切了一半的删掉"] = (
+        failed == [] and broken.exists() and sorted(p.name for p in broken.parent.glob("*.mp4*")) == [broken.name]
+        and any("剪高光没成" in line for line in said))
+    return out
+
+
+def match_highlight_checks(tmp):
+    """录制模式"只录高光"接进记录程序：什么时候剪（击杀读完以后）、整局录像时不剪、停止记录时也剪完。"""
+    import highlights
+    import match_recording
+    out, logs, clock = {}, [], [0.0]
+    settings = {"recording_enabled": True, "recording_mode": "highlights"}
+    calls = []
+
+    def fake_keep_only(ffmpeg, video, picked, log=print):
+        kinds = [e["kind"] for e in json.loads(Path(video).with_suffix(".json").read_text(encoding="utf-8"))["events"]]
+        calls.append({"video": video, "picked": picked, "kinds": kinds})
+        return []
+
+    def play(snips, lobby=True, close=True):
+        """打一局：snips=True 时对局中击杀那一格变一次（回大厅才读）。返回 (MatchRecorder, 读之前剪了几次)。"""
+        FakeRecording.made, FakeRecording.fail = [], None
+        m = match_recording.MatchRecorder(logs.append, settings=lambda: dict(settings), data_dir=tmp, factory=FakeRecording,
+                                          clock=lambda: clock[0], find_pid=lambda: 1)
+        im = FakeInMatch()
+        cells = {"a": np.zeros((28, 26), np.uint8), "b": np.full((28, 26), 255, np.uint8)}
+        current = [None]
+        im.hud.kp_snip = lambda frame: current[0]
+        im.hud.kp_cells = lambda snip: {"kills": cells[snip[0]], "assists": None}
+        im.hud.read_kp = lambda snip: {"kills": snip[1], "assists": None}
+        im.hud.knock, im.hud.cfg = (lambda frame: None), {}
+        clock[0] += 0.3
+        m.update("match_start", im)
+        im.started, im.active, im.state = 3, True, "存活"
+        rec = FakeRecording.made[-1]
+        video = tmp / f"hl-match-{len(calls)}-{clock[0]:.0f}" / "match.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        video.write_bytes(b"0")
+        video.with_suffix(".json").write_text(json.dumps({"first_frame": 0.0, "events": []}), encoding="utf-8")
+        rec.finish = lambda info: video
+        for item in ([("a", 0), ("b", 1)] if snips else []):  # 右上角击杀那一格：0 → 1
+            current[0] = item
+            im.tops = list(im.tops) + [item]
+            clock[0] += 0.3
+            m.update(None, im, frame="截图")
+        im.done, im.active = True, False
+        for seconds in (0.3, 3.5):
+            clock[0] += seconds
+            m.update("summary", im)
+        for w in m.workers:
+            w.join(5)
+        before = len(calls)
+        if lobby:
+            for _ in range(3):
+                clock[0] += 0.3
+                m.update("lobby", im)
+            for w in m.workers:
+                w.join(5)
+        if close:
+            m.close()
+        return m, before
+
+    real = highlights.keep_only
+    highlights.keep_only = fake_keep_only
+    try:
+        play(snips=False)
+        out["只录高光、这一局没有要读的击杀：MP4 拼好就剪，勾了哪些事件按开录时的设置"] = (
+            len(calls) == 1 and calls[0]["picked"] == highlights.choices({}))
+        calls.clear()
+        _, before = play(snips=True)
+        out[f"只录高光、有击杀要读：结算画面上不剪，回到大厅读完、标上击杀以后才剪（剪的时候 .json 里已经有 {calls[0]['kinds'] if calls else None}）"] = (
+            before == 0 and len(calls) == 1 and calls[0]["kinds"] == ["kill"])
+        calls.clear()
+        _, before = play(snips=True, lobby=False)
+        out["只录高光、没回大厅就停止记录：停止时读完击杀、剪完"] = before == 0 and len(calls) == 1
+        calls.clear()
+        settings.pop("recording_mode")
+        play(snips=True)
+        play(snips=False)
+        out["整局录像（默认）：不剪"] = calls == []
+    finally:
+        highlights.keep_only = real
+    return out
+
+
 WINDOW_CHILD = r"""
 import tkinter as tk
 root = tk.Tk()
@@ -694,7 +918,9 @@ def main():
     with tempfile.TemporaryDirectory() as folder:
         tmp = Path(folder)
         checks = pure_checks(tmp)
+        checks.update(highlight_checks())
         checks.update(match_checks(tmp))
+        checks.update(match_highlight_checks(tmp))
         checks.update(knock_checks())
         ffmpeg = recorder.find_ffmpeg()
         if not ffmpeg:
@@ -706,6 +932,7 @@ def main():
             return report(checks)
         checks.update(window_checks(ffmpeg))
         checks.update(record_checks(ffmpeg, tmp))
+        checks.update(highlight_record_checks(ffmpeg, tmp))
     return report(checks)
 
 

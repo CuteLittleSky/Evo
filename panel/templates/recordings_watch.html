@@ -3,7 +3,9 @@
 {% from "_rec_icons.html" import ev_icon %}
 {% block title %}{{ item.title }} · 录像 · Evo{% endblock %}
 
-{# 放一个录像（panel_recordings.watch）：播放器、自己画的时间轴（事件、断掉的那几段）、事件列表、显示文件、删除 #}
+{# 放一个录像（panel_recordings.watch）：播放器、自己画的时间轴（事件、断掉的那几段）、事件列表、高光片段、显示文件、删除。
+   高光片段（2026-11-21）也在这一页放：标题后面写片段的名字（击杀 1），下面"高光片段"里是这一局的每一段，正在放的那段标出来；
+   整局录像上"保存高光"（已经存过的不能再点，用户定的） #}
 
 {% block content %}
 <section class="card rec-watch" aria-labelledby="h-watch">
@@ -13,8 +15,8 @@
       录像
     </a>
     <div class="rec-watch-title">
-      <h2 id="h-watch"><span class="legend-label">{{ legend_icon(item.legend_icon) }}{{ item.title }}</span>{% if item.unfinished %} <span class="rec-tag inline">未完成</span>{% endif %}</h2>
-      <p class="note">{{ item.subtitle }} · <span class="num">{{ item.clock }}</span> · <span class="num">{{ item.size_text }}</span></p>
+      <h2 id="h-watch"><span class="legend-label">{{ legend_icon(item.legend_icon) }}{{ item.title }}</span>{% if item.clip %}<span class="rec-watch-clip"> · {{ item.clip.name }}</span>{% endif %}{% if item.unfinished %} <span class="rec-tag inline">未完成</span>{% endif %}</h2>
+      <p class="note">{{ item.subtitle }}{% if item.clip %} · 整局的 <span class="num">{{ item.clip.range }}</span>{% endif %} · <span class="num">{{ item.clock }}</span> · <span class="num">{{ item.size_text }}</span></p>
     </div>
     {% if item.match %}
     <a class="rec-match" href="{{ url_for('matches', open=item.match.id) }}">
@@ -68,6 +70,49 @@
   <p class="note rec-no-events">这一局没有记下事件（倒地、成盒、冠军这些发生时才有）。</p>
   {% endif %}
 
+  {% if clips or can_save %}
+  <section class="rec-clips" aria-labelledby="h-clips">
+    <div class="rec-clips-head">
+      <h3 id="h-clips">高光片段{% if clips %} <span class="num muted">{{ clips | length }}</span>{% endif %}</h3>
+      {% if clips %}<span class="note">共 <span class="num">{{ clip_total }}</span> · <span class="num">{{ clip_size }}</span></span>{% endif %}
+      <div class="rec-clips-actions">
+        {% if item.clip and full_id %}<a class="btn" href="{{ url_for('recordings.watch', v=full_id) }}">看整局</a>{% endif %}
+        {% if can_save %}
+        <form method="post" action="{{ url_for('recordings.save_clips') }}" id="rec-save-clips">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="v" value="{{ item.id }}">
+          <button type="submit" class="btn" {{ 'disabled' if clips }}>{{ '已保存高光' if clips else '保存高光' }}</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% if clip_note %}<p class="rec-clip-note {{ 'update-error' if clip_note.error else 'rec-saved' }}" role="{{ 'alert' if clip_note.error else 'status' }}">{{ clip_note.text }}</p>{% endif %}
+    {% if clips %}
+    <ul class="rec-clip-grid" role="list">
+      {% for c in clips %}{% set now = c.id == item.id %}
+      <li>
+        <a class="rec-clip{{ ' current' if now }}" href="{{ url_for('recordings.watch', v=c.id) }}"{% if now %} aria-current="page"{% endif %}>
+          <span class="rec-clip-thumb">
+            <img src="{{ url_for('recordings.thumb', v=c.id) }}" alt="" width="240" height="135" loading="lazy" onerror="this.classList.add('missing')">
+            <span class="rec-duration num">{{ c.clock }}</span>
+            {% if now %}<span class="rec-tag rec-clip-now">正在放</span>{% endif %}
+          </span>
+          <span class="rec-clip-body">
+            <span class="rec-clip-name">{{ c.clip.name }}</span>
+            <span class="rec-clip-range num">{{ c.clip.range }}</span>
+            <span class="rec-clip-icons" aria-hidden="true">{% for css in c.clip.kinds %}<span class="{{ css }}">{{ ev_icon(css, 14) }}</span>{% endfor %}</span>
+            <span class="sr-only">，整局的 {{ c.clip.range }}，{{ c.clock }}，有{{ c.events | map(attribute='label') | unique | join('、') }}</span>
+          </span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% elif not item.clip %}
+    <p class="note rec-no-clips">还没有保存高光</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
   <div class="actions rec-actions">
     <form method="post" action="{{ url_for('recordings.show') }}">
       <input type="hidden" name="token" value="{{ token }}">
@@ -75,12 +120,23 @@
       <input type="hidden" name="next" value="{{ request.full_path }}">
       <button type="submit" class="btn">在资源管理器中显示</button>
     </form>
+    {% if item.clip %}{# 删一段高光：回到整局，整局删了回到这一局别的片段 #}
+    {% set others = clips | rejectattr('id', 'equalto', item.id) | list %}
     <form method="post" action="{{ url_for('recordings.delete') }}" id="rec-delete"
-          data-confirm="{{ '确定删除这个录像吗？' ~ item.path.name ~ '（' ~ item.size_text ~ '）会从电脑上删掉，不能恢复。' }}">
+          data-confirm="{{ '确定删除这一段高光吗？' ~ item.path.name ~ '（' ~ item.size_text ~ '）会从电脑上删掉，不能恢复。' }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="v" value="{{ item.id }}">
+      {% if full_id or others %}<input type="hidden" name="back" value="{{ full_id or others[0].id }}">{% endif %}
+      <button type="submit" class="btn btn-danger">删除这一段</button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('recordings.delete') }}" id="rec-delete"
+          data-confirm="{{ '确定删除这个录像吗？' ~ item.path.name ~ '（' ~ item.size_text ~ '）会从电脑上删掉，不能恢复。' ~ ('高光片段不删，还留着。' if clips else '') }}">
       <input type="hidden" name="token" value="{{ token }}">
       <input type="hidden" name="v" value="{{ item.id }}">
       <button type="submit" class="btn btn-danger">删除</button>
     </form>
+    {% endif %}
   </div>
 </section>
 {% endblock %}
@@ -178,6 +234,14 @@
     }
     track.addEventListener("pointerup", endDrag);
     track.addEventListener("pointercancel", endDrag);
+    // 保存高光：要几秒（整局里找关键帧、一段一段地切），按钮先变成"正在保存…"，不让再点
+    var save = document.getElementById("rec-save-clips");
+    if (save) save.addEventListener("submit", function () {
+      var b = save.querySelector("button");
+      b.disabled = true;
+      b.textContent = "正在保存…";
+      save.setAttribute("aria-busy", "true");
+    });
     // 删除：先确认；删之前先让播放器放开文件（正在播放的文件 Windows 删不掉）
     var del = document.getElementById("rec-delete");
     del.addEventListener("submit", function (e) {

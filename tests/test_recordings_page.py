@@ -65,6 +65,127 @@ def make_recording(base, started, name, duration, events=(), outages=(), legend=
     return video
 
 
+def make_clip(full, name, index, count, start, end, events=(), of_duration=600, started=None, legend="恶灵"):
+    """一段假的高光片段（highlights.save 存的样子）：放在整局 full 旁边，名字是整局的名字 + "_击杀1" 这样。full 可以不存在（只录高光）。"""
+    clip = full.with_name(f"{full.stem}_{name}.mp4")
+    clip.parent.mkdir(parents=True, exist_ok=True)
+    clip.write_bytes(bytes(range(256)) * 4)
+    clip.with_suffix(".jpg").write_bytes(b"\xff\xd8\xff\xe0fakejpeg")
+    clip.with_suffix(".json").write_text(json.dumps({
+        "version": 1, "video": clip.name, "started": (started or NOW).isoformat(timespec="seconds"), "first_frame": 0.4,
+        "highlight": {"of": full.name, "name": name, "kind": "kill", "index": index, "count": count, "from": start, "to": end,
+                      "of_duration": of_duration, "hits": ["kill"]},
+        "duration": end - start, "match": {"legend": legend}, "events": list(events), "outages": []}, ensure_ascii=False),
+        encoding="utf-8")
+    return clip
+
+
+def clip_checks(client, token, base, conn):
+    """高光片段（highlights.py 存的）在录像页上：列表里和整局归成一张卡片、播放页下面的"高光片段"、"保存高光"按钮、删一段。"""
+    import highlights
+    out = {}
+    start = NOW - timedelta(hours=6)
+    full = make_recording(base, start, "排位_恶灵", 600, legend="恶灵",
+                          events=[{"t": 100, "kind": "kill", "kills": 1, "count": 1}, {"t": 300, "kind": "knock"}])
+    fid = f"{full.parent.name}/{full.stem}"
+    c1 = make_clip(full, "击杀1", 1, 2, 70.0, 110.0, [{"t": 30, "kind": "kill", "kills": 1, "count": 1}], started=start)
+    c2 = make_clip(full, "击倒1", 2, 2, 280.0, 310.0, [{"t": 20, "kind": "knock"}], started=start)
+    ids = [f"{c.parent.name}/{c.stem}" for c in (c1, c2)]
+    alone = base / full.parent.name / f"{NOW - timedelta(hours=8):%Y-%m-%d_%H%M%S}_匹配.mp4"  # 只录高光：整局删了
+    a1 = make_clip(alone, "成盒1", 1, 1, 400.0, 415.0, [{"t": 10, "kind": "dead"}], started=NOW - timedelta(hours=8))
+    match = storage.insert_match(conn, {"player_name": "Me", "ended_at": f"{start + timedelta(seconds=590):%Y-%m-%d %H:%M:%S}",
+                                        "placement": 2, "kills": 1, "mode": "ranked", "legend": "恶灵"})
+    lonely = storage.insert_match(conn, {"player_name": "Me", "ended_at": f"{NOW - timedelta(hours=8) + timedelta(seconds=420):%Y-%m-%d %H:%M:%S}",
+                                         "placement": 12, "legend": "恶灵"})
+    try:
+        raw = client.get("/recordings").get_data(as_text=True)
+        cards = [text(c) for c in re.findall(r'<article class="rec-card".*?</article>', raw, re.S)]
+        mine = [c for c in cards if "排名" not in c and "#2" in c]
+        out[f"列表：整局和它的高光片段是一张卡片，写着'高光 2 段'（{mine}）"] = (
+            len(mine) == 1 and "高光 2 段" in mine[0] and "10:00" in mine[0] and not any("击杀1" in c for c in cards))
+        only = [c for c in cards if "只有高光" in c]
+        link = re.findall(r'<a class="rec-thumb" href="([^"]+)"', raw)
+        out[f"只录高光（整局删了）：标'只有高光'、时长写片段加起来的（0:15），点了放第一段（{only}）"] = (
+            len(only) == 1 and "0:15" in only[0] and "高光 1 段" in only[0] and "#12" in only[0]
+            and any(f"{a1.stem}" in l or "%E6%88%90%E7%9B%921" in l for l in link))
+        with panel_app.app.app_context():
+            links = panel_recordings.match_links([{"match_id": match}, {"match_id": lonely}])
+        out[f"战绩页的'看录像'：有整局去整局，只有高光去第一段（{links}）"] = (
+            links.get(match) == fid and links.get(lonely) == f"{a1.parent.name}/{a1.stem}")
+
+        raw = client.get("/recordings/watch", query_string={"v": fid}).get_data(as_text=True)
+        strip = (re.findall(r'<section class="rec-clips".*?</section>', raw, re.S) or [""])[0]
+        out[f"整局的播放页：下面'高光片段'列出两段（名字、在整局的哪一段、时长、事件图标），'保存高光'不能再点（{text(strip)[:90]}）"] = (
+            "击杀 1" in strip and "击倒 1" in strip and "1:10–1:50" in strip and "4:40–5:10" in strip and "0:40" in strip
+            and strip.count('class="rec-clip') >= 2 and "ev-kill" in strip and re.search(r"<button[^>]*disabled[^>]*>已保存高光", strip)
+            and 'aria-current="page"' not in strip)
+        out["删整局时说高光片段不删"] = "高光片段不删" in raw
+        raw = client.get("/recordings/watch", query_string={"v": ids[1]}).get_data(as_text=True)
+        strip = (re.findall(r'<section class="rec-clips".*?</section>', raw, re.S) or [""])[0]
+        current = re.findall(r'<a class="rec-clip current" href="([^"]+)" aria-current="page">', strip)
+        out["片段的播放页：标题写片段的名字、整局的哪一段；正在放的那段标出来；有'看整局'；没有'保存高光'"] = (
+            "· 击倒 1" in raw and "整局的 <span class=\"num\">4:40–5:10</span>" in raw and len(current) == 1
+            and "看整局" in strip and "保存高光" not in strip and "删除这一段" in raw and f'name="back" value="{fid}"' in raw)
+        raw = client.get("/recordings/watch", query_string={"v": f"{a1.parent.name}/{a1.stem}"}).get_data(as_text=True)
+        out["只有高光的片段页：没有'看整局'，删掉回列表"] = "看整局" not in raw and 'name="back"' not in raw
+
+        # 保存高光：假的切（不用 ffmpeg）
+        bare = make_recording(base, NOW - timedelta(hours=10), "匹配_恶灵", 300, legend="恶灵",
+                              events=[{"t": 50, "kind": "kill", "kills": 1, "count": 1}])
+        bid = f"{bare.parent.name}/{bare.stem}"
+        raw = client.get("/recordings/watch", query_string={"v": bid}).get_data(as_text=True)
+        out["还没存高光的整局：写着'还没有保存高光'，'保存高光'能点"] = (
+            "还没有保存高光" in raw and re.search(r'<button type="submit" class="btn" >保存高光</button>', raw))
+        real = highlights.save
+        calls = []
+        result = {"clips": None, "error": None}
+
+        def fake_save(ffmpeg, video, picked, log=print):
+            calls.append((Path(video), picked))
+            if result["error"]:
+                raise highlights.HighlightError(result["error"])
+            return result["clips"](video) if result["clips"] else []
+        highlights.save = fake_save
+        try:
+            r = client.post("/recordings/highlights", data={"v": bid})
+            out["保存高光：没有口令不让存"] = r.status_code != 302 and calls == []
+            result["error"] = "读不出录像里的关键帧"
+            r = client.post("/recordings/highlights", data={"v": bid, "token": token})
+            raw = client.get(r.headers["Location"]).get_data(as_text=True)
+            out["切不成：写出原因（红字）"] = 'role="alert">没存成：读不出录像里的关键帧' in raw
+            result["error"] = None
+            r = client.post("/recordings/highlights", data={"v": bid, "token": token})
+            raw = client.get(r.headers["Location"]).get_data(as_text=True)
+            out["一个勾了的事件都没有：说没有存"] = "这一局没有设置页里勾选的事件" in raw
+            result["clips"] = lambda video: [make_clip(Path(video), "击杀1", 1, 1, 20.0, 60.0, started=NOW - timedelta(hours=10))]
+            app_settings.set_value("recording_highlights", {"kill": {"on": True, "before": 12, "after": 3}})
+            r = client.post("/recordings/highlights", data={"v": bid, "token": token})
+            location = r.headers.get("Location", "")
+            raw = client.get(location).get_data(as_text=True)
+            out[f"保存高光：按设置页现在的切（击杀前 12 后 3），存好了跳回'高光片段'，写着存了几段（{location}）"] = (
+                r.status_code == 302 and location.endswith("#h-clips") and calls[-1][0] == bare
+                and calls[-1][1]["kill"] == {"on": True, "before": 12, "after": 3}
+                and 'role="status">存好了 1 段高光' in raw and "击杀 1" in raw and "已保存高光" in raw)
+            n = len(calls)
+            r = client.post("/recordings/highlights", data={"v": bid, "token": token})
+            raw = client.get(r.headers["Location"]).get_data(as_text=True)
+            out["已经存过高光：不再切"] = len(calls) == n and "这一局已经存过高光了" in raw
+        finally:
+            highlights.save = real
+            app_settings.set_value("recording_highlights", None)
+
+        r = client.post("/recordings/delete", data={"v": ids[0], "token": token, "back": fid})
+        out["删一段高光：只删这一段（MP4、.json、.jpg），回到整局那一页的'高光片段'"] = (
+            r.status_code == 302 and r.headers["Location"].endswith("#h-clips") and "/recordings/watch" in r.headers["Location"]
+            and not c1.exists() and not c1.with_suffix(".json").exists() and c2.exists() and full.exists())
+    finally:
+        for video in base.glob("*/*"):
+            if video.stem.startswith((f"{start:%Y-%m-%d_%H%M%S}", f"{NOW - timedelta(hours=8):%Y-%m-%d_%H%M%S}",
+                                      f"{NOW - timedelta(hours=10):%Y-%m-%d_%H%M%S}")):
+                video.unlink(missing_ok=True)
+    return out
+
+
 def main():
     print("录像页（列表、播放、删除、战绩页的看录像按钮；设置页的\"录像\"一栏）")
     try:
@@ -74,7 +195,7 @@ def main():
         shutil.rmtree(panel_recordings.folder(), ignore_errors=True)
         for key in ("recording_enabled", panel_recordings.CHECK_KEY, "recording_size", "recording_fps",
                     "recording_quality", "recording_codec", "recording_limit_gb", "recording_audio_source", "recording_mic",
-                    "recording_mic_volume"):
+                    "recording_mic_volume", "recording_mode", "recording_highlights"):
             app_settings.set_value(key, None)
 
 
@@ -156,6 +277,66 @@ def mic_test_checks(client, token):
         FakeMic.error_next = None
         panel_recordings.MIC_FACTORY, panel_recordings.MIC_TEST_SECONDS = real
         panel_recordings.mic_test.error = None
+    return out
+
+
+def highlight_form(box):
+    """设置页"剪高光"那一组现在的样子：(录制模式, {事件: 勾没勾}, {事件: (前, 后)})。"""
+    form = (re.findall(r'<form[^>]*id="rec-highlights".*?</form>', box, re.S) or [""])[0]
+    mode = re.findall(r'<option value="(\w+)" selected>', form)
+    on = {k: "checked" in rest for k, rest in re.findall(r'name="on_(\w+)" value="1" data-hl-on="\w+" ?(checked)?', form)}
+    seconds = {}
+    for side, kind, value in re.findall(r'name="(before|after)_(\w+)" min="0" max="\d+" step="1"\s*value="([\d.]+)"', form):
+        seconds.setdefault(kind, [None, None])[side == "after"] = float(value)
+    return (mode[0] if mode else None), on, {k: tuple(v) for k, v in seconds.items()}, form
+
+
+def highlight_settings_checks(client, token):
+    """设置页的剪高光：录制模式、高光包括哪些事件、每种事件前后录几秒（滑块）。"""
+    out = {}
+    kinds = ["kill", "knock", "assist_knock", "assist", "champion", "knocked", "revived", "respawned", "dead"]
+    box = section(client.get("/settings").get_data(as_text=True))
+    mode, on, seconds, form = highlight_form(box)
+    out[f"录制模式默认整局录像；高光包括 9 种事件（带图标），默认勾 6 种（{[k for k, v in on.items() if v]}）"] = (
+        mode == "full" and list(on) == kinds and [k for k, v in on.items() if v] == ["kill", "knock", "assist_knock", "champion",
+                                                                                     "knocked", "dead"]
+        and form.count('class="ev-icon"') == 18 and "自己倒地" in form and "只录高光" in form)
+    out[f"高级选项折叠着，每种事件两个滑块（0–60 秒），默认照 Outplayed（击杀 {seconds.get('kill')}、被复活 {seconds.get('respawned')}）"] = (
+        '<details class="move-data rec-hl-more" id="rec-hl-more">' in form and form.count('type="range"') == 18
+        and seconds.get("kill") == (30, 10) and seconds.get("respawned") == (9, 20) and seconds.get("assist_knock") == (20, 10)
+        and 'aria-label="击杀：事件前录几秒"' in form and "前 30 秒" in form and "后 10 秒" in form)
+    out["写着击倒、助攻击倒还在适配多语种，反馈群能点（用系统浏览器开）"] = (
+        "还在适配多语种" in form and re.search(r'<a href="https://qm\.qq\.com/[^"]+" target="_blank"[^>]*>反馈群</a>', form))
+
+    fields = {"mode": "highlights", **{f"on_{k}": "1" for k in ("kill", "knock", "champion")},
+              **{f"before_{k}": "20" for k in kinds}, **{f"after_{k}": "8" for k in kinds}}
+    fields["before_kill"], fields["after_kill"] = "45", "5"
+    box, said = note(client, "/settings/recording/highlights", fields, token)
+    mode, on, seconds, _ = highlight_form(box)
+    saved = app_settings.get("recording_highlights") or {}
+    out[f"保存：录制模式、勾的事件、秒数都存下，页面上照着显示（{said}）"] = (
+        said == "status:保存了：从下一局开始只录高光" and app_settings.get("recording_mode") == "highlights" and mode == "highlights"
+        and [k for k, v in on.items() if v] == ["kill", "knock", "champion"] and seconds["kill"] == (45, 5)
+        and seconds["dead"] == (20, 8) and saved.get("kill") == {"on": True, "before": 45, "after": 5}
+        and saved.get("dead") == {"on": False, "before": 20, "after": 8})
+    for wrong, why in ((dict(fields, before_kill="61"), "超过 60 秒"), (dict(fields, after_dead="-1"), "负数"),
+                       (dict(fields, after_dead="abc"), "不是数"), (dict(fields, mode="其他"), "录制模式不认得")):
+        _, said = note(client, "/settings/recording/highlights", wrong, token)
+        out[f"{why}：不保存（{said}）"] = said.startswith("alert:没保存") and (app_settings.get("recording_highlights") or {}) == saved
+    nothing = {k: v for k, v in fields.items() if not k.startswith("on_")}
+    _, said = note(client, "/settings/recording/highlights", nothing, token)
+    out[f"只录高光时一种都没勾：不保存（{said}）"] = said == "alert:没保存：只录高光时至少要勾一种事件"
+    _, said = note(client, "/settings/recording/highlights", dict(nothing, mode="full"), token)
+    out[f"整局录像时可以一种都不勾（{said}）"] = said == "status:保存了" and app_settings.get("recording_mode") == "full"
+    box, said = note(client, "/settings/recording/highlights", dict(fields, reset="1"), token)
+    mode, on, seconds, _ = highlight_form(box)
+    out[f"恢复默认的秒数：秒数改回默认，勾的照表单上的（{said}）"] = (
+        "改回默认" in said and seconds["kill"] == (30, 10) and seconds["dead"] == (10, 5)
+        and [k for k, v in on.items() if v] == ["kill", "knock", "champion"])
+    r = client.post("/settings/recording/highlights", data=fields)
+    out["剪高光的设置：没有口令不让改"] = r.status_code != 302
+    for key in ("recording_mode", "recording_highlights"):
+        app_settings.set_value(key, None)
     return out
 
 
@@ -298,6 +479,8 @@ def settings_checks(client, token, base):
             and "改回默认位置（" not in box)
         shutil.rmtree(elsewhere, ignore_errors=True)
 
+        out.update(highlight_settings_checks(client, token))
+
         box, said = note(client, "/settings/recording", {"on": "0"}, token)
         out[f"关掉：只剩开关，说录好的还在（{said}）"] = (
             app_settings.get("recording_enabled") is False and "录好的还在" in said and "rec-size" not in box)
@@ -421,6 +604,7 @@ def checks():
         and "看第" in rows.get(linked, ""))
 
     out.update(settings_checks(client, token, base))
+    out.update(clip_checks(client, token, base, conn))
 
     r = client.post("/recordings/delete", data={"v": rid})
     still = new.exists()

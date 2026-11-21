@@ -39,5 +39,21 @@
   "_说明_audio": "录声音（process_audio.py）。设置页两档（2026-11-21 用户定的）：只录 Apex 这个程序的声音（默认）/ 电脑上所有的声音（系统内录：游戏、语音软件里的队友、音乐都在里面）；麦克风另开（默认关）",
 
   "mix": {"game": 1.0, "system": 1.0, "mic": 1.0},
-  "_说明_mix": "开了麦克风时第 1 条音轨是混好的：每一路先乘这个音量再加起来（ffmpeg 的 amix，不自动减半）。原声各自另存一条"
+  "_说明_mix": "开了麦克风时第 1 条音轨是混好的：每一路先乘这个音量再加起来（ffmpeg 的 amix，不自动减半）。原声各自另存一条",
+
+  "highlights": {
+    "events": {
+      "kill": {"on": true, "before": 30, "after": 10},
+      "knock": {"on": true, "before": 20, "after": 10},
+      "assist_knock": {"on": true, "before": 20, "after": 10},
+      "assist": {"on": false, "before": 15, "after": 5},
+      "champion": {"on": true, "before": 25, "after": 10},
+      "knocked": {"on": true, "before": 15, "after": 10},
+      "revived": {"on": false, "before": 15, "after": 10},
+      "respawned": {"on": false, "before": 9, "after": 20},
+      "dead": {"on": true, "before": 10, "after": 5}
+    },
+    "max_seconds": 60
+  },
+  "_说明_highlights": "自动剪高光（code/highlights.py，docs/录像.md 定下来的第 10 条，2026-11-21 用户定的）：哪些事件算高光（on，设置页按这个顺序列）、每种事件前后各录几秒（照 Outplayed 的默认；助攻击倒 Outplayed 没有，和击倒一样）。默认勾上击杀、击倒、助攻击倒、冠军、自己倒地、成盒。前后两段重叠的合成一段，开头挪到前面最近的关键帧（最多早 keyframe_seconds 秒）。设置页的滑块是 0 到 max_seconds 秒。玩家改的存在 settings.json 的 recording_highlights，录制模式（整局录像 / 只录高光）是 recording_mode"
 }

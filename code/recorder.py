@@ -103,6 +103,16 @@ MIC_VOLUME = (0, 200, 5)  # 麦克风音量滑块：最小、最大、一格（%
 TRACK_TITLES = {"mix": "混音", "game": "游戏", "system": "电脑上所有的声音", "mic": "麦克风"}  # MP4 里每条音轨的名字
 
 
+def track_title_args(tracks):
+    """给 MP4 里每条音轨写上名字的 ffmpeg 参数（tracks：.json 里 audio 的 tracks，如 ["mix", "game", "mic"]）。
+    title 在 MP4 里是 name；有的播放器显示 handler_name，两个都写。剪高光（highlights.py）时照抄整局的。"""
+    args = []
+    for i, title in enumerate(tracks or []):
+        name = TRACK_TITLES.get(title, title)
+        args += [f"-metadata:s:a:{i}", f"title={name}", f"-metadata:s:a:{i}", f"handler_name={name}"]
+    return args
+
+
 def options_from(settings, rules=None):
     """设置（settings.json 的内容）→ Options。没设过的、配置里已经没有的那一档（比如以前的 "low"）用默认。"""
     rules = rules or load_rules()
@@ -632,9 +642,7 @@ class Recording:
                 f"amix=inputs={len(tracks)}:duration=longest:normalize=0[mix]"
             args += ["-filter_complex", graph, "-map", "0:v", "-map", "[mix]"]
             args += [x for i in range(len(tracks)) for x in ("-map", f"{i + 1}:a")]
-        for i, title in enumerate(self.audio_note["tracks"]):  # title 在 MP4 里是 name；有的播放器显示 handler_name，两个都写
-            name = TRACK_TITLES.get(title, title)
-            args += [f"-metadata:s:a:{i}", f"title={name}", f"-metadata:s:a:{i}", f"handler_name={name}"]
+        args += track_title_args(self.audio_note["tracks"])
         args += ["-disposition:a:0", "default", "-c:a", "aac", "-b:a", "160k"]
         return args
 
