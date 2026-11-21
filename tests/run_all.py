@@ -243,6 +243,9 @@ def option(argv, names, default=None):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    # 输出被管道接走时（| tail、release.py）Windows 默认是 GBK，打不出 ✅：和 fake_game 一样改成 UTF-8
+    # （以前主进程 import 了 fake_game，顺带改了；现在主进程不 import 各组）
+    sys.stdout.reconfigure(encoding="utf-8")
     one = option(argv, ("--one",))
     if one:
         return run_one(one)
