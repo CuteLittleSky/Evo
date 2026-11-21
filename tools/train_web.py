@@ -84,7 +84,7 @@ code { background:var(--inset); padding:1px 6px; border-radius:4px; font-size:13
 .tile .shot { height:64px; display:flex; align-items:center; justify-content:center; background:#000; border-radius:5px; overflow:hidden; cursor:text; }
 .tile .shot img { height:56px; max-width:100%; object-fit:contain; image-rendering:pixelated; }
 .tile .meta { display:flex; justify-content:space-between; gap:6px; font-size:12px; color:var(--muted); min-height:18px; }
-.tile .meta .eng { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:110px; }
+.tile .meta .eng { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:130px; }
 .tile .row { display:flex; gap:6px; }
 .tile input[type=text] { flex:1; min-width:0; font:600 18px/1 ui-monospace,Consolas,monospace; padding:8px 10px; border-radius:6px;
   border:1px solid var(--border); background:var(--inset); color:var(--text); }
@@ -209,7 +209,7 @@ CHECK = """
 {% else %}<p class="muted">"要人看"那堆全看；"规则核对过"那堆抽查（顺序是打乱的），发现错的多就告诉 Claude 调规则。</p>{% endif %}
 <p class="muted">框里是现在的引擎读的数：对的不用管，错的改掉（RP 带上 + 或 −，伤害不用逗号）。<b>空着</b> = 这一块里没有数字；
 在框里按 <kbd>Esc</kbd> 或点"丢掉" = 这一块不能用（被挡住、裁歪了、不是数字那一格）。<kbd>Tab</kbd> 到下一块，<kbd>Enter</kbd> 保存这一页。
-黄底的是引擎没读出来的，蓝底的是你改过的。</p>
+黄底的是引擎没读出来的：右下角是它读到的字和把握，格式不对（如"15:"）或把握不到 0.8，Evo 都不采用；蓝底的是你改过的。</p>
 <div class="filters">
  <div><span class="lab">项</span><span class="seg">{% for key, label in field_opts %}<a href="{{ link(field=key) }}" class="{{ 'on' if field==key }}">{{ label }}</a>{% endfor %}</span></div>
  <div><span class="lab">堆</span><span class="seg">{% for key, label in piles.items() %}<a href="{{ link(pile=key) }}" class="{{ 'on' if pile==key }}">{{ label }}</a>{% endfor %}</span></div>
@@ -224,7 +224,9 @@ CHECK = """
 {% for c in crops %}{% set pre = prefill(c) %}
 <div class="tile{% if c['engine_value'] is none and c['status'] == 'todo' %} miss{% endif %}{% if c['status'] == 'skip' %} skipped{% endif %}">
  <div class="shot" data-for="a{{ c['id'] }}"><img src="{{ url_for('image', crop_id=c['id']) }}" alt="{{ labels[c['field']] }}" width="{{ c['w'] }}" height="{{ c['h'] }}"></div>
- <div class="meta"><span>{{ labels[c['field']] }}</span><span class="eng" title="引擎读到的全部文字（把握 {{ '%.2f' % c['engine_score'] if c['engine_score'] is not none else '-' }}）">{{ c['engine_text'] or '什么也没读到' }}</span></div>
+ <div class="meta"><span>{{ labels[c['field']] }}</span><span class="eng" title="引擎读到的全部文字（把握 {{ '%.2f' % c['engine_score'] if c['engine_score'] is not none else '-' }}）">
+  {%- if not c['engine_text'] %}什么也没读到{% elif c['engine_value'] is none %}{{ c['engine_text'] }} · 把握 {{ '%.2f' % c['engine_score'] if c['engine_score'] is not none else '-' }}{% else %}{{ c['engine_text'] }}{% endif -%}
+ </span></div>
  <div class="row">
   <input type="text" id="a{{ c['id'] }}" name="a{{ c['id'] }}" value="{{ pre }}" data-orig="{{ pre }}" inputmode="numeric" autocomplete="off"
    spellcheck="false" aria-label="{{ labels[c['field']] }}的答案" placeholder="{{ '没读出' if c['engine_value'] is none else '' }}"{% if loop.first %} autofocus{% endif %}>

@@ -75,6 +75,8 @@ def main():
     }
 
     web.app.config["DB_PATH"] = FOLDER / "train.db"
+    conn.execute("update crops set engine_text='11' where id=?", (ids[("damage", 35)],))  # 读到了，但把握不够
+    conn.commit()
     client = web.app.test_client()
     pages = {url: client.get(url) for url in ("/", "/check/exam", "/check/video", "/score",
                                               f"/img/{ids[('damage', 0)]}")}
@@ -83,6 +85,7 @@ def main():
         pages["/check/exam"].get_data(as_text=True).find(f'id="a{ids[("squads_left", 0)]}"') <
         pages["/check/exam"].get_data(as_text=True).find(f'id="a{ids[("damage", 0)]}"')
         and f'value="+19" data-orig="+19"' in pages["/check/exam"].get_data(as_text=True))
+    checks["引擎读到了字、但 Evo 不采用的，格子上写出读到什么和把握"] = "11 · 把握 0.30" in pages["/check/exam"].get_data(as_text=True)
 
     a, b, c, d, e = (ids[("damage", 0)], ids[("damage", 20)], ids[("damage", 25)], ids[("damage", 35)],
                      ids[("rp_delta", 10)])
