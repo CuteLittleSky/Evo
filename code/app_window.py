@@ -6,6 +6,7 @@
 - 在标题栏按下鼠标时，告诉 Windows"用户按住了标题栏"，拖动交给 Windows 处理，手感和普通窗口一样；
   四边和四角的细条同理，交给 Windows 改大小
 - 最小化 / 最大化 / 关闭是网页里的按钮，通过 window.pywebview.api 调用下面的 WindowApi
+- 网页里的视频全屏（录像、看直播）时窗口撑满整块显示器，退出时回到原样（WindowApi._set_fullscreen；pywebview 自己不管）
 
 单独试：python code/app_window.py http://127.0.0.1:5000/   （先另外启动面板：python code/panel_app.py --no-browser）
 """
@@ -41,6 +42,8 @@ class WindowApi:
 
     def __init__(self):
         self._window = None
+        self._before_fullscreen = None  # 网页里的视频全屏之前窗口的样子：(WindowState, 平常的位置和大小)
+        self._fullscreen_hooked = False
 
     def _form(self):
         return self._window.native  # WinForms 的窗口对象
@@ -94,6 +97,50 @@ class WindowApi:
 
     def is_maximized(self):
         return self._maximized()
+
+    def _set_fullscreen(self, on):
+        """网页里的东西全屏 / 退出全屏（录像、看直播的全屏按钮，网页的 Fullscreen API；2026-11-21 用户要的"真全屏"）。
+        pywebview 不管 WebView2 的这个事件，网页全屏只铺满 Evo 窗口里那一块。这里接住它：全屏时窗口撑满所在的整块显示器
+        （盖住任务栏，四角改直角），退出时（Esc、再点全屏按钮）回到原来的位置和大小，原来是最大化的就回到最大化。
+        在窗口自己的线程里调（WebView2 的事件本来就在这个线程里）。"""
+        from System.Windows.Forms import FormWindowState, Screen
+
+        form = self._form()
+        if on and self._before_fullscreen is None:
+            maximized = form.WindowState == FormWindowState.Maximized
+            self._before_fullscreen = (form.WindowState, form.RestoreBounds if maximized else form.Bounds)
+            form.WindowState = FormWindowState.Normal
+            form.Bounds = Screen.FromHandle(form.Handle).Bounds
+            _set_corners(form, 1)  # DWMWCP_DONOTROUND：铺满屏幕时不要圆角
+            form.Activate()
+        elif not on and self._before_fullscreen is not None:
+            state, bounds = self._before_fullscreen
+            self._before_fullscreen = None
+            _set_corners(form, 2)
+            form.WindowState = FormWindowState.Normal  # 先回到普通状态，位置和大小才设得上
+            form.Bounds = bounds
+            if state == FormWindowState.Maximized:
+                form.WindowState = FormWindowState.Maximized  # MaximizedBounds 还是工作区（toggle_maximize 设的），不盖任务栏
+
+    def _hook_fullscreen(self):
+        """网页加载好以后（WebView2 已经建好）挂上全屏事件，只挂一次。CoreWebView2 只能在窗口线程里碰。"""
+        if self._fullscreen_hooked:
+            return
+
+        def go():
+            core = self._form().browser.webview.CoreWebView2
+            if core is None or self._fullscreen_hooked:
+                return
+            core.ContainsFullScreenElementChanged += self._on_fullscreen_changed
+            self._fullscreen_hooked = True
+
+        self._on_ui(go)
+
+    def _on_fullscreen_changed(self, sender, args):
+        try:
+            self._set_fullscreen(bool(sender.ContainsFullScreenElement))
+        except Exception:  # noqa: BLE001 出错时宁可不全屏，也不能让窗口跟着崩
+            pass
 
     def minimize(self):
         self._window.minimize()
@@ -156,11 +203,16 @@ def _png_bytes(data_url):
     return data
 
 
+def _set_corners(form, preference):
+    """Windows 11 的窗口四角：2 = 圆角（DWMWCP_ROUND），1 = 直角（DWMWCP_DONOTROUND）。旧版 Windows 不支持就算了。"""
+    hwnd = wintypes.HWND(form.Handle.ToInt64())
+    value = ctypes.c_int(preference)
+    _dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(value), ctypes.sizeof(value))
+
+
 def _style_window(window):
-    """Windows 11：窗口四角改成圆角（没有边框的窗口默认是直角）。旧版 Windows 不支持就算了。"""
-    hwnd = wintypes.HWND(window.native.Handle.ToInt64())
-    round_corners = ctypes.c_int(2)  # DWMWCP_ROUND
-    _dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(round_corners), ctypes.sizeof(round_corners))
+    """Windows 11：窗口四角改成圆角（没有边框的窗口默认是直角）。"""
+    _set_corners(window.native, 2)
 
 
 def _watch_focus(api, focus):
@@ -195,7 +247,14 @@ def run(url, focus=None):
         # 打开时调到最前：一键更新后新版本自己打开，不调的话窗口会被刚才在用的程序挡住，像是没打开
         api._bring_to_front()
 
+    def loaded():
+        try:
+            api._hook_fullscreen()
+        except Exception:  # noqa: BLE001 挂不上（WebView2 太旧等）：全屏照旧只铺满窗口，不影响别的
+            pass
+
     window.events.shown += shown
+    window.events.loaded += loaded
     if focus is not None:
         threading.Thread(target=_watch_focus, args=(api, focus), name="focus", daemon=True).start()
     webview.start(gui="edgechromium", private_mode=False, storage_path=str(DATA_DIR / "webview"),
