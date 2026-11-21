@@ -19,7 +19,7 @@ from pathlib import Path
 
 from paths import DB_PATH
 
-APP_VERSION = "0.7.0b"  # 2026-11-21：测试版（录像的实验版，只发 QQ 群、不进一键更新，见 docs/底座.md"测试版"）
+APP_VERSION = "0.7.0"
 SCHEMA_VERSION = 9  # 表结构变了就加 1，并在 MIGRATIONS 里写上怎么从旧版本升级
 
 # 列名和类型，顺序也是导出 CSV 时的列顺序
