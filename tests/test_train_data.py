@@ -145,6 +145,16 @@ def main():
     return report(checks)
 
 
+def red_text_visible():
+    """灰底（128）上的红字（BGR 40,40,230），上下有白边框（像 RP 那一格）：灰度里字只比底色暗一点，最亮的颜色里亮得多。"""
+    crop = np.full((40, 80, 3), 128, np.uint8)
+    crop[:4], crop[-4:] = 255, 255
+    crop[10:30, 20:60] = (40, 40, 230)
+    x = digits.prepare(crop)  # 80×40 缩成 64×32：字在第 8–24 行、第 16–48 列
+    text, back = x[:, 16, 32], x[:, 6, 2]  # 字中间、边框下面左边的底
+    return abs(float(text[1] - back[1])) > 0.5 and abs(float(text[1] - back[1])) > abs(float(text[0] - back[0]))
+
+
 def digits_checks(conn):
     """训练用哪些答案、小模型读数的规矩（不用 PyTorch）。"""
     sid = conn.execute("insert into sources (kind, path, name, status) values ('video', 'v', 'v.mp4', 'done')").lastrowid
@@ -175,8 +185,11 @@ def digits_checks(conn):
             and digits.erase_digits(np.full((40, 60), 230, np.uint8)) is None and "rp_delta" not in digits.EMPTY_FIELDS,
         "训练用：用户的答案、引擎的读数、借来的答案；用户改过的、没有可信读数的、丢掉的不用；RP 正数补 +":
             got == [("auto", "55"), ("extra", "55"), ("human", "+19"), ("human", "68")],
-        "小模型的输入是 32×96、0–1 之间": digits.prepare(np.zeros((45, 68, 3), np.uint8)).shape == (digits.H, digits.W)
-                                         and float(digits.prepare(np.full((20, 400), 200, np.uint8)).max()) <= 1.0,
+        "小模型的输入是 2 张 32×96（灰度、最亮的颜色）、0–1 之间；老的小模型照旧 1 张":
+            digits.prepare(np.zeros((45, 68, 3), np.uint8)).shape == (2, digits.H, digits.W)
+            and digits.prepare(np.zeros((45, 68, 3), np.uint8), 1).shape == (1, digits.H, digits.W)
+            and float(digits.prepare(np.full((20, 400), 200, np.uint8)).max()) <= 1.0,
+        '红字在灰度里和灰底差不多暗，在"最亮的颜色"里是亮的': red_text_visible(),
         "CTC 解码：连着的同一个字算一个，中间隔了空的算两个": digits.decode(probs)[0] == "11",
         "小模型读数的规矩：把握不够、格式不对、超出范围都不采用，只有 RP 能带号": (
             digits.model_value("150", .99, "damage", .8, ranges) == ("150", False)

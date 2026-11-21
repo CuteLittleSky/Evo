@@ -46,18 +46,37 @@ SHARES = {"human": 0.3, "auto": 0.15, "extra": 0.55}  # 每一轮抽多少成：
 
 # ---------- 两个环境都用到的（只用 numpy、cv2） ----------
 
-def prepare(img):
-    """小块（BGR 或灰度，原分辨率）→ 小模型的输入：H × W 的灰度图（0–1 的 float32）。
-    按高缩放，宽不够在右边补边上的颜色，太宽就压窄；再按这一块自己的亮暗拉开对比度（背景、压缩、HDR 都不一样）。"""
-    gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
+CHANNELS = 2  # 小模型看几张图：1 = 只有灰度（第 1–3 次训练）；2 = 灰度 + 每个点最亮的那个颜色
+# （红字、紫字转成灰度和灰底差不多暗，第 3 次训练读不出"-48 RP"这种；在"最亮的颜色"里它们是亮的）
+
+
+def prepare(img, channels=CHANNELS):
+    """小块（BGR 或灰度，原分辨率）→ 小模型的输入：(channels, H, W)，0–1 的 float32。
+    按高缩放，宽不够在右边补边上的颜色，太宽就压窄；每一张再按这一块自己的亮暗拉开对比度（背景、压缩、HDR 都不一样）。"""
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    planes = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)]
+    if channels == 2:
+        planes.append(img.max(axis=2))
+    h, w = img.shape[:2]
     new_w = max(1, min(W, round(w * H / h)))
-    small = cv2.resize(gray, (new_w, H), interpolation=cv2.INTER_AREA if h > H else cv2.INTER_LINEAR)
-    if new_w < W:
-        small = cv2.copyMakeBorder(small, 0, 0, 0, W - new_w, cv2.BORDER_REPLICATE)
-    x = small.astype(np.float32) / 255.0
-    lo, hi = np.percentile(x, 2), np.percentile(x, 98)
-    return np.clip((x - lo) / max(hi - lo, 0.1), 0.0, 1.0)
+    out = []
+    for plane in planes:
+        small = cv2.resize(plane, (new_w, H), interpolation=cv2.INTER_AREA if h > H else cv2.INTER_LINEAR)
+        if new_w < W:
+            small = cv2.copyMakeBorder(small, 0, 0, 0, W - new_w, cv2.BORDER_REPLICATE)
+        x = small.astype(np.float32) / 255.0
+        lo, hi = np.percentile(x, 2), np.percentile(x, 98)
+        out.append(np.clip((x - lo) / max(hi - lo, 0.1), 0.0, 1.0))
+    return np.stack(out)
+
+
+def run_channels(info_path):
+    """这一次训练的小模型看几张图（老的没写 = 1）。"""
+    try:
+        return json.loads(Path(info_path).read_text(encoding="utf-8")).get("channels", 1)
+    except (OSError, ValueError):
+        return 1
 
 
 def decode(probs):
@@ -110,7 +129,8 @@ def label_text(answer, field):
 
 
 def load_crop(rel):
-    return cv2.imdecode(np.fromfile(str(data.CROPS / rel), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    """小块原图（彩色 BGR）。"""
+    return cv2.imdecode(np.fromfile(str(data.CROPS / rel), dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
 # ---------- 训练用哪些小块 ----------
@@ -154,9 +174,10 @@ def val_source(conn):
 
 # ---------- 训练时把图弄"坏"一点，见过各种画质 ----------
 
-def augment(gray, rng):
-    h, w = gray.shape
-    img = gray.astype(np.float32)
+def augment(color, rng):
+    """彩色小块（BGR）弄"坏"一点：裁偏、横向拉宽压窄、低清、模糊、放大、亮度对比度、噪点、换颜色、反色、JPG 压缩。"""
+    h, w = color.shape[:2]
+    img = color.astype(np.float32)
     if rng.random() < 0.7:  # 裁的位置偏一点：每边多留一点或少裁一点（少裁最多 4%，免得切掉数字）
         def side(n):
             return int(round(n * rng.uniform(-0.04, 0.12)))
@@ -165,7 +186,7 @@ def augment(gray, rng):
         x0, x1 = max(0, -left), w - max(0, -right)
         img = img[y0:y1, x0:x1]
         img = cv2.copyMakeBorder(img, max(0, top), max(0, bottom), max(0, left), max(0, right), cv2.BORDER_REPLICATE)
-    h, w = img.shape
+    h, w = img.shape[:2]
     if rng.random() < 0.7:  # 画面比例：4:3 拉伸的字横着宽约 1.2 倍，16:9 窄约 0.9 倍（训练素材全是 16:10）
         f = float(np.exp(rng.uniform(np.log(0.8), np.log(1.4))))
         img = cv2.resize(img, (max(4, round(w * f)), h), interpolation=cv2.INTER_LINEAR)
@@ -183,9 +204,13 @@ def augment(gray, rng):
     if rng.random() < 0.3:
         img = img + rng.normal(0, rng.uniform(2, 8), img.shape)
     img = np.clip(img, 0, 255).astype(np.uint8)
+    if rng.random() < 0.3:  # 换颜色：红字、蓝底……训练素材里的颜色不全（RP 的红字、紫字很少）
+        img = np.ascontiguousarray(img[:, :, rng.permutation(3)])
+    if rng.random() < 0.08:  # 反色：白底黑字（考卷里有，训练素材里几乎没有）
+        img = 255 - img
     if rng.random() < 0.5:  # 压缩（视频、JPG 截图）
         q = int(rng.integers(25, 95))
-        img = cv2.imdecode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])[1], cv2.IMREAD_GRAYSCALE)
+        img = cv2.imdecode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])[1], cv2.IMREAD_COLOR)
     return img
 
 
@@ -193,20 +218,21 @@ EMPTY_SHARE = 0.06  # 每一批里有这么多块换成"抹掉数字"的，答�
 EMPTY_FIELDS = {"damage", "kills", "assists", "participation", "squads_left"}  # RP 那一格边框比字还亮，抹不干净，不用
 
 
-def erase_digits(gray):
-    """把小块里的数字抹掉、用旁边的背景补上，当作"这一块没有数字"。亮的地方太多（亮背景）或太少时抹不准，返回 None。"""
+def erase_digits(img):
+    """把小块（彩色或灰度）里的数字抹掉、用旁边的背景补上，当作"这一块没有数字"。亮的地方太多（亮背景）或太少时抹不准，返回 None。"""
+    gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     thr = max(150.0, float(np.percentile(gray, 85)))
     mask = (gray >= thr).astype(np.uint8) * 255
     share = float(np.mean(mask > 0))
     if not 0.03 <= share <= 0.35:
         return None
     mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=2)
-    return cv2.inpaint(gray, mask, 5, cv2.INPAINT_TELEA)
+    return cv2.inpaint(img, mask, 5, cv2.INPAINT_TELEA)
 
 
 # ---------- 小模型（只在训练环境里用 PyTorch） ----------
 
-def build_model():
+def build_model(channels=CHANNELS):
     import torch.nn as nn
 
     def block(i, o, pool):
@@ -220,7 +246,7 @@ def build_model():
 
         def __init__(self):
             super().__init__()
-            self.cnn = nn.Sequential(*block(1, 16, 2), *block(16, 32, 2), *block(32, 48, None),
+            self.cnn = nn.Sequential(*block(channels, 16, 2), *block(16, 32, 2), *block(32, 48, None),
                                      *block(48, 48, (2, 1)), *block(48, 64, (2, 1)))
             self.rnn = nn.GRU(64 * 2, 48, bidirectional=True, batch_first=True)
             self.fc = nn.Linear(96, len(CHARS) + 1)
@@ -244,7 +270,7 @@ def evaluate(model, items, images, ranges, device, threshold=None):
     with torch.no_grad():
         for i in range(0, len(items), 512):
             chunk = items[i:i + 512]
-            x = torch.from_numpy(np.stack([prepare(images[it["id"]]) for it in chunk])[:, None]).to(device)
+            x = torch.from_numpy(np.stack([prepare(images[it["id"]]) for it in chunk])).to(device)
             probs = model(x).softmax(2).cpu().numpy()
             out += [decode(p) for p in probs]
     model.train()
@@ -351,7 +377,7 @@ def cmd_train(args):
             imgs.append(prepare(augment(img, local)))
             labels.append(label)
         targets = [CHARS.index(ch) + 1 for label in labels for ch in label]
-        return np.stack(imgs)[:, None], targets, [len(label) for label in labels]
+        return np.stack(imgs), targets, [len(label) for label in labels]
 
     pool = ThreadPoolExecutor(8)
     try:
@@ -404,7 +430,7 @@ def cmd_train(args):
     threshold, right, wrong, missed = pick_threshold(val_items, reads, ranges)
     onnx_path = MODELS / f"run{run}.onnx"
     export_onnx(model.cpu(), onnx_path)
-    (MODELS / f"run{run}.json").write_text(json.dumps({"chars": CHARS, "H": H, "W": W, "threshold": threshold},
+    (MODELS / f"run{run}.json").write_text(json.dumps({"chars": CHARS, "H": H, "W": W, "channels": CHANNELS, "threshold": threshold},
                                                       ensure_ascii=False), encoding="utf-8")
     conn.execute("update train_runs set status='done', finished=?, best_epoch=?, threshold=?, val_right=?, val_wrong=?, "
                  "val_missed=?, val_n=?, model_path=?, size_kb=? where id=?",
@@ -431,7 +457,7 @@ def export_onnx(model, path):
             return self.inner(x).softmax(2)
 
     wrapped = WithSoftmax(model).eval()
-    dummy = torch.zeros(1, 1, H, W)
+    dummy = torch.zeros(1, CHANNELS, H, W)
     try:
         torch.onnx.export(wrapped, (dummy,), str(path), input_names=["x"], output_names=["probs"],
                           dynamic_axes={"x": {0: "n"}, "probs": {0: "n"}}, opset_version=17, dynamo=False)
@@ -460,12 +486,13 @@ def cmd_exam(args):
     session = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
     rows = conn.execute("select id, field, img from crops where kind='exam' and pile!='extra' order by id").fetchall()
     images = [load_crop(r["img"]) for r in rows]
-    session.run(None, {"x": prepare(images[0])[None, None]})  # 第一次慢（准备），不算
+    channels = run_channels(path.with_suffix(".json"))
+    session.run(None, {"x": prepare(images[0], channels)[None]})  # 第一次慢（准备），不算
     after, _ = memory_mb()
     reads, times = [], []
     for r, img in zip(rows, images):
         t0 = time.perf_counter()
-        probs = session.run(None, {"x": prepare(img)[None, None]})[0][0]
+        probs = session.run(None, {"x": prepare(img, channels)[None]})[0][0]
         text, score = decode(probs)
         value, _ = model_value(text, score, r["field"], info["threshold"], ranges)
         ms = (time.perf_counter() - t0) * 1000
@@ -492,7 +519,7 @@ def cmd_exam(args):
           f"引擎 读对 {e[0]}，读错 {e[1]}，没读出 {e[2]}")
     print(f"小模型读一块平均 {np.mean(times):.2f} 毫秒（含缩放；1 个线程），加载以后多占约 {max(0.0, after - before):.0f} MB，"
           f"模型文件 {path.stat().st_size / 1024:.0f} KB")
-    report_disputes(mark_disputes(conn, session, run))
+    report_disputes(mark_disputes(conn, session, run, channels))
 
 
 # ---------- 挑出要复核的块 ----------
@@ -500,7 +527,7 @@ def cmd_exam(args):
 DISPUTE_SCORE = 0.5  # 小模型至少有这么大把握、读的又和答案不一样，才挑出来复核
 
 
-def mark_disputes(conn, session, run):
+def mark_disputes(conn, session, run, channels=CHANNELS):
     """挑出要复核的块（网页"复核"页）：小模型读的和答案不一样、而且它有点把握（DISPUTE_SCORE）。
     比的是考卷里核对过的，和训练素材里训练要用的（用户的答案、引擎的读数、借来的答案）。核对时框里预先填着引擎的数，
     数字一糊人容易跟着认（2026-11-21 看到 538/539、585/565、清楚的"1"填成空），复核时不预先填。
@@ -516,7 +543,7 @@ def mark_disputes(conn, session, run):
     flagged, counts = [], defaultdict(int)
     for i in range(0, len(items), 256):
         chunk = items[i:i + 256]
-        probs = session.run(None, {"x": np.stack([prepare(load_crop(it["img"])) for it in chunk])[:, None]})[0]
+        probs = session.run(None, {"x": np.stack([prepare(load_crop(it["img"]), channels) for it in chunk])})[0]
         for it, p in zip(chunk, probs):
             text, score = decode(p)
             if score >= DISPUTE_SCORE and data.number(text or None) != data.number(it["label"] or None):
@@ -544,8 +571,9 @@ def cmd_disputes(args):
         sys.exit("还没有训练好的小模型：先训练（见文件开头）")
     opts = ort.SessionOptions()
     opts.intra_op_num_threads = 4
-    session = ort.InferenceSession(str(data.TRAIN / info["model_path"]), opts, providers=["CPUExecutionProvider"])
-    report_disputes(mark_disputes(conn, session, run))
+    path = data.TRAIN / info["model_path"]
+    session = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
+    report_disputes(mark_disputes(conn, session, run, run_channels(path.with_suffix(".json"))))
 
 
 def main():
