@@ -186,6 +186,7 @@ FOLLOW_LINKS = (
     {"name": "哔哩哔哩", "url": "https://space.bilibili.com/26649278", "icon": "brands/bilibili.svg"},
     {"name": "小黑盒", "url": "https://www.xiaoheihe.cn/app/user/profile/765d6910c805", "icon": "brands/xiaoheihe.svg"},
     {"name": "Evo 官网", "url": "https://evotracker.cn/", "icon": "brands/evo.svg"},  # 2026-10-28 用户要求加
+    {"name": "Oopz 频道", "url": "https://oopz.cn/i/iBXsvV", "icon": "brands/oopz.svg"},  # 2026-11-21 用户要求加：Evo 的 Oopz（开黑语音）频道邀请链接
 )
 # 右上角"Evo 官方合作小程序：派圈助手"（2026-10-28 用户要求，0.4.3 起；先只放总览页，用户觉得突兀，改成每一页都有）：
 # 点了弹出派圈助手的小程序码，用手机微信扫

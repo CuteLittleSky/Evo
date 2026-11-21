@@ -1,13 +1,13 @@
-"""总览页"关注我"：开发者的 B 站、小黑盒主页和 Evo 官网（panel_app.FOLLOW_LINKS、overview.html、panel/static/brands/）。
+"""总览页"关注我"：开发者的 B 站、小黑盒主页、Evo 官网和 Oopz 频道（panel_app.FOLLOW_LINKS、overview.html、panel/static/brands/）。
 不用截图，不开浏览器（用 Flask 自带的测试客户端）。
 
-- 总览页"关注我"那一栏有三个按钮，地址是正式地址（不带分享追踪参数），交给系统浏览器打开（target="_blank"、rel="noopener noreferrer"）；
+- 总览页"关注我"那一栏有四个按钮（Oopz 频道是 2026-11-21 用户要求加的），地址是正式地址（不带分享追踪参数），交给系统浏览器打开（target="_blank"、rel="noopener noreferrer"）；
   没有"关注我"三个字（2026-11-15 用户要求去掉），读屏软件照样念得出这一块是什么
 - 有对局时在左边一列"最近对局"下面（2026-10-28 用户要求）；没有对局时也显示
-- 三个图标是写对了的 SVG、单色（颜色跟随文字）、不引用别的文件，面板能取到
+- 四个图标是写对了的 SVG、单色（颜色跟随文字）、不引用别的文件，面板能取到
 - 设置页"关于 Evo"最下面的"支持我"（2026-10-28）：连着三个弹窗（文字是用户写的原文），最后一个是开发者的微信收款码
-- "Evo 官方合作小程序：派圈助手"（2026-10-28 起在右上角、每一页都有；2026-11-15 用户要求挪到总览页"关注我"那一栏，和三个按钮并列）：
-  前面是派圈助手的图标，样子和另外三个按钮一样，点了弹出小程序码（弹窗、码、扫码说明、关闭）；右上角不再有；
+- "Evo 官方合作小程序：派圈助手"（2026-10-28 起在右上角、每一页都有；2026-11-15 用户要求挪到总览页"关注我"那一栏，和另外几个按钮并列）：
+  前面是派圈助手的图标，样子和另外几个按钮一样，点了弹出小程序码（弹窗、码、扫码说明、关闭）；右上角不再有；
   没有小程序码图片时不显示；有图片时两张都是真的 PNG、面板能取到，文件夹里有许可说明
 - 设置页"关于 Evo"下面的鸣谢卡片（2026-11-07）：开发者（链到 GitHub）→ 官方合作（派圈助手，弹同一个小程序码）→ 特别鸣谢
 
@@ -30,7 +30,8 @@ FOLDER = Path(tempfile.mkdtemp(prefix="evo-follow-", dir=storage.DB_PATH.parent.
 PNG_HEADER = bytes([0x89]) + b"PNG" + bytes([13, 10, 26, 10])  # PNG 文件开头的 8 个字节
 EXPECTED = {"哔哩哔哩": "https://space.bilibili.com/26649278",
             "小黑盒": "https://www.xiaoheihe.cn/app/user/profile/765d6910c805",
-            "Evo 官网": "https://evotracker.cn/"}
+            "Evo 官网": "https://evotracker.cn/",
+            "Oopz 频道": "https://oopz.cn/i/iBXsvV"}
 
 
 def follow_section(page):
@@ -46,7 +47,7 @@ def follow_links(page):
 
 
 def main():
-    print("总览页\"关注我\"：B 站、小黑盒、Evo 官网、派圈助手；设置页支持我、鸣谢卡片")
+    print("总览页\"关注我\"：B 站、小黑盒、Evo 官网、Oopz 频道、派圈助手；设置页支持我、鸣谢卡片")
     path = FOLDER / "follow.db"
     conn = storage.connect(path)
     storage.insert_match(conn, {"ended_at": "2026-10-22 20:00:00", "placement": 3, "legend": "恶灵"})
@@ -75,7 +76,7 @@ def main():
             icons[f["name"]] = {}
 
     checks = {
-        "总览页\"关注我\"那一栏，三个链接按钮：哔哩哔哩、小黑盒、Evo 官网": [name for name, _, _ in links] == list(EXPECTED),
+        "总览页\"关注我\"那一栏，四个链接按钮：哔哩哔哩、小黑盒、Evo 官网、Oopz 频道": [name for name, _, _ in links] == list(EXPECTED),
         "去掉了\"关注我\"三个字（没有标题），读屏软件照样念得出这一块是什么": bool(follow_section(page)) and (
             "<h2" not in follow_section(page) and ">关注我<" not in follow_section(page)
             and 'aria-label="关注我、官方合作小程序"' in follow_section(page)),
@@ -85,7 +86,7 @@ def main():
         "没有对局时也显示": [name for name, _, _ in empty_links] == list(EXPECTED),
         "有对局时在左边一列\"最近对局\"下面（不在最下面占满一行）":
             -1 < page.find('class="card list-card"') < page.find('class="card follow-card"') < page.find('class="ov-side"'),
-        "三个图标都是写对了的 SVG": all(i.get("svg") and i.get("paths") for i in icons.values()) and len(icons) == 3,
+        "四个图标都是写对了的 SVG": all(i.get("svg") and i.get("paths") for i in icons.values()) and len(icons) == 4,
         "图标单色、颜色跟随文字（fill=currentColor）": all(i.get("color") for i in icons.values()),
         "图标不引用别的文件（不联网）": all(i.get("external") is False for i in icons.values()),
         "面板能取到图标": all(i.get("served") == 200 for i in icons.values()),
@@ -138,10 +139,10 @@ def partner_checks(client):
     dialog = re.search(r'<dialog class="dialog partner-dialog".*?</dialog>', overview, re.S)
     dialog = dialog.group(0) if dialog else ""
     out = {
-        "总览页\"关注我\"那一栏有按钮\"Evo 官方合作小程序：派圈助手\"，放在三个按钮后面":
+        "总览页\"关注我\"那一栏有按钮\"Evo 官方合作小程序：派圈助手\"，放在链接按钮后面":
             "Evo 官方合作小程序：</span><span class=\"partner-name\">派圈助手" in button
-            and section.find("Evo 官网") < section.find("data-partner-open"),
-        "样子和另外三个按钮一样（.btn），会弹窗（aria-haspopup）": 'class="btn follow-partner"' in button
+            and -1 < section.find("Oopz 频道") < section.find("data-partner-open"),
+        "样子和另外几个按钮一样（.btn），会弹窗（aria-haspopup）": 'class="btn follow-partner"' in button
             and 'aria-haspopup="dialog"' in button,
         "点了弹出小程序码：弹窗里有码（读屏写着是什么）、扫码说明、关闭按钮":
             f'src="/static/{panel_app.PARTNER_QR}"' in dialog and 'alt="派圈助手的小程序码"' in dialog and "扫一扫" in dialog
