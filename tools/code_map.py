@@ -49,7 +49,7 @@ SECTIONS = [
                               "en/、zh-TW/ 是英文、繁体游戏和简体不一样的那些")]),
     ("引擎", None, ["code/ocr.py"]),
     ("页面", "程序", [
-        "code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/radar.py",
+        "code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/splash.py", "code/radar.py",
         "code/global_stats.py", "code/map_rotation.py"]),
     ("页面", "赛事、看直播", ["code/panel_esports.py", "code/esports_data.py", "code/follows.py", "code/follow_alerts.py", "code/live_status.py", "code/abogus.py",
                               "code/watch_douyu.py", "code/flv_relay.py", "code/watch_douyin.py", "code/watch_bilibili.py", "code/hls_relay.py", "code/danmaku.py", "code/douyin_chat.py", "code/bili_login.py", "code/douyu_login.py", "code/login_window.py",
@@ -90,7 +90,7 @@ SECTIONS = [
         (".github/workflows/", "GitHub Actions（Mirror酱 提的 PR #4）：发 GitHub Release 时把压缩包和更新日志传给 Mirror酱"
                                "（国内渠道）；读的是 tag 指向的那个提交里的这两个文件")]),
     ("开发用的脚本（tools/）", "做素材", [
-        "tools/make_icon.py", "tools/make_sounds.py", "tools/legend_icons.py", "tools/weapon_templates.py",
+        "tools/make_icon.py", "tools/make_sounds.py", "tools/splash_fonts.py", "tools/legend_icons.py", "tools/weapon_templates.py",
         "tools/feature_cards.py", "tools/window_shots.py"]),
     ("开发用的脚本（tools/）", "查问题、看数据", [
         "tools/ocr_probe.py", "tools/frame_capture.py", "tools/legend_capture.py", "tools/log_speed.py",
@@ -103,7 +103,8 @@ SECTIONS = [
         "tests/run_all.py", "tests/fake_game.py", "tests/test_*.py",
         ("tests/*.csv", "正确答案（整晚重放、数据页、武器）；队友名字的答案只在本机")]),
     ("其他", None, [
-        ("assets/", "素材原图：icon/ 图标、legends/ 传奇头像（各自的许可在 LICENSE.txt）、ranks/ 段位、sounds/ 提示音"),
+        ("assets/", "素材原图：icon/ 图标、legends/ 传奇头像（各自的许可在 LICENSE.txt）、ranks/ 段位、sounds/ 提示音、"
+                    "splash/ 窗口启动画面那行字的字体（只含用到的几个字，tools/splash_fonts.py 取）"),
         ("release/", "发版用：更新内容.txt、使用说明.txt（随安装包）、做图流程.md + 宣传图.json（新功能配图）"),
         ("docs/", "说明文档（什么时候读哪一份见 CLAUDE.md），images/ 是 README 的截图"),
         ("claude/", "进度和待办：progress.md、todo.md、progress_archive.md"),

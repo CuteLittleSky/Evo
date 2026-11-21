@@ -7,6 +7,7 @@
   四边和四角的细条同理，交给 Windows 改大小
 - 最小化 / 最大化 / 关闭是网页里的按钮，通过 window.pywebview.api 调用下面的 WindowApi
 - 网页里的视频全屏（录像、看直播）时窗口撑满整块显示器，退出时回到原样（WindowApi._set_fullscreen；pywebview 自己不管）
+- 网页画出来之前先盖着启动画面（splash.py），网页画好了调 WindowApi.page_shown 拿掉
 
 单独试：python code/app_window.py http://127.0.0.1:5000/   （先另外启动面板：python code/panel_app.py --no-browser）
 """
@@ -20,12 +21,13 @@ from pathlib import Path
 
 import webview
 
+import app_settings
+import splash
 import storage
 from paths import DATA_DIR
 
 USER_AGENT = (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
               f"EvoApp/{storage.APP_VERSION}")  # 面板网页看到 EvoApp，就显示自定义标题栏
-BACKGROUND = "#0D0F13"  # 网页加载出来之前的底色（和黑夜主题一致，避免白屏闪一下）
 WM_NCLBUTTONDOWN = 0x00A1
 HIT = {"caption": 2, "left": 10, "right": 11, "top": 12, "topleft": 13, "topright": 14,
        "bottom": 15, "bottomleft": 16, "bottomright": 17}
@@ -44,6 +46,7 @@ class WindowApi:
         self._window = None
         self._before_fullscreen = None  # 网页里的视频全屏之前窗口的样子：(WindowState, 平常的位置和大小)
         self._fullscreen_hooked = False
+        self._splash = None  # 网页画出来之前盖在窗口上的启动画面（splash.Splash）
 
     def _form(self):
         return self._window.native  # WinForms 的窗口对象
@@ -152,6 +155,18 @@ class WindowApi:
         except Exception:  # noqa: BLE001 开不了（浏览器组件出了错）：页面会说没打开
             return False
 
+    def page_shown(self, theme=None):
+        """网页画好了（base.html，每个页面都调）：拿掉启动画面（splash.py），顺便记下现在选的主题。"""
+        if self._splash is not None:
+            self._splash.remove()
+        self.remember_theme(theme)
+
+    def remember_theme(self, theme):
+        """记下面板选的主题（dark / light / system），下次打开窗口时启动画面和底色用一样的颜色。
+        只在变了的时候写 settings.json（托盘进程也写这个文件，少写一次就少一次撞上的机会）。"""
+        if theme in splash.THEME_CHOICES and app_settings.get("window_theme") != theme:
+            app_settings.set_value("window_theme", theme)
+
     def minimize(self):
         self._window.minimize()
 
@@ -246,11 +261,19 @@ def run(url, focus=None):
         raise RuntimeError(f"没有可用的 WebView2，pywebview 要改用 {winforms.renderer}")
     webview.settings["ALLOW_DOWNLOADS"] = True  # 导出 CSV
     api = WindowApi()
+    # 底色（网页画出来之前）和启动画面跟着面板上次的主题，浅色主题时不会先黑一下
+    theme = splash.resolve_theme(app_settings.get("window_theme"))
     window = webview.create_window(
         "Evo", url, js_api=api, width=1280, height=860, min_size=(960, 640),
-        frameless=True, easy_drag=False, background_color=BACKGROUND,
+        frameless=True, easy_drag=False, background_color=splash.THEMES[theme]["bg"],
     )
     api._window = window
+
+    def before_show():  # 在窗口线程里、窗口显示之前：先盖上启动画面，窗口一出来就有
+        try:
+            api._splash = splash.Splash(window.native, theme)
+        except Exception:  # noqa: BLE001 画不了就算了，照旧是底色
+            api._splash = None
 
     def shown():
         _style_window(window)
@@ -258,11 +281,16 @@ def run(url, focus=None):
         api._bring_to_front()
 
     def loaded():
+        if api._splash is not None:  # 网页一直没来调 page_shown（出错页等）：过一会儿也拿掉启动画面
+            timer = threading.Timer(splash.FALLBACK_AFTER_LOAD, api._splash.remove)
+            timer.daemon = True  # 窗口关了就不等它
+            timer.start()
         try:
             api._hook_fullscreen()
         except Exception:  # noqa: BLE001 挂不上（WebView2 太旧等）：全屏照旧只铺满窗口，不影响别的
             pass
 
+    window.events.before_show += before_show
     window.events.shown += shown
     window.events.loaded += loaded
     if focus is not None:

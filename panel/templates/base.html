@@ -343,6 +343,8 @@
     } catch (e) {}
     applyTheme();
     document.dispatchEvent(new CustomEvent("evo-theme"));  // 通知设置页的下拉框同步
+    var winApi = window.pywebview && window.pywebview.api;  // Evo 窗口：记下来，下次打开时启动画面用这个主题（app_window.py）
+    if (winApi && winApi.remember_theme) winApi.remember_theme(choice);
   };
   // 跟随系统时：Windows 切换深浅色，面板立即跟着变
   window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", applyTheme);
@@ -570,7 +572,13 @@
         else if (what === "close") api().close();
       });
     });
-    window.addEventListener("pywebviewready", function () { api().is_maximized().then(showMaximized); });
+    window.addEventListener("pywebviewready", function () {
+      api().is_maximized().then(showMaximized);
+      // 网页画出来了（再等两帧）才拿掉窗口的启动画面（splash.py），顺便告诉窗口现在选的主题，下次打开时启动画面用一样的颜色
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { if (api().page_shown) api().page_shown(evoTheme()); });
+      });
+    });
   })();
 </script>
 {% endif %}
