@@ -377,9 +377,9 @@ def panel_checks(out):
         page = client.get("/esports/live/watch").get_data(as_text=True)
         data = json.loads(page.split('id="watch-data">')[1].split("</script>")[0])
         out["看直播页：带着登录状态、登录的三个接口和口令；有登录按钮和扫码的弹窗；不带任何登录凭证"] = (
-            data["accounts"] == {"bilibili": {"logged_in": False, "name": ""}}
-            and data["login"] == {"bilibili": {"start": "/esports/login/bilibili/start", "poll": "/esports/login/bilibili/poll",
-                                               "logout": "/esports/login/bilibili/logout"}}
+            data["accounts"]["bilibili"] == {"logged_in": False, "name": ""}  # 斗鱼的登录状态也在里面（test_douyu_login.py）
+            and data["login"]["bilibili"] == {"start": "/esports/login/bilibili/start", "poll": "/esports/login/bilibili/poll",
+                                              "logout": "/esports/login/bilibili/logout"}
             and data["token"] == token and 'id="watch-login"' in page and 'id="login-dialog"' in page
             and "SESSDATA" not in page and {p["id"]: bool(p["play"]) for p in data["players"]} == {"bilibili-6": True, "douyu-9": True})
 
@@ -402,7 +402,8 @@ def panel_checks(out):
         info = client.get("/esports/play/bilibili-6").get_json()
         chosen = client.get("/esports/play/bilibili-6?q=250").get_json()
         out["登录了：给清晰度和本机中转的地址（带口令、带实际那一档），告诉页面按 TS 流放；没选过要原画，选了按选的要"] = (
-            info == {"ok": True, "applied": "10000", "kind": "mpegts", "stream": f"/esports/stream/bilibili-6?q=10000&s=0&t={token}",
+            info == {"ok": True, "applied": "10000", "kind": "mpegts", "logged": False,
+                     "stream": f"/esports/stream/bilibili-6?q=10000&s=0&t={token}",
                      "qualities": [{"id": "10000", "name": "原画"}, {"id": "250", "name": "超清"}]}
             and chosen["applied"] == "250"
             and player.asked == [("6", None), ("remember", "6", "10000"), ("6", "250"), ("remember", "6", "250")])
@@ -424,7 +425,7 @@ def panel_checks(out):
             and data["failed_url"] == "/esports/play-failed/")
         page = client.get("/esports/live/watch").get_data(as_text=True)
         data = json.loads(page.split('id="watch-data">')[1].split("</script>")[0])
-        out["登录以后看直播页知道登录着、叫什么"] = data["accounts"] == {"bilibili": {"logged_in": True, "name": "示例用户"}}
+        out["登录以后看直播页知道登录着、叫什么"] = data["accounts"]["bilibili"] == {"logged_in": True, "name": "示例用户"}
         left = client.post("/esports/login/bilibili/logout", data={"token": token}).get_json()
         out["退出登录：回到没登录，又不给 B站的播放地址了"] = (
             left == {"ok": True} and login.calls[-1] == "logout" and client.get("/esports/play/bilibili-6").status_code == 404)

@@ -1,4 +1,5 @@
-"""斗鱼：取一个直播间的视频地址（看直播页在 Evo 窗口里播斗鱼时用）。只在玩家自己的电脑上取，不登录斗鱼。
+"""斗鱼：取一个直播间的视频地址（看直播页在 Evo 窗口里播斗鱼时用）。只在玩家自己的电脑上取。
+不登录也能取（最高蓝光4M）；玩家在看直播页登录了斗鱼（douyu_login.py，2026-11-21）时带着登录去要，才有原画。
 
 照 DTV（https://github.com/chen-zeong/DTV ，internal/platforms/douyu/stream_url.go，它又对齐 pure_live）的流程
 用 Python 自带的功能重写，不跑 JS：
@@ -9,6 +10,9 @@
 清晰度的编号（rate）是斗鱼的"请求码"，不是码率：一般 0 原画、4 蓝光4M、3 超清、2 高清，按斗鱼给的顺序列，不排序。
 不登录要原画时，斗鱼实际给的是蓝光4M（1920×1080、30 帧、4 Mbps）；回包里的 rate 是实际给的那一档
 （2026-11-17 实测，见 docs/底座.md"看直播"）。
+登录着的时候（照 PureLive）：设备号换成登录 Cookie 里的 dy_did（签名、表单、Cookie 三处都用它），请求带上登录 Cookie
+（LTP0 不带）；离过期不到一天先续期。带着登录要地址被拒绝了：续一次期再试，还不行就当游客再要一次
+（登录出了问题不能连蓝光4M 都看不了）。登录凭证只在要地址的这两个请求里带，连视频服务器时不带。
 接口地址、请求头在 config/watch.json 的 douyu 里。
 
 用法：python code/watch_douyu.py 房间号 [清晰度编号]   → 打印清晰度、线路和地址（地址里的口令不打印）
@@ -26,6 +30,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import douyu_login
 import live_status
 
 CONFIG = live_status.PLATFORMS["douyu"]
@@ -35,8 +40,9 @@ ENCRYPTION_GUARD = 30      # 离它过期不到这么久就重新要
 REUSE_SECONDS = 20         # 刚取过的地址这么久以内直接用（页面先问有哪些清晰度，紧接着就要开播）
 DEVICE_ID = secrets.token_hex(16)  # 这次运行的设备号
 _lock = threading.Lock()
-_encryption = {}           # 上次要到的签名材料
+_encryption = {}           # 上次要到的签名材料（是给哪个设备号的记在 _did 里：换了设备号要重新要）
 _recent = {}               # (房间号, 清晰度) → (取到的时间, 结果)
+_who = threading.local()   # 这个线程正在用的身份（play_data 里设）：{"did", "cookie"}，没设是游客
 
 
 class DouyuError(Exception):
@@ -47,10 +53,21 @@ def _md5(text):
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 
+def _guest():
+    return {"did": DEVICE_ID, "cookie": f"dy_did={DEVICE_ID}; acf_did={DEVICE_ID}", "logged": False}
+
+
+def _identity():
+    """这次请求用谁的身份：登录着用登录的（设备号是登录 Cookie 里的那个），没登录是游客。"""
+    found = douyu_login.identity()
+    return {**found, "logged": True} if found else _guest()
+
+
 def _headers(room=""):
+    who = getattr(_who, "identity", None) or _guest()
     return {"accept": "application/json, text/plain, */*", "accept-language": "zh-CN,zh;q=0.9,en;q=0.7",
             "origin": "https://www.douyu.com", "referer": CONFIG["room_url"].format(room=room),
-            "user-agent": CONFIG["user_agent"], "cookie": f"dy_did={DEVICE_ID}; acf_did={DEVICE_ID}"}
+            "user-agent": CONFIG["user_agent"], "cookie": who["cookie"]}
 
 
 def fetch_json(url, room="", form=None):
@@ -67,14 +84,14 @@ def fetch_json(url, room="", form=None):
         raise DouyuError(f"连不上斗鱼（{e}）") from e
 
 
-def encryption(get=None, force=False, now=None):
-    """签名材料：{"key", "rand_str", "enc_time", "enc_data", "is_special", "expire_at"}。没过期就用上次的。"""
-    get, now = get or fetch_json, time.time() if now is None else now
+def encryption(get=None, force=False, now=None, did=None):
+    """签名材料：{"key", "rand_str", "enc_time", "enc_data", "is_special", "expire_at"}。没过期、还是这个设备号的就用上次的。"""
+    get, now, did = get or fetch_json, time.time() if now is None else now, did or DEVICE_ID
     with _lock:
-        fresh = (_encryption and now - _encryption["_at"] < ENCRYPTION_SECONDS
+        fresh = (_encryption and _encryption.get("_did") == did and now - _encryption["_at"] < ENCRYPTION_SECONDS
                  and _encryption["expire_at"] > now + ENCRYPTION_GUARD)
         if force or not fresh:
-            got = get(CONFIG["encryption_url"].format(did=DEVICE_ID))
+            got = get(CONFIG["encryption_url"].format(did=did))
             data = got.get("data") if isinstance(got, dict) else None
             if not isinstance(data, dict) or got.get("error") != 0:
                 raise DouyuError(f"斗鱼的签名接口回了 error={got.get('error') if isinstance(got, dict) else got}")
@@ -86,7 +103,8 @@ def encryption(get=None, force=False, now=None):
                 raise DouyuError("斗鱼的签名接口回的东西不认识")
             _encryption.clear()
             _encryption.update(key=str(data["key"]), rand_str=str(data["rand_str"]), enc_time=times,
-                               enc_data=str(data["enc_data"]), is_special=data.get("is_special"), expire_at=expire, _at=now)
+                               enc_data=str(data["enc_data"]), is_special=data.get("is_special"), expire_at=expire, _at=now,
+                               _did=did)
         return dict(_encryption)
 
 
@@ -99,21 +117,44 @@ def sign(enc, room, timestamp):
     return _md5(secret + enc["key"] + suffix)
 
 
-def play_data(room, rate=-1, cdn="", get=None, now=None):
-    """问 getH5PlayV1，返回回包里的 data。rate=-1 是不指定清晰度。签名不认时重新要一次材料再试。"""
-    get, now = get or fetch_json, time.time() if now is None else now
+def play_data(room, rate=-1, cdn="", get=None, now=None, who=None):
+    """问 getH5PlayV1，返回回包里的 data。rate=-1 是不指定清晰度。签名不认时重新要一次材料再试。
+    who：用谁的身份（_identity() / _guest() 那样的），没给是游客。"""
+    get, now, who = get or fetch_json, time.time() if now is None else now, who or _guest()
     problem = "没有回数据"
-    for attempt in range(2):
-        enc = encryption(get, force=attempt > 0, now=now)
-        timestamp = int(now)
-        form = {"enc_data": enc["enc_data"], "tt": str(timestamp), "did": DEVICE_ID, "auth": sign(enc, room, timestamp),
-                "cdn": cdn, "rate": str(rate), "hevc": "0", "fa": "0", "ive": "0", "ver": "Douyu_new", "iar": "0"}
-        got = get(CONFIG["play_url"].format(room=room), room, form)
-        code = (got.get("error") or got.get("code") or 0) if isinstance(got, dict) else -1
-        if code == 0 and isinstance(got.get("data"), dict):
-            return got["data"]
-        problem = f"error={code}（{got.get('msg') if isinstance(got, dict) else ''}）"
+    _who.identity = who
+    try:
+        for attempt in range(2):
+            enc = encryption(get, force=attempt > 0, now=now, did=who["did"])
+            timestamp = int(now)
+            form = {"enc_data": enc["enc_data"], "tt": str(timestamp), "did": who["did"], "auth": sign(enc, room, timestamp),
+                    "cdn": cdn, "rate": str(rate), "hevc": "0", "fa": "0", "ive": "0", "ver": "Douyu_new", "iar": "0"}
+            got = get(CONFIG["play_url"].format(room=room), room, form)
+            code = (got.get("error") or got.get("code") or 0) if isinstance(got, dict) else -1
+            if code == 0 and isinstance(got.get("data"), dict):
+                return got["data"]
+            problem = f"error={code}（{got.get('msg') if isinstance(got, dict) else ''}）"
+    finally:
+        _who.identity = None
     raise DouyuError(f"斗鱼的取流接口回了 {problem}")
+
+
+def _play_as_user(room, rate, cdn, get, now):
+    """登录着就带着登录要，返回 (回包里的 data, 这次是不是带着登录要到的)。带着登录被拒绝了：续一次期再试，
+    还不行就当游客再要一次。"""
+    who = _identity()
+    if not who["logged"]:
+        return play_data(room, rate, cdn, get, now), False
+    douyu_login.renew()  # 离过期不到一天：先续上（不用续、续不上都照旧往下走）
+    try:
+        return play_data(room, rate, cdn, get, now, _identity()), True
+    except DouyuError:
+        if douyu_login.renew(force=True):
+            try:
+                return play_data(room, rate, cdn, get, now, _identity()), True
+            except DouyuError:
+                pass
+        return play_data(room, rate, cdn, get, now), False
 
 
 def _number(value):
@@ -165,7 +206,8 @@ def lifetime(url):
 
 def resolve(room, rate=None, cdn="", get=None, now=None, reuse=False):
     """取地址。rate：清晰度编号（None = 要最好的：先要 0，斗鱼不给就降到它肯给的）。
-    返回 {"url", "rate": 实际给的那一档, "qualities", "lines", "cdn", "ttl": 多久后被断开或 None}。
+    返回 {"url", "rate": 实际给的那一档, "qualities", "lines", "cdn", "ttl": 多久后被断开或 None,
+           "logged": 这次是不是带着玩家的斗鱼登录要到的}。
     reuse：REUSE_SECONDS 秒以内取过同一个（房间, 清晰度）就直接用（只用一次）。"""
     wanted = _number(rate)
     wanted = 0 if wanted is None else wanted
@@ -175,11 +217,11 @@ def resolve(room, rate=None, cdn="", get=None, now=None, reuse=False):
             saved = _recent.pop(key, None)
         if saved and 0 <= moment - saved[0] < REUSE_SECONDS:
             return saved[1]
-    data = play_data(room, wanted, cdn, get, now)
+    data, logged = _play_as_user(room, wanted, cdn, get, now)
     url = stream_url(data)
     applied = _number(data.get("rate"))
     return {"url": url, "rate": str(applied if applied is not None else wanted), "qualities": qualities(data),
-            "lines": lines(data), "cdn": cdn or str(data.get("rtmp_cdn") or ""), "ttl": lifetime(url)}
+            "lines": lines(data), "cdn": cdn or str(data.get("rtmp_cdn") or ""), "ttl": lifetime(url), "logged": logged}
 
 
 def remember(room, rate, found, now=None):
@@ -232,5 +274,6 @@ if __name__ == "__main__":
         print(f"没取到：{error}")
         raise SystemExit(1) from None
     print("清晰度：", "、".join(f"{q['name']}（{q['id']}）" for q in result["qualities"]))
-    print("实际给的：", result["rate"], " 线路：", "、".join(result["lines"]) or "（没写）")
+    print("实际给的：", result["rate"], "（带着斗鱼登录要的）" if result["logged"] else "（没登录）",
+          " 线路：", "、".join(result["lines"]) or "（没写）")
     print("地址：", mask(result["url"]), " 多久后断开：", f"{result['ttl']} 秒" if result["ttl"] else "不限时")

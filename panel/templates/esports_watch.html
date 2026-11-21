@@ -226,10 +226,12 @@
     function info(id) { return st.status ? st.status[id] : null; }
     function isLive(id) { var s = info(id); return !!s && s.state === "live"; }
     function canEmbed(p) { return !!p.embed && st.platforms[p.platform] !== false; }  // 平台官方的嵌入播放器，平台开关也开着
-    // Evo 自己的播放器：平台开关开着、刚才没播砸；要登录的平台（B站）还得登录了
+    // Evo 自己的播放器：平台开关开着、刚才没播砸；要登录的平台（B站）还得登录了。
+    // 登录是可选的平台（斗鱼，data.login[平台].window）不登录也照样播，登录了才有原画
+    function optionalLogin(platform) { return !!(data.login[platform] && data.login[platform].window); }
     function canPlay(p) {
       return !!p.play && st.platforms[p.platform] !== false && !st.playFailed[p.id]
-        && (!data.login[p.platform] || !!(st.accounts[p.platform] && st.accounts[p.platform].logged_in));
+        && (!data.login[p.platform] || optionalLogin(p.platform) || !!(st.accounts[p.platform] && st.accounts[p.platform].logged_in));
     }
     function minutes(since) { return since ? Math.max(0, Math.floor((Date.now() / 1000 - since) / 60)) : null; }
     function clock(since) {  // "2:14" = 开播 2 小时 14 分
@@ -490,7 +492,8 @@
         };
       } else if (canPlay(p)) {
         // 清晰度是玩家自己选的（记在这台电脑上，每个平台记一个）；换了清晰度要重新开播
-        key = "play:" + p.id + ":" + saved("evo-watch-q-" + p.platform, "");
+        // 斗鱼登录、退出以后也要重新开播（登录了才有原画）
+        key = "play:" + p.id + ":" + saved("evo-watch-q-" + p.platform, "") + (optionalLogin(p.platform) && loggedIn(p.platform) ? ":in" : "");
         build = function () { return buildPlayer(p, cell); };
       } else {
         // 退路：平台开关关了、这个平台还不能在窗口里播，或者刚才没播成。按钮用玩家自己的默认浏览器打开直播间（2026-11-17 用户定的）
@@ -553,7 +556,11 @@
       loginBtn.hidden = !data.login[p.platform];
       if (!loginBtn.hidden) {
         loginBtn.textContent = account && account.logged_in ? p.platform_name + "：" + (account.name || "已登录") : "登录" + p.platform_name + "看原画";
-        loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有 720p，用手机扫码登录以后能看原画";
+        if (optionalLogin(p.platform)) {
+          loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有蓝光4M，登录以后能看原画";
+        } else {
+          loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有 720p，用手机扫码登录以后能看原画";
+        }
       }
 
       $("watch-mates-label").textContent = p.main ? "主舞台" : "同队视角";
@@ -1027,8 +1034,13 @@
         }));
         // 选了一档、平台给的却是另一档（斗鱼不登录不给原画）：说明白，不让人以为选了没反应。
         // 选的那一档这个房间根本没有（抖音有的房间没有蓝光）：不说，按钮上写着现在是哪一档
-        if (wanted && names[wanted] && wanted !== info.applied) {
-          menu.append(el("p", "watch-quality-note", p.platform_name + "没给「" + names[wanted] + "」（多半要登录），现在是「" + (names[info.applied] || "默认") + "」。"));
+        // 斗鱼没选过清晰度时要的也是最好的那一档（编号 0，原画），不登录同样拿不到
+        var asked = wanted || (optionalLogin(p.platform) ? "0" : "");
+        if (asked && names[asked] && asked !== info.applied) {
+          var why = !optionalLogin(p.platform) ? "没给「" + names[asked] + "」（多半要登录）"
+            : info.logged ? "这次没给「" + names[asked] + "」"
+            : "不登录不给「" + names[asked] + "」（播放器下面可以登录" + p.platform_name + "）";
+          menu.append(el("p", "watch-quality-note", p.platform_name + why + "，现在是「" + (names[info.applied] || "默认") + "」。"));
         }
       }
 
@@ -1114,16 +1126,52 @@
         login.timer = setTimeout(loginPoll, 2000);
       }).catch(function () { loginShow("没要到二维码：连不上 Evo。", { refresh: true }); });
     }
+    // 斗鱼：不是扫码，是在 Evo 窗口另开的小窗口里打开斗鱼官方的登录页（app_window.py 的 platform_login）。
+    // 账号、密码、验证码都在斗鱼自己的网页上填；这一页只隔两秒问一次后台"登录好了没有"，登录凭证不经过这里
+    function loginWaitWindow() {
+      if (!loginDialog.open || login.key !== "window") return;
+      var platform = login.platform;
+      fetch(data.login[platform].state, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (r) {
+        if (!loginDialog.open || login.key !== "window" || login.platform !== platform) return;
+        if (r.logged_in) {
+          login.key = null;
+          st.accounts[platform] = { logged_in: true, name: r.name };
+          loginAccount();
+          render();  // 正在看这个平台的选手：重新开播，这次带着登录要原画
+        } else {
+          login.timer = setTimeout(loginWaitWindow, 2000);
+        }
+      }).catch(function () { login.timer = setTimeout(loginWaitWindow, 3000); });
+    }
+    function loginWindow() {
+      clearTimeout(login.timer);
+      login.key = null;
+      var api = window.pywebview && window.pywebview.api;
+      if (!api || !api.platform_login) {
+        loginShow("要在 Evo 的窗口里才能登录" + login.name + "（现在是用浏览器打开的）。");
+        return;
+      }
+      loginShow("正在打开" + login.name + "的登录窗口…");
+      Promise.resolve(api.platform_login(login.platform, data.token)).then(function (opened) {
+        if (!loginDialog.open) return;
+        if (!opened) { loginShow("登录窗口没有打开，再试一次。", { refresh: true }); return; }
+        loginShow("请在弹出来的小窗口里登录" + login.name + "（是" + login.name + "官方的登录页）。登录好了这里会自己变。", { refresh: true });
+        login.key = "window";
+        login.timer = setTimeout(loginWaitWindow, 2000);
+      }).catch(function () { loginShow("登录窗口没有打开，再试一次。", { refresh: true }); });
+    }
     function openLogin(platform, name) {
+      var inWindow = optionalLogin(platform);
       login.platform = platform;
       login.name = name;
-      $("h-login").textContent = name + "扫码登录";
+      $("h-login").textContent = name + (inWindow ? "登录" : "扫码登录");
+      $("login-refresh").textContent = inWindow ? "重新打开登录窗口" : "换一个二维码";
       $("login-note").textContent = "登录以后能在 Evo 里看" + name + "的原画。登录信息只存在这台电脑上（加密保存），Evo 只用它向" + name + "要播放地址。";
       loginDialog.showModal();
-      if (loggedIn(platform)) loginAccount(); else loginQr();
+      if (loggedIn(platform)) loginAccount(); else if (inWindow) loginWindow(); else loginQr();
     }
     $("login-close").addEventListener("click", function () { loginDialog.close(); });
-    $("login-refresh").addEventListener("click", loginQr);
+    $("login-refresh").addEventListener("click", function () { if (optionalLogin(login.platform)) loginWindow(); else loginQr(); });
     $("login-logout").addEventListener("click", function () {
       post(data.login[login.platform].logout).catch(function () { return null; }).then(function () {
         st.accounts[login.platform] = { logged_in: false, name: "" };

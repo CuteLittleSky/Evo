@@ -67,6 +67,7 @@ TESTS = {"总结页停留": "test_summary_page", "轻量（按需加载模型）
          "看直播页（页面、名单、给脚本的数据、开播状态接口、Apex 接口）": "test_esports_watch",
          "在 Evo 窗口里播斗鱼（FLV 拆标签和接续、斗鱼取地址、面板的两个接口）": "test_watch_play",
          "B站扫码登录和 B站原画（加密保存、二维码、登录、取地址、面板的登录接口）": "test_bili_login",
+         "斗鱼登录和斗鱼原画（读 Cookie、续期、带着登录取地址、登录窗口、面板的登录接口）": "test_douyu_login",
          "HLS 中转（看直播页播 B站：播放列表和 TS 接成一条流）": "test_hls_relay",
          "弹幕（斗鱼、B站：要连哪里、面板的接口、页面上的开关）": "test_danmaku",
          "抖音的弹幕（签名、protobuf、WebSocket、转给页面）": "test_douyin_chat",

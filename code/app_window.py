@@ -142,6 +142,16 @@ class WindowApi:
         except Exception:  # noqa: BLE001 出错时宁可不全屏，也不能让窗口跟着崩
             pass
 
+    def platform_login(self, platform, token):
+        """看直播页点"登录斗鱼看原画"：另开一个小窗口显示平台官方的登录页（login_window.py）。返回开了没有。
+        开哪个网页由配置定（不听页面的）；登录凭证由这个进程直接交给本机的面板，不经过页面里的脚本。"""
+        import login_window
+
+        try:
+            return bool(login_window.open_login(self._window, str(platform), str(token)))
+        except Exception:  # noqa: BLE001 开不了（浏览器组件出了错）：页面会说没打开
+            return False
+
     def minimize(self):
         self._window.minimize()
 

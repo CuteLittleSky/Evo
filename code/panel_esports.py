@@ -43,6 +43,7 @@ from flask import Blueprint, Response, abort, current_app, flash, jsonify, redir
 
 import bili_login
 import danmaku
+import douyu_login
 import douyin_chat
 import esports_data
 import flv_relay
@@ -68,6 +69,9 @@ PLAYERS = {"douyu": watch_douyu, "bilibili": watch_bilibili, "douyin": watch_dou
 PLAYERS = {key: module for key, module in PLAYERS.items() if live_status.PLATFORMS[key].get("player") in ("flv", "direct", "hls")}
 # 要玩家登录了才用 Evo 自己的播放器的平台 → 管登录的模块（没登录的用平台官方的嵌入播放器）
 LOGINS = {"bilibili": bili_login}
+# 登录是可选的平台 → 管登录的模块（斗鱼，2026-11-21）：不登录也用 Evo 自己的播放器播，登录了才有原画。
+# 登录不是扫码，是在 Evo 窗口另开的小窗口里打开平台官方的登录页（login_window.py）
+WINDOW_LOGINS = {"douyu": douyu_login}
 RATE_RE = re.compile(r"-?\d{1,5}|[a-z]{1,12}")  # 清晰度：斗鱼、B站是编号，抖音是档名（origin、uhd、hd……）
 SLOTS = ("0", "1", "2", "3")  # 多屏同看：页面上最多 4 格，每格一路中转
 _playing = {}  # 格子 → 正在中转的那一路（每格一次只播一路：这一格开新的一路就停掉它上一路）
@@ -267,9 +271,12 @@ def watch_page_data(data, members, selected, status_url):
             "failed_url": url_for("esports.play_failed", player_id="_").rsplit("/", 1)[0] + "/",  # 后面接选手 id
             "follow": follow_config(data),  # 关注（星星按钮、名单最上面"我关注的"一组）
             # 要登录才能看高画质的平台：现在登录着没有（打开页面时隔 6 小时向平台核对一次）、登录用的三个接口
-            "accounts": {key: module.account(check=True) for key, module in LOGINS.items()},
-            "login": {key: {step: url_for(f"esports.login_{step}", platform=key) for step in ("start", "poll", "logout")}
-                      for key in LOGINS}}
+            "accounts": {key: module.account(check=True) for key, module in {**LOGINS, **WINDOW_LOGINS}.items()},
+            # window：登录是可选的、在另开的小窗口里登录（斗鱼）；没有这一项的是扫码登录、登录了才用 Evo 自己的播放器（B站）
+            "login": {**{key: {step: url_for(f"esports.login_{step}", platform=key) for step in ("start", "poll", "logout")}
+                         for key in LOGINS},
+                      **{key: {"window": True, "state": url_for("esports.login_state", platform=key),
+                               "logout": url_for("esports.login_logout", platform=key)} for key in WINDOW_LOGINS}}}
 
 
 @bp.route("/esports/streamers")
@@ -369,7 +376,8 @@ def _rate():
 @bp.get("/esports/play/<player_id>")
 def play(player_id):
     """看直播页开播前问的：{"ok": True, "qualities": [{"id", "name"}], "applied": 实际给的那一档, "stream": 播放地址,
-    "kind": 播放器按哪种放（"flv" / "mpegts"）}；取不到是 {"ok": False, "reason": "upstream", "detail": 原因}。
+    "kind": 播放器按哪种放（"flv" / "mpegts"）, "logged": 这次是不是带着玩家在这个平台的登录要到的（斗鱼）}；
+    取不到是 {"ok": False, "reason": "upstream", "detail": 原因}。
     不能在窗口里播的选手回 404。"""
     player = _player(player_id)
     if player is None:
@@ -384,6 +392,7 @@ def play(player_id):
         return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], stream=found["url"], kind="flv")
     module.remember(player["room"], found["rate"], found)  # 紧接着播放器来连时直接用，不再问一遍
     return jsonify(ok=True, qualities=found["qualities"], applied=found["rate"], kind=found.get("kind", "flv"),
+                   logged=bool(found.get("logged")),
                    stream=url_for("esports.stream", player_id=player_id, q=found["rate"], s=_slot(), t=current_app.config["TOKEN"]))
 
 
@@ -532,10 +541,31 @@ def login_poll(platform):
     return jsonify(state=found["state"], name=found["name"])
 
 
+@bp.post("/esports/login/<platform>/save")
+def login_save(platform):
+    """登录窗口（login_window.py，在 Evo 窗口的进程里）登录好了，把平台给的 Cookie 交到这里存起来（表单里的 cookie）。
+    要带面板的口令。回 {"ok": 存下了没有}；登录凭证不写进日志、不回给请求的人。"""
+    module = WINDOW_LOGINS.get(platform)
+    if module is None:
+        abort(404)
+    found = module.save(request.form.get("cookie", "")[:200_000])
+    log.info("看直播：%s %s", platform, "登录好了，登录凭证存在这台电脑上（加密）" if found["ok"] else "登录窗口交来的东西里没有登录凭证，没存")
+    return jsonify(ok=found["ok"])
+
+
+@bp.get("/esports/login/<platform>/state")
+def login_state(platform):
+    """这个平台现在登录着没有：{"logged_in", "name"}（页面等登录窗口时隔两秒问一次）。"""
+    module = WINDOW_LOGINS.get(platform) or LOGINS.get(platform)
+    if module is None:
+        abort(404)
+    return jsonify(module.account())
+
+
 @bp.post("/esports/login/<platform>/logout")
 def login_logout(platform):
-    """退出登录：告诉平台让这次登录失效，删掉本机存的。"""
-    module = LOGINS.get(platform)
+    """退出登录：删掉本机存的；B站还会告诉平台让这次登录失效（斗鱼只删本机的）。"""
+    module = LOGINS.get(platform) or WINDOW_LOGINS.get(platform)
     if module is None:
         abort(404)
     told = module.logout()
