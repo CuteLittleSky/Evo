@@ -1345,12 +1345,12 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-stage-box.n2 { aspect-ratio: 32 / 9; }
 /* 三屏（一大两小，2026-11-20 用户要的）：左边一格大的占 2/3 宽，右边两格小的上下排；整块 24:9，三格都正好是 16:9。
    选中的那一格就是大的（只换位置，格子本身不动，画面不重新加载）。小格子窄（主窗口里 270px 上下）：
-   音量滑杆、弹幕的两个按钮、"直播中"的标记收起来（小格子本来就没有声音和弹幕），平台和房间号照样标着 */
+   音量滑杆、弹幕的两个按钮收起来（小格子本来就没有声音和弹幕），平台和房间号照样标着 */
 .watch-stage-box.n3 { aspect-ratio: 8 / 3; }
 .watch-stage-box.n3 .watch-screen { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .watch-stage-box.n3 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 2; }
 .watch-stage-box.n3 .watch-cell:not(.focus) { grid-column: 2; }
-.watch-stage-box.n3 .watch-cell:not(.focus) :is(.watch-volume, .watch-danmaku-btn, .watch-dm-btn, .watch-dm-panel, .watch-chip-live) { display: none; }
+.watch-stage-box.n3 .watch-cell:not(.focus) :is(.watch-volume, .watch-danmaku-btn, .watch-dm-btn, .watch-dm-panel) { display: none; }
 .watch-stage-box.n3 .watch-cell:not(.focus) .watch-chips { top: 8px; left: 8px; }
 .watch-stage-box.n3 .watch-cell:not(.focus) .watch-controls { height: 40px; padding: 0 6px; }
 .watch-stage-box.n2 .watch-screen, .watch-stage-box.n4 .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1367,10 +1367,9 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-seg.watch-layout button { flex: none; padding: 0 10px; white-space: nowrap; }  /* 按字数定宽，不平分 */
 .watch-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
 .watch-chips { position: absolute; top: 12px; left: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; pointer-events: none; }
-.watch-chip-live, .watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; }
-.watch-chip-live { background: #FF5A5A; color: #2A0A0A; font-weight: 700; }
-.watch-chip-live-dot { width: 6px; height: 6px; border-radius: 50%; background: #2A0A0A; }
-.watch-chip { background: rgb(8 9 12 / 0.72); color: #ECEEF2; }
+.watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; background: rgb(8 9 12 / 0.72); color: #ECEEF2; }
+/* 单屏、没全屏：平台和房间号写在播放器下面主播名字那一块（.watch-room），画面上不标（2026-11-21 用户要的） */
+.watch-stage-box.n1:not(:fullscreen) .watch-chips { display: none; }
 .watch-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
 .watch-msg-title { margin: 0; font-size: 17px; font-weight: 700; }
 .watch-msg-text { margin: 0; max-width: 420px; font-size: 13px; line-height: 1.7; color: #B4BAC6; }
@@ -1443,6 +1442,11 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-who-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .watch-name { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
 .watch-team, .watch-live-title { font-size: 13px; color: var(--muted); }
+/* 名字下面那一行：平台和房间号（不会被标题挤掉），后面接直播标题（太长就省略） */
+.watch-sub-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.watch-room { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.watch-live-title { min-width: 0; }
+.watch-live-title:not(:empty)::before { content: "· "; }
 .watch-link { padding: 7px 14px; border-radius: 8px; font-size: 13px; gap: 6px; }
 .watch-link:focus-visible, .watch-back:focus-visible, .watch-apex .btn:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
 .watch-login[hidden] { display: none; }
