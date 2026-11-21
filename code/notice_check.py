@@ -74,13 +74,14 @@ def enabled():
 
 
 def versions_ok(rule, version=APP_VERSION):
-    """versions 这一项：没写 → 谁都给看；"<=0.5.0"、">=0.5.1,<0.6.0" 这类（逗号隔开的都要满足）。写错了返回 None。"""
+    """versions 这一项：没写 → 谁都给看；"<=0.5.0"、">=0.5.1,<0.6.0" 这类（逗号隔开的都要满足）。写错了返回 None。
+    测试版的版本号（"0.7.0b"，2026-11-21 起）在规则里也认，比较规则同 update_check.version_tuple（测试版比同号的正式版旧）。"""
     if rule is None:
         return True
     current = update_check.version_tuple(version)
     ok = True
     for part in str(rule).split(","):
-        m = re.fullmatch(r"\s*(<=|>=|<|>|==|=)?\s*(\d+\.\d+\.\d+)\s*", part)
+        m = re.fullmatch(r"\s*(<=|>=|<|>|==|=)?\s*(\d+\.\d+\.\d+(?:b\d*)?)\s*", part)
         if not m or current is None:
             return None
         target = update_check.version_tuple(m.group(2))
