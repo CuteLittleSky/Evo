@@ -8,7 +8,8 @@
 运行都用 Evo 自己的 Python：训练时才把 .venv-train 里的库加进来（use_train_env；用 .venv-train 自己的 python.exe
 在这台电脑上写不了 captures/，2026-11-21 试过）：
     python tools/train_digits.py train       训练，完了自动考一遍考卷（另开一个进程，只用 onnxruntime，和 Evo 里一样）
-    python tools/train_digits.py exam [--run 编号]   单独考一遍
+    python tools/train_digits.py exam [--run 编号]   单独考一遍（考完顺便挑出要复核的块，见 mark_disputes）
+    python tools/train_digits.py disputes [--run 编号]   只挑要复核的块
 装训练环境（只要一次）：Python 3.13 建 .venv-train，pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cu130，
 再装和 .venv 一样版本的 numpy、opencv-python-headless，和 onnx、onnxscript（导出用）
 训练进度、考卷成绩在网页上看：python tools/train_web.py
@@ -491,13 +492,67 @@ def cmd_exam(args):
           f"引擎 读对 {e[0]}，读错 {e[1]}，没读出 {e[2]}")
     print(f"小模型读一块平均 {np.mean(times):.2f} 毫秒（含缩放；1 个线程），加载以后多占约 {max(0.0, after - before):.0f} MB，"
           f"模型文件 {path.stat().st_size / 1024:.0f} KB")
+    report_disputes(mark_disputes(conn, session, run))
+
+
+# ---------- 挑出要复核的块 ----------
+
+DISPUTE_SCORE = 0.5  # 小模型至少有这么大把握、读的又和答案不一样，才挑出来复核
+
+
+def mark_disputes(conn, session, run):
+    """挑出要复核的块（网页"复核"页）：小模型读的和答案不一样、而且它有点把握（DISPUTE_SCORE）。
+    比的是考卷里核对过的，和训练素材里训练要用的（用户的答案、引擎的读数、借来的答案）。核对时框里预先填着引擎的数，
+    数字一糊人容易跟着认（2026-11-21 看到 538/539、585/565、清楚的"1"填成空），复核时不预先填。
+    复核过的不再挑；以前挑出来、还没复核的先清掉，按这一次的小模型重挑。返回 {考卷 / 训练素材的哪一堆: 块数}。"""
+    conn.execute("update crops set review=null, review_run=null where reviewed_at is null")
+    done = {r["id"] for r in conn.execute("select id from crops where reviewed_at is not null")}
+    items = training_rows(conn)
+    items += [{"id": r["id"], "img": r["img"], "label": label_text(r["answer"], r["field"]), "group": "exam",
+               "field": r["field"]}
+              for r in conn.execute("select id, field, img, answer from crops where kind='exam' and status='done' "
+                                    "and pile!='extra'")]
+    items = [it for it in items if it["id"] not in done]
+    flagged, counts = [], defaultdict(int)
+    for i in range(0, len(items), 256):
+        chunk = items[i:i + 256]
+        probs = session.run(None, {"x": np.stack([prepare(load_crop(it["img"])) for it in chunk])[:, None]})[0]
+        for it, p in zip(chunk, probs):
+            text, score = decode(p)
+            if score >= DISPUTE_SCORE and data.number(text or None) != data.number(it["label"] or None):
+                flagged.append((text, run, it["id"]))
+                counts[it["group"]] += 1
+    conn.executemany("update crops set review=?, review_run=? where id=?", flagged)
+    conn.commit()
+    return dict(counts)
+
+
+def report_disputes(counts):
+    names = {"exam": "考卷", "human": "核对过的训练素材", "auto": "规则核对过的", "extra": "借答案的"}
+    total = sum(counts.values())
+    print(f"挑出 {total} 块要复核（" + "，".join(f"{names[g]} {n}" for g, n in counts.items()) + '）：网页上的"复核"页'
+          if total else "没有要复核的块")
+
+
+def cmd_disputes(args):
+    import onnxruntime as ort
+
+    conn = data.connect()
+    run = args.run or conn.execute("select max(id) from train_runs where status='done'").fetchone()[0]
+    info = conn.execute("select * from train_runs where id=?", (run,)).fetchone()
+    if info is None or not info["model_path"]:
+        sys.exit("还没有训练好的小模型：先训练（见文件开头）")
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 4
+    session = ort.InferenceSession(str(data.TRAIN / info["model_path"]), opts, providers=["CPUExecutionProvider"])
+    report_disputes(mark_disputes(conn, session, run))
 
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="训练读数字的小模型，用考卷考")
-    parser.add_argument("command", choices=("train", "exam"))
-    parser.add_argument("--run", type=int, help="exam：考第几次训练的（默认最新的）")
+    parser.add_argument("command", choices=("train", "exam", "disputes"))
+    parser.add_argument("--run", type=int, help="exam、disputes：用第几次训练的小模型（默认最新的）")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--per-epoch", type=int, default=40000, help="每一轮抽多少块")
     parser.add_argument("--batch", type=int, default=256)
@@ -506,10 +561,7 @@ def main():
     parser.add_argument("--cpu", action="store_true", help="不用显卡")
     parser.add_argument("--no-exam", action="store_true", help="训练完不自动考")
     args = parser.parse_args()
-    if args.command == "train":
-        cmd_train(args)
-    else:
-        cmd_exam(args)
+    {"train": cmd_train, "exam": cmd_exam, "disputes": cmd_disputes}[args.command](args)
 
 
 if __name__ == "__main__":

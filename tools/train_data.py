@@ -121,7 +121,20 @@ def connect(path=None):
     conn.row_factory = sqlite3.Row
     conn.execute("pragma journal_mode=wal")
     conn.executescript(SCHEMA)
+    have = {r["name"] for r in conn.execute("pragma table_info(crops)")}
+    for name, kind in REVIEW_COLUMNS:  # 后来加的列（复核）：老的数据库补上
+        if name not in have:
+            conn.execute(f"alter table crops add column {name} {kind}")
     return conn
+
+
+# 复核（tools/train_digits.py 的 mark_disputes 挑、网页"复核"页填）：小模型读的和答案对不上的块，不预先填数、让用户照图重填
+REVIEW_COLUMNS = (
+    ("review", "text"),         # 要复核：小模型读出的字（挑出来时）；没被挑出来是空
+    ("review_run", "integer"),  # 第几次训练的小模型挑出来的
+    ("reviewed_at", "text"),    # 复核过的时刻
+    ("answer_before", "text"),  # 复核以前的答案（核对过的是用户的答案，没核对过的是引擎的读数 / 借来的答案）
+)
 
 
 def number(text):

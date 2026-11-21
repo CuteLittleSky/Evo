@@ -121,6 +121,26 @@ def main():
     score = client.get("/score").get_data(as_text=True)
     checks["成绩页：小模型那一列有数，列出小模型读对、引擎没读对的 2 块"] = (
         "小模型读对、引擎没读对的（2）" in score and "小模型读错的（0）" in score)
+
+    f = ids[("squads_left", 20)]  # 一块没核对过的（引擎读 18）；a 是一块考卷（答案 1867）
+    conn.executemany("update crops set review=?, review_run=? where id=?", [("16", run, f), ("1861", run, a)])
+    conn.commit()
+    page = client.get("/review").get_data(as_text=True)
+    checks["复核页：列出挑出来的块，框里什么都不填、不写引擎和小模型读的，导航上写着还剩几块"] = (
+        f'id="a{f}" name="a{f}" value=""' in page and f'id="a{a}" name="a{a}" value=""' in page
+        and "1861" not in page and ">复核 <b" in page)
+    client.post("/review/save", data={"ids": [str(f), str(a)], "back": "/review", f"a{f}": "16", f"s{f}": "0",
+                                      f"a{a}": "", f"s{a}": "1"})
+    rf = conn.execute("select status, answer, answer_before, reviewed_at from crops where id=?", (f,)).fetchone()
+    ra = conn.execute("select status, answer_before, reviewed_at from crops where id=?", (a,)).fetchone()
+    checks["复核保存：照图填的当作核对过的答案，记下原来的答案（没核对过的记引擎读数）；丢掉的记 skip"] = (
+        tuple(rf)[:3] == ("done", "16", "18") and rf["reviewed_at"] and tuple(ra)[:2] == ("skip", "1867")
+        and ra["reviewed_at"])
+    page = client.get("/review").get_data(as_text=True)
+    checks["复核完：没有要复核的了，统计写着改了 1 块、改成和小模型一样 1 块、丢掉 1 块"] = (
+        "没有要复核的了" in page and "改了 1 块" in page and "和小模型读的一样 1 块" in page and "丢掉 1 块" in page)
+    checks["复核过的块下次挑的时候不再挑"] = conn.execute(
+        "select count(*) from crops where reviewed_at is not null and review is not null").fetchone()[0] == 2
     conn.close()
     return report(checks)
 

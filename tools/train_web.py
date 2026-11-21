@@ -6,6 +6,8 @@
 - 核对答案：一屏几十块，下面是引擎读的数；对的不用管，错的改掉，Enter 保存这一页、换下一页。
   空着 = 这一块里没有数字；在框里按 Esc（或点"丢掉"）= 这一块不能用（被挡住、裁歪了）
   考卷每一块都要核对（训练时不用，是量引擎和小模型的尺子）；训练素材核对"要人看"那堆，"规则核对过"那堆抽查
+- 复核：小模型读的和答案不一样的块（tools/train_digits.py 的 mark_disputes 挑），框里不预先填数、不告诉你引擎和小模型
+  各读了什么，照图重填（核对时框里填着引擎的数，人容易跟着认）；复核过的块当作用户核对过的，训练、考卷都用新答案
 - 训练进度：每一次训练（tools/train_digits.py）的验证分数、考卷分数、速度；选中的那一次每一轮的分数和 loss（两张小图）。
   正在训练时每 5 秒刷新
 - 考卷成绩：每一项引擎和小模型各读对、读错、没读出几块，读一块多快、占多少内存；读错、没读出、
@@ -122,6 +124,7 @@ kbd { border:1px solid var(--border); border-bottom-width:2px; border-radius:4px
 <a href="{{ url_for('home') }}" class="{{ 'on' if nav=='home' }}">首页</a>
 <a href="{{ url_for('check', kind='exam') }}" class="{{ 'on' if nav=='exam' }}">核对考卷</a>
 <a href="{{ url_for('check', kind='video') }}" class="{{ 'on' if nav=='video' }}">核对训练素材</a>
+<a href="{{ url_for('review') }}" class="{{ 'on' if nav=='review' }}">复核{% if review_left %} <b class="warn">{{ review_left }}</b>{% endif %}</a>
 <a href="{{ url_for('train') }}" class="{{ 'on' if nav=='train' }}">训练进度</a>
 <a href="{{ url_for('score') }}" class="{{ 'on' if nav=='score' }}">考卷成绩</a>
 </nav></header>
@@ -130,7 +133,8 @@ kbd { border:1px solid var(--border); border-bottom-width:2px; border-radius:4px
 
 def page(title, nav, body_template, **ctx):
     body = render_template_string(body_template, **ctx)
-    return render_template_string(BASE, title=title, nav=nav, body=body)
+    left = db().execute("select count(*) from crops where review is not null and reviewed_at is null").fetchone()[0]
+    return render_template_string(BASE, title=title, nav=nav, body=body, review_left=left)
 
 
 def progress(conn, kind):
@@ -227,6 +231,41 @@ def home():
                 last_score=model_scores(conn, last["id"]) if last else None, rate=rate)
 
 
+# 核对页、复核页共用：改过的标蓝、Esc 或点"丢掉"切换丢掉、点图片跳到框里、保存只点一次。
+# 底下那一行的后半句写在 #count 的 data-tail 里
+TILE_JS = """<script>
+const form = document.getElementById('f');
+function mark(tile) {
+  const input = tile.querySelector('input[type=text]');
+  tile.classList.toggle('changed', input.value.trim() !== input.dataset.orig);
+}
+function toggleSkip(tile) {
+  const hidden = tile.querySelector('input[name^=s]'), button = tile.querySelector('.skip');
+  const on = hidden.value !== '1';
+  hidden.value = on ? '1' : '0';
+  tile.classList.toggle('skipped', on);
+  button.setAttribute('aria-pressed', on);
+  update();
+}
+function update() {
+  const tiles = form.querySelectorAll('.tile');
+  let changed = 0, skipped = 0;
+  tiles.forEach(t => { if (t.classList.contains('changed')) changed++; if (t.classList.contains('skipped')) skipped++; });
+  document.getElementById('count').textContent =
+    `这一页 ${tiles.length} 块：改了 ${changed} 块，丢掉 ${skipped} 块；${document.getElementById('count').dataset.tail}`;
+}
+form.querySelectorAll('.tile').forEach(tile => {
+  const input = tile.querySelector('input[type=text]');
+  input.addEventListener('input', () => { mark(tile); update(); });
+  input.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); toggleSkip(tile); } });
+  tile.querySelector('.skip').addEventListener('click', () => toggleSkip(tile));
+  tile.querySelector('.shot').addEventListener('click', () => input.focus());
+});
+let sent = false;
+form.addEventListener('submit', e => { if (sent) e.preventDefault(); sent = true; });
+</script>
+"""
+
 CHECK = """
 <h1>核对{{ kinds[kind] }}</h1>
 {% if kind == 'exam' %}<p class="muted">考卷是量引擎和小模型的尺子，每一块都要核对。</p>
@@ -260,41 +299,10 @@ CHECK = """
  </div>
 </div>{% endfor %}
 </div>
-<div class="savebar"><span class="count" id="count">这一页 {{ crops|length }} 块；这一堆还剩 {{ left }} 块没核对</span>
+<div class="savebar"><span class="count" id="count" data-tail="这一堆还剩 {{ left }} 块没核对">这一页 {{ crops|length }} 块；这一堆还剩 {{ left }} 块没核对</span>
 <button class="btn primary" type="submit">保存这一页 <kbd>Enter</kbd></button></div>
 </form>
-<script>
-const form = document.getElementById('f');
-function mark(tile) {
-  const input = tile.querySelector('input[type=text]');
-  tile.classList.toggle('changed', input.value.trim() !== input.dataset.orig);
-}
-function toggleSkip(tile) {
-  const hidden = tile.querySelector('input[name^=s]'), button = tile.querySelector('.skip');
-  const on = hidden.value !== '1';
-  hidden.value = on ? '1' : '0';
-  tile.classList.toggle('skipped', on);
-  button.setAttribute('aria-pressed', on);
-  update();
-}
-function update() {
-  const tiles = form.querySelectorAll('.tile');
-  let changed = 0, skipped = 0;
-  tiles.forEach(t => { if (t.classList.contains('changed')) changed++; if (t.classList.contains('skipped')) skipped++; });
-  document.getElementById('count').textContent =
-    `这一页 ${tiles.length} 块：改了 ${changed} 块，丢掉 ${skipped} 块；这一堆还剩 {{ left }} 块没核对`;
-}
-form.querySelectorAll('.tile').forEach(tile => {
-  const input = tile.querySelector('input[type=text]');
-  input.addEventListener('input', () => { mark(tile); update(); });
-  input.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); toggleSkip(tile); } });
-  tile.querySelector('.skip').addEventListener('click', () => toggleSkip(tile));
-  tile.querySelector('.shot').addEventListener('click', () => input.focus());
-});
-let sent = false;
-form.addEventListener('submit', e => { if (sent) e.preventDefault(); sent = true; });
-</script>
-{% endif %}
+""" + TILE_JS + """{% endif %}
 """
 
 
@@ -374,6 +382,96 @@ def save(kind):
     back = request.form.get("back") or url_for("check", kind=kind)
     if not back.startswith("/check/"):
         back = url_for("check", kind=kind)
+    if bad:
+        back += ("&" if "?" in back else "?") + f"msg=有 {bad} 块填的不是数字，没有保存，还留在这一页"
+    return redirect(back)
+
+
+REVIEW = """
+<h1>复核</h1>
+<p class="muted">这些块小模型读的和原来的答案不一样。原来核对时框里预先填着引擎的数，数字一糊容易跟着认，所以这次<b>框里什么都不填</b>，
+也不告诉你引擎、小模型各读了什么：<b>照图填你看到的数</b>（RP 带上 + 或 −）。图里没有数字就空着；看不清是几、被挡住、裁歪了，
+在框里按 <kbd>Esc</kbd> 或点"丢掉"。<kbd>Enter</kbd> 保存这一页。</p>
+{% if stats['n'] %}<div class="note">复核过 {{ stats['n'] }} 块：和原来的答案一样 {{ stats['same'] }} 块，改了 {{ stats['changed'] }} 块
+（改成和小模型读的一样 {{ stats['to_model'] }} 块），丢掉 {{ stats['skip'] }} 块。</div>{% endif %}
+<div class="filters"><div><span class="lab">哪些</span><span class="seg">{% for key, label in (('all', '全部'), ('exam', '考卷'), ('video', '训练素材')) %}
+<a href="{{ url_for('review', kind=key) }}" class="{{ 'on' if kind == key }}">{{ label }}</a>{% endfor %}</span></div></div>
+{% if message %}<div class="note warn" role="alert">{{ message }}</div>{% endif %}
+{% if not crops %}<div class="note">没有要复核的了。挑要复核的块：训练完会自动挑，也可以 <code>python tools/train_digits.py disputes</code>。</div>
+{% else %}
+<form method="post" action="{{ url_for('review_save') }}" id="f">
+<input type="hidden" name="back" value="{{ request.full_path }}">
+<div class="grid">
+{% for c in crops %}
+<div class="tile">
+ <div class="shot"><img src="{{ url_for('image', crop_id=c['id']) }}" alt="{{ labels[c['field']] }}" width="{{ c['w'] }}" height="{{ c['h'] }}"></div>
+ <div class="meta"><span>{{ labels[c['field']] }}</span><span>{{ kinds[c['kind']] }}</span></div>
+ <div class="row">
+  <input type="text" id="a{{ c['id'] }}" name="a{{ c['id'] }}" value="" data-orig="" inputmode="numeric" autocomplete="off"
+   spellcheck="false" aria-label="{{ labels[c['field']] }}：照图填" placeholder="照图填"{% if loop.first %} autofocus{% endif %}>
+  <button type="button" class="skip" tabindex="-1" aria-pressed="false">丢掉</button>
+  <input type="hidden" name="s{{ c['id'] }}" value="0">
+  <input type="hidden" name="ids" value="{{ c['id'] }}">
+ </div>
+</div>{% endfor %}
+</div>
+<div class="savebar"><span class="count" id="count" data-tail="还剩 {{ left }} 块要复核">这一页 {{ crops|length }} 块；还剩 {{ left }} 块要复核</span>
+<button class="btn primary" type="submit">保存这一页 <kbd>Enter</kbd></button></div>
+</form>
+""" + TILE_JS + """{% endif %}
+"""
+
+
+@app.route("/review")
+def review():
+    kind = request.args.get("kind", "all")
+    if kind not in ("all", "exam", "video"):
+        abort(400)
+    conn = db()
+    cond = "review is not null and reviewed_at is null" + ("" if kind == "all" else " and kind=?")
+    args = () if kind == "all" else (kind,)
+    field_order = "case field " + " ".join(f"when '{f}' then {i}" for i, f in enumerate(data.FIELDS)) + " end"
+    crops = conn.execute(f"select * from crops where {cond} order by kind='video', {field_order}, id limit ?",
+                         (*args, PAGE)).fetchall()
+    left = conn.execute(f"select count(*) from crops where {cond}", args).fetchone()[0]
+    stats = Counter()
+    for r in conn.execute("select status, answer, answer_before, review from crops where reviewed_at is not null"):
+        stats["n"] += 1
+        if r["status"] == "skip":
+            stats["skip"] += 1
+        elif data.number(r["answer"] or None) == data.number(r["answer_before"] or None):
+            stats["same"] += 1
+        else:
+            stats["changed"] += 1
+            stats["to_model"] += data.number(r["answer"] or None) == data.number(r["review"] or None)
+    return page("复核", "review", REVIEW, crops=crops, left=left, kind=kind, kinds=KINDS, labels=data.LABELS,
+                stats=stats, message=request.args.get("msg"), request=request)
+
+
+@app.route("/review/save", methods=["POST"])
+def review_save():
+    conn = db()
+    now = datetime.now().isoformat(timespec="seconds")
+    bad = 0
+    for cid in request.form.getlist("ids"):
+        row = conn.execute("select * from crops where id=? and review is not null and reviewed_at is null", (cid,)).fetchone()
+        if row is None:
+            continue
+        before = row["answer"] if row["status"] == "done" else (row["engine_value"] or "")  # 没核对过的：引擎的读数 / 借来的答案
+        if request.form.get(f"s{cid}") == "1":
+            conn.execute("update crops set status='skip', answer=null, answer_before=?, reviewed_at=?, checked_at=? where id=?",
+                         (before, now, now, cid))
+            continue
+        answer = clean_answer(request.form.get(f"a{cid}"))
+        if answer is None:
+            bad += 1
+            continue
+        conn.execute("update crops set status='done', answer=?, answer_before=?, reviewed_at=?, checked_at=? where id=?",
+                     (answer, before, now, now, cid))
+    conn.commit()
+    back = request.form.get("back") or url_for("review")
+    if not back.startswith("/review"):
+        back = url_for("review")
     if bad:
         back += ("&" if "?" in back else "?") + f"msg=有 {bad} 块填的不是数字，没有保存，还留在这一页"
     return redirect(back)
