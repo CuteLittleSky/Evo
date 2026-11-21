@@ -125,7 +125,32 @@ def connect(path=None):
     for name, kind in REVIEW_COLUMNS:  # 后来加的列（复核）：老的数据库补上
         if name not in have:
             conn.execute(f"alter table crops add column {name} {kind}")
+    if "exam_part" not in {r["name"] for r in conn.execute("pragma table_info(sources)")}:
+        conn.execute("alter table sources add column exam_part text")  # 考卷的哪一半（见 assign_exam_parts）
     return conn
+
+
+EXAM_PARTS = {"dev": "挑门槛的一半", "test": "考试的一半"}
+
+
+def assign_exam_parts(conn):
+    """考卷按截图文件夹分成两半（2026-11-21 用户定的）：dev 用来挑小模型的"把握"门槛，test 才是真正的考试
+    （小模型没见过、门槛也不是在它上面挑的）。同一个文件夹的截图是同一段对局、长得像，所以按文件夹分、不按块分。
+    第一次分：有小块的文件夹按编号一个隔一个；以后新加的文件夹放进块数少的那一半。分过的不再动。"""
+    rows = conn.execute("select s.id, s.exam_part, count(c.id) n from sources s join crops c on c.source=s.id "
+                        "and c.pile!='extra' where s.kind='exam' group by s.id order by s.id").fetchall()
+    fresh = all(r["exam_part"] is None for r in rows)
+    size = {"dev": 0, "test": 0}
+    for r in rows:
+        if r["exam_part"]:
+            size[r["exam_part"]] += r["n"]
+    for i, r in enumerate(rows):
+        if r["exam_part"]:
+            continue
+        part = ("dev" if i % 2 == 0 else "test") if fresh else min(size, key=size.get)
+        conn.execute("update sources set exam_part=? where id=?", (part, r["id"]))
+        size[part] += r["n"]
+    conn.commit()
 
 
 # 复核（tools/train_digits.py 的 mark_disputes 挑、网页"复核"页填）：小模型读的和答案对不上的块，不预先填数、让用户照图重填
@@ -668,6 +693,7 @@ def cmd_exam(args):
             jobs.append((sid, name, run_exam_folder, str(folder), [str(f) for f in files]))
     conn.commit()
     run_jobs(conn, "exam", jobs, args.jobs)
+    assign_exam_parts(conn)
     if jobs or args.measure:
         measure_engine(conn)
     cmd_status(args, conn)

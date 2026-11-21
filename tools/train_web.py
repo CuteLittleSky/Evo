@@ -173,7 +173,7 @@ HOME = """
   <div class="muted">中位数 {{ meta['engine_ms_median'] }} 毫秒；加载以后多占约 {{ meta['engine_mem_mb'] }} MB 内存<br>量于 {{ meta['engine_measured'] }}</div>
   {% else %}<div class="muted">还没量：<code>python tools/train_data.py exam --measure</code></div>{% endif %}
   <p><a class="btn" href="{{ url_for('score') }}">看考卷成绩</a></p></div>
- <div class="card"><div class="muted">小模型{% if last %}（第 {{ last['id'] }} 次训练）{% endif %}</div>
+ <div class="card"><div class="muted">小模型{% if last %}（第 {{ last['id'] }} 次训练，考卷考试的一半）{% endif %}</div>
   {% if last_score %}<div class="big">{{ '%.2f' % last['model_ms'] }} 毫秒 / 块</div>
   <div class="muted">考卷读对 {{ rate(last_score.total) }}（读错 {{ last_score.total['wrong'] }}，没读出 {{ last_score.total['missed'] }}）；
   多占约 {{ '%.0f' % last['model_mem_mb'] }} MB 内存，模型文件 {{ '%.0f' % last['size_kb'] }} KB</div>
@@ -495,10 +495,14 @@ SCORE = TILES + """
 <h1>考卷成绩</h1>
 <p class="muted">只算核对过的块（丢掉的不算）。<b>读错</b> = 很有把握地读成了别的数（最危险：Evo 会记错）；
 <b>没读出</b> = 读不出来，或者把握不够（Evo 留空，不会记错，但漏了）。图里没有数字、也没读出数的算读对。</p>
-{% if runs %}<div class="filters"><div><span class="lab">小模型</span><span class="seg">{% for r in runs %}
-<a href="{{ url_for('score', run=r['id']) }}" class="{{ 'on' if r['id'] == run }}">第 {{ r['id'] }} 次训练</a>{% endfor %}</span></div></div>{% endif %}
+<p class="muted">考卷按截图文件夹分成两半：小模型的"把握"门槛在<b>挑门槛的一半</b>上挑（读错不比引擎多），
+<b>考试的一半</b>小模型没见过、门槛也不是在它上面挑的，所以成绩默认只算这一半。</p>
+<div class="filters">{% if runs %}<div><span class="lab">小模型</span><span class="seg">{% for r in runs %}
+<a href="{{ url_for('score', run=r['id'], part=part) }}" class="{{ 'on' if r['id'] == run }}">第 {{ r['id'] }} 次训练</a>{% endfor %}</span></div>{% endif %}
+<div><span class="lab">算哪些</span><span class="seg">{% for key, label in parts.items() %}
+<a href="{{ url_for('score', run=run, part=key) }}" class="{{ 'on' if key == part }}">{{ label }}</a>{% endfor %}</span></div></div>
 <div class="cards">
- <div class="card"><div class="muted">考卷核对了</div><div class="big">{{ eng.total['n'] }} 块</div>
+ <div class="card"><div class="muted">{{ parts[part] }}核对了</div><div class="big">{{ eng.total['n'] }} 块</div>
   <div class="muted">还有 {{ todo }} 块没核对{% if todo %}，成绩还不全{% endif %}</div></div>
  <div class="card"><div class="muted">引擎读对</div><div class="big">{{ rate(eng.total) }}</div>
   <div class="muted">读错 <span class="bad">{{ eng.total['wrong'] }}</span> 块，没读出 <span class="warn">{{ eng.total['missed'] }}</span> 块</div></div>
@@ -553,15 +557,29 @@ class Scores:
         self.total = sum(self.per.values(), Counter())
 
 
-def engine_scores(conn):
-    return Scores(conn.execute("select *, engine_value as v from crops where kind='exam' and pile!='extra' "
-                               "and status='done' order by field, id").fetchall())
+PARTS = {"test": "考试的一半", "dev": "挑门槛的一半", "all": "整份考卷"}
 
 
-def model_scores(conn, run):
-    rows = conn.execute("select c.*, m.value as v, m.text as mtext, m.score as mscore from crops c join model_reads m "
-                        "on m.crop=c.id and m.run=? where c.kind='exam' and c.pile!='extra' and c.status='done' "
-                        "order by c.field, c.id", (run,)).fetchall()
+def part_cond(part):
+    """考卷的哪一半（train_data.assign_exam_parts）：成绩默认只算考试的一半（门槛是在另一半上挑的）。"""
+    return "" if part == "all" else " and c.source in (select id from sources where exam_part=?)"
+
+
+def engine_scores(conn, part="test"):
+    args = () if part == "all" else (part,)
+    return Scores(conn.execute("select c.*, c.engine_value as v from crops c where c.kind='exam' and c.pile!='extra' "
+                               "and c.status='done'" + part_cond(part) + " order by c.field, c.id", args).fetchall())
+
+
+def model_rows(conn, run, part="test"):
+    args = (run,) if part == "all" else (run, part)
+    return conn.execute("select c.*, m.value as v, m.text as mtext, m.score as mscore from crops c join model_reads m "
+                        "on m.crop=c.id and m.run=? where c.kind='exam' and c.pile!='extra' and c.status='done'"
+                        + part_cond(part) + " order by c.field, c.id", args).fetchall()
+
+
+def model_scores(conn, run, part="test"):
+    rows = model_rows(conn, run, part)
     return Scores(rows) if rows else None
 
 
@@ -576,23 +594,22 @@ def tested_runs(conn):
 @app.route("/score")
 def score():
     conn = db()
+    part = request.args.get("part", "test")
+    if part not in PARTS:
+        abort(400)
     todo = conn.execute("select count(*) from crops where kind='exam' and pile!='extra' and status='todo'").fetchone()[0]
     runs = tested_runs(conn)
     run = request.args.get("run", type=int) or (runs[-1]["id"] if runs else None)
     info = conn.execute("select * from train_runs where id=?", (run,)).fetchone() if run else None
-    eng = engine_scores(conn)
-    mod = model_scores(conn, run) if run else None
+    eng = engine_scores(conn, part)
+    mod = model_scores(conn, run, part) if run else None
     wins = []
     if mod:
-        model_right = mod.right_ids
-        rows = {r["id"]: r for r in conn.execute(
-            "select c.*, m.value as v, m.text as mtext, m.score as mscore from crops c join model_reads m "
-            "on m.crop=c.id and m.run=? where c.kind='exam' and c.pile!='extra' and c.status='done' order by c.field, c.id",
-            (run,)).fetchall()}
-        wins = [rows[r["id"]] for r in eng.wrong + eng.missed if r["id"] in model_right]
+        rows = {r["id"]: r for r in model_rows(conn, run, part)}
+        wins = [rows[r["id"]] for r in eng.wrong + eng.missed if r["id"] in mod.right_ids]
     meta = dict(conn.execute("select key, value from meta").fetchall())
     return page("考卷成绩", "score", SCORE, eng=eng, mod=mod, wins=wins, todo=todo, rate=rate, runs=runs, run=run,
-                info=info, fields=list(data.FIELDS), labels=data.LABELS, meta=meta)
+                info=info, fields=list(data.FIELDS), labels=data.LABELS, meta=meta, part=part, parts=PARTS)
 
 
 def line_chart(points, title, fmt, low=None, high=None):
@@ -634,11 +651,11 @@ def line_chart(points, title, fmt, low=None, high=None):
 TRAIN = """
 <h1>训练进度</h1>
 <p class="muted">训练：<code>python tools/train_digits.py train</code>（用显卡，几分钟；完了自动考一遍考卷）。
-验证 = 留着不训练的那个视频（用来挑最好的一轮和"把握"的门槛）；考卷 = 我们自己的真实截图，小模型一块都没见过。
+验证 = 留着不训练的那个视频（用来挑最好的一轮）；"把握"的门槛考试时在考卷挑门槛的一半上挑；成绩算考卷考试的一半（小模型没见过，门槛也不是在它上面挑的）。
 {% if running %}<b>正在训练，这一页每 5 秒刷新。</b>{% endif %}</p>
 {% if not runs %}<div class="note">还没有训练过。</div>{% else %}
 <table><tr><th>第几次</th><th>开始</th><th>情况</th><th>用什么算</th><th class="num">最好的一轮</th><th class="num">门槛</th>
-<th class="num">验证 读对 / 读错 / 没读出</th><th class="num">考卷 读对 / 读错 / 没读出</th><th class="num">一块几毫秒</th><th class="num">内存</th><th class="num">大小</th></tr>
+<th class="num">挑门槛的一半 读对 / 读错 / 没读出</th><th class="num">考试的一半 读对 / 读错 / 没读出</th><th class="num">一块几毫秒</th><th class="num">内存</th><th class="num">大小</th></tr>
 {% for r in runs %}{% set s = exams.get(r['id']) %}<tr class="{{ 'on' if r['id'] == sel }}">
 <td><a href="{{ url_for('train', run=r['id']) }}">第 {{ r['id'] }} 次</a></td><td>{{ (r['started'] or '')[5:16]|replace('T', ' ') }}</td>
 <td class="{{ 'bad' if r['status'] == 'error' else ('warn' if r['status'] == 'running' else '') }}">{{ {'done':'训练好了','running':'正在训练','error':'出错'}.get(r['status'], r['status']) }}{% if r['note'] %}<br><span class="muted">{{ r['note'] }}</span>{% endif %}</td>
@@ -647,14 +664,14 @@ TRAIN = """
 <td class="num">{% if s %}{{ s.total['right'] }} / <span class="{{ 'bad' if s.total['wrong'] }}">{{ s.total['wrong'] }}</span> / {{ s.total['missed'] }}（{{ rate(s.total) }}）{% else %}-{% endif %}</td>
 <td class="num">{{ '%.2f' % r['model_ms'] if r['model_ms'] else '-' }}</td><td class="num">{{ '%.0f MB' % r['model_mem_mb'] if r['model_mem_mb'] is not none else '-' }}</td>
 <td class="num">{{ '%.0f KB' % r['size_kb'] if r['size_kb'] else '-' }}</td></tr>{% endfor %}</table>
-<p class="muted">现在的引擎在考卷上：{{ eng.total['right'] }} / <span class="bad">{{ eng.total['wrong'] }}</span> / {{ eng.total['missed'] }}（{{ rate(eng.total) }}），一块 {{ meta.get('engine_ms', '-') }} 毫秒，多占 {{ meta.get('engine_mem_mb', '-') }} MB。</p>
+<p class="muted">现在的引擎在考卷考试的一半上：{{ eng.total['right'] }} / <span class="bad">{{ eng.total['wrong'] }}</span> / {{ eng.total['missed'] }}（{{ rate(eng.total) }}），一块 {{ meta.get('engine_ms', '-') }} 毫秒，多占 {{ meta.get('engine_mem_mb', '-') }} MB。</p>
 <h2>第 {{ sel }} 次训练：每一轮</h2>
 {% if epochs %}<div class="charts">{{ acc_chart|safe }}{{ loss_chart|safe }}</div>
 <details><summary class="muted">看表格</summary>
 <table><tr><th class="num">轮</th><th class="num">loss</th><th class="num">验证读对</th><th class="num">读错</th><th class="num">没读出</th><th class="num">秒</th></tr>
 {% for e in epochs %}<tr><td class="num">{{ e['epoch'] }}</td><td class="num">{{ '%.3f' % e['loss'] }}</td><td class="num">{{ '%.1f%%' % (100 * e['val_acc']) }}</td>
 <td class="num">{{ e['val_wrong'] }}</td><td class="num">{{ e['val_missed'] }}</td><td class="num">{{ '%.0f' % e['seconds'] }}</td></tr>{% endfor %}</table></details>
-<p class="muted">每一轮的验证分数按把握 0.8 算；训练完挑出最好的一轮，再在验证视频上挑门槛（读错一块算 20 块没读出那么糟）。</p>
+<p class="muted">每一轮的验证分数按把握 0.8 算；挑最好的一轮时每一轮先在验证视频上挑好门槛（读错不比引擎多）再比读对几块；考试时门槛在考卷挑门槛的一半上重新挑。</p>
 {% else %}<p class="muted">还没有跑完一轮。</p>{% endif %}
 {% endif %}
 """

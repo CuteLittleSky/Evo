@@ -32,7 +32,7 @@ FOLDER = Path(tempfile.mkdtemp(prefix="evo-train-"))
 def make_db():
     data.CROPS = FOLDER / "crops"
     conn = data.connect(FOLDER / "train.db")
-    sid = conn.execute("insert into sources (kind, path, name, status) values ('exam', 'x', 'x', 'done')").lastrowid
+    sid = conn.execute("insert into sources (kind, path, name, status, exam_part) values ('exam', 'x', 'x', 'done', 'test')").lastrowid
     rows = [  # (项, 秒, 读数, 把握)
         ("damage", 0, "10", .99), ("damage", 5, "10", .99), ("damage", 10, "10", .99), ("damage", 15, "10", .99),
         ("damage", 20, "80", .99), ("damage", 25, "8", .99), ("damage", 30, "120", .99), ("damage", 35, None, .3),
@@ -198,7 +198,36 @@ def digits_checks(conn):
             and digits.model_value("+19", .99, "rp_delta", .8, ranges) == ("+19", False)
             and digits.model_value("99", .99, "squads_left", .8, ranges) == (None, False)
             and digits.model_value("", .99, "rp_delta", .8, ranges) == (None, True)),
+        '挑门槛：读错不比引擎多的门槛里挑读对最多的': threshold_rule(ranges),
+        "考卷分两半：按文件夹一个隔一个，以后新加的放进块数少的那一半，分过的不动": exam_parts_rule(),
     }
+
+
+def threshold_rule(ranges):
+    """引擎在这 4 块上读错 1 块。小模型：门槛 0.3 读对 2、错 2；0.4–0.6 读对 2、错 1；0.7 读对 2、错 0；0.8 以上读对 1。
+    读错不比引擎多（≤ 1）里读对最多的是 2 块，一样多挑最低的：0.4。"""
+    items = [{"field": "damage", "label": lab, "engine": eng} for lab, eng in
+             (("10", "10"), ("20", "26"), ("30", "30"), ("40", "40"))]
+    reads = [("10", .99), ("20", .7), ("38", .65), ("41", .35)]
+    return digits.pick_threshold(items, reads, ranges)[:3] == (0.4, 2, 1) and digits.engine_wrong(items) == 1
+
+
+def exam_parts_rule():
+    conn = data.connect(FOLDER / "parts.db")
+    for n in (10, 20, 30, 40):
+        sid = conn.execute("insert into sources (kind, path, name, status) values ('exam', ?, 'p', 'done')",
+                           (f"p{n}",)).lastrowid
+        conn.executemany("insert into crops (source, kind, field, img, pile) values (?, 'exam', 'damage', 'x', 'auto')",
+                         [(sid,)] * n)
+    data.assign_exam_parts(conn)
+    first = [r[0] for r in conn.execute("select exam_part from sources order by id")]
+    sid = conn.execute("insert into sources (kind, path, name, status) values ('exam', 'p5', 'p', 'done')").lastrowid
+    conn.executemany("insert into crops (source, kind, field, img, pile) values (?, 'exam', 'damage', 'x', 'auto')", [(sid,)] * 5)
+    data.assign_exam_parts(conn)
+    after = [r[0] for r in conn.execute("select exam_part from sources order by id")]
+    conn.close()
+    # 第一次：dev 10+30=40 块、test 20+40=60 块 → 新的放进 dev
+    return first == ["dev", "test", "dev", "test"] and after == ["dev", "test", "dev", "test", "dev"]
 
 
 if __name__ == "__main__":

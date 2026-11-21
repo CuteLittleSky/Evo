@@ -8,7 +8,8 @@
 运行都用 Evo 自己的 Python：训练时才把 .venv-train 里的库加进来（use_train_env；用 .venv-train 自己的 python.exe
 在这台电脑上写不了 captures/，2026-11-21 试过）：
     python tools/train_digits.py train       训练，完了自动考一遍考卷（另开一个进程，只用 onnxruntime，和 Evo 里一样）
-    python tools/train_digits.py exam [--run 编号]   单独考一遍（考完顺便挑出要复核的块，见 mark_disputes）
+    python tools/train_digits.py exam [--run 编号]   单独考一遍：在考卷"挑门槛的一半"上挑"把握"门槛，
+        "考试的一半"算成绩（见 train_data.assign_exam_parts），考完顺便挑出要复核的块（mark_disputes）
     python tools/train_digits.py disputes [--run 编号]   只挑要复核的块
 装训练环境（只要一次）：Python 3.13 建 .venv-train，pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cu130，
 再装和 .venv 一样版本的 numpy、opencv-python-headless，和 onnx、onnxscript（导出用）
@@ -16,7 +17,9 @@
 
 训练用哪些小块、答案从哪来（training_rows）：考卷一块都不用；用户核对过的用用户的答案（最要紧，抽得最多）；
 规则核对过的用引擎的读数；同一个读数多出来的，同一个视频、同一项里有核对过的同一个读数（用户没改过它）才借它的答案。
-丢掉的不用。留一个视频不训练（VAL_SOURCE_HINT），每一轮用它看分数、挑最好的一轮和"把握"的门槛。
+丢掉的不用。留一个视频不训练（VAL_SOURCE_HINT），每一轮用它看分数、挑最好的一轮。
+"把握"的门槛考试时在考卷"挑门槛的一半"上挑（2026-11-21：验证视频太小、太像训练素材，在上面挑的门槛
+一次太严（0.99）、一次太松（0.3）），规则是"读错不比现在的引擎多"（pick_threshold）。
 """
 
 import argparse
@@ -303,7 +306,8 @@ def engine_wrong(items):
 
 
 def pick_threshold(items, reads, ranges):
-    """在验证用的视频上挑"把握"的门槛：读错不能比现在的引擎多（同一批块上数；用户定的"读错不能比引擎多"），
+    """在一批块上挑"把握"的门槛（考试时是考卷挑门槛的一半，训练时挑最好的一轮是验证视频）：
+    读错不能比现在的引擎多（同一批块上数；用户定的"读错不能比引擎多"），
     满足的门槛里挑读对最多的（一样多挑低的）；一个都满足不了就用最严的。返回 (门槛, 读对, 读错, 没读出)。
     第 4 次训练以前是"读错一块算 20 块没读出"：验证视频只有约 200 块、还有没复核到的错答案，门槛被推到 0.99，
     考卷上读对了字、只是把握不到 0.99 的有 176 块。"""
@@ -498,38 +502,54 @@ def cmd_exam(args):
     opts.intra_op_num_threads = opts.inter_op_num_threads = 1  # 和 Evo 的引擎一样：1 个线程，不和游戏抢
     before, _ = memory_mb()
     session = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
-    rows = conn.execute("select id, field, img from crops where kind='exam' and pile!='extra' order by id").fetchall()
+    data.assign_exam_parts(conn)
+    rows = conn.execute("select c.id, c.field, c.img, c.status, c.answer, c.engine_value, s.exam_part from crops c "
+                        "join sources s on s.id=c.source where c.kind='exam' and c.pile!='extra' order by c.id").fetchall()
     images = [load_crop(r["img"]) for r in rows]
     channels = run_channels(path.with_suffix(".json"))
     session.run(None, {"x": prepare(images[0], channels)[None]})  # 第一次慢（准备），不算
     after, _ = memory_mb()
-    reads, times = [], []
+    raw, times = [], []
     for r, img in zip(rows, images):
         t0 = time.perf_counter()
         probs = session.run(None, {"x": prepare(img, channels)[None]})[0][0]
-        text, score = decode(probs)
-        value, _ = model_value(text, score, r["field"], info["threshold"], ranges)
-        ms = (time.perf_counter() - t0) * 1000
-        times.append(ms)
+        raw.append(decode(probs))
+        times.append((time.perf_counter() - t0) * 1000)
+
+    # 在考卷"挑门槛的一半"上挑门槛（读错不比引擎多），"考试的一半"才算成绩（见 data.assign_exam_parts）
+    checked = [(r, rd) for r, rd in zip(rows, raw) if r["status"] == "done"]
+    dev = [(r, rd) for r, rd in checked if r["exam_part"] == "dev"]
+    dev_items = [{"field": r["field"], "label": label_text(r["answer"], r["field"]), "engine": r["engine_value"]}
+                 for r, _ in dev]
+    threshold, right, wrong, missed = pick_threshold(dev_items, [rd for _, rd in dev], ranges)
+    reads = []
+    for r, (text, score), ms in zip(rows, raw, times):
+        value, _ = model_value(text, score, r["field"], threshold, ranges)
         reads.append((run, r["id"], text, score, value, ms))
     conn.execute("delete from model_reads where run=?", (run,))
     conn.executemany("insert into model_reads (run, crop, text, score, value, ms) values (?, ?, ?, ?, ?, ?)", reads)
-    conn.execute("update train_runs set model_ms=?, model_mem_mb=? where id=?",
-                 (float(np.mean(times)), max(0.0, after - before), run))
+    conn.execute("update train_runs set model_ms=?, model_mem_mb=?, threshold=?, val_right=?, val_wrong=?, val_missed=?, "
+                 "val_n=? where id=?", (float(np.mean(times)), max(0.0, after - before), threshold, right, wrong, missed,
+                                        len(dev_items), run))
     conn.commit()
-    done = conn.execute("select c.answer, m.value, c.engine_value from crops c join model_reads m on m.crop=c.id "
-                        "where m.run=? and c.status='done'", (run,)).fetchall()
+    meta_path = path.with_suffix(".json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["threshold"] = threshold
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    print(f"门槛 {threshold}（在挑门槛的一半 {len(dev_items)} 块上挑：小模型读错 {wrong} 块，引擎 {engine_wrong(dev_items)} 块）")
+    value_of = {rd[1]: rd[4] for rd in reads}
+    test = [r for r, _ in checked if r["exam_part"] == "test"]
 
-    def score(column):
+    def score(get):
         right = wrong = 0
-        for d in done:
-            a, v = data.number(d["answer"]), data.number(d[column])
+        for r in test:
+            a, v = data.number(r["answer"] or None), data.number(get(r))
             right += a == v
             wrong += v is not None and a != v
-        return right, wrong, len(done) - right - wrong
+        return right, wrong, len(test) - right - wrong
 
-    m, e = score("value"), score("engine_value")
-    print(f"考卷 {len(done)} 块：小模型 读对 {m[0]}，读错 {m[1]}，没读出 {m[2]}；"
+    m, e = score(lambda r: value_of[r["id"]]), score(lambda r: r["engine_value"])
+    print(f"考试的一半 {len(test)} 块：小模型 读对 {m[0]}，读错 {m[1]}，没读出 {m[2]}；"
           f"引擎 读对 {e[0]}，读错 {e[1]}，没读出 {e[2]}")
     print(f"小模型读一块平均 {np.mean(times):.2f} 毫秒（含缩放；1 个线程），加载以后多占约 {max(0.0, after - before):.0f} MB，"
           f"模型文件 {path.stat().st_size / 1024:.0f} KB")
@@ -590,42 +610,10 @@ def cmd_disputes(args):
     report_disputes(mark_disputes(conn, session, run, run_channels(path.with_suffix(".json"))))
 
 
-def cmd_rethreshold(args):
-    """不重新训练，只按现在的规则和答案（复核以后会变）在验证视频上重新挑门槛，再考一遍考卷（Evo 自己的环境）。"""
-    import onnxruntime as ort
-
-    conn = data.connect()
-    run = args.run or conn.execute("select max(id) from train_runs where status='done'").fetchone()[0]
-    info = conn.execute("select * from train_runs where id=?", (run,)).fetchone()
-    if info is None or not info["model_path"]:
-        sys.exit("还没有训练好的小模型：先训练（见文件开头）")
-    path = data.TRAIN / info["model_path"]
-    channels = run_channels(path.with_suffix(".json"))
-    ranges = field_ranges()
-    vid, vname = val_source(conn)
-    val_items = [r for r in training_rows(conn) if r["source"] == vid and r["group"] != "extra"]
-    opts = ort.SessionOptions()
-    opts.intra_op_num_threads = 4
-    session = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
-    probs = session.run(None, {"x": np.stack([prepare(load_crop(it["img"]), channels) for it in val_items])})[0]
-    threshold, right, wrong, missed = pick_threshold(val_items, [decode(p) for p in probs], ranges)
-    conn.execute("update train_runs set threshold=?, val_right=?, val_wrong=?, val_missed=?, val_n=? where id=?",
-                 (threshold, right, wrong, missed, len(val_items), run))
-    conn.commit()
-    meta_path = path.with_suffix(".json")
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta["threshold"] = threshold
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-    print(f"第 {run} 次训练重新挑门槛：{threshold}（{vname} 的 {len(val_items)} 块：读对 {right}，读错 {wrong}，没读出 {missed}；"
-          f"引擎在这些块上读错 {engine_wrong(val_items)} 块）")
-    args.run = run
-    cmd_exam(args)
-
-
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="训练读数字的小模型，用考卷考")
-    parser.add_argument("command", choices=("train", "exam", "disputes", "rethreshold"))
+    parser.add_argument("command", choices=("train", "exam", "disputes"))
     parser.add_argument("--run", type=int, help="exam、disputes：用第几次训练的小模型（默认最新的）")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--per-epoch", type=int, default=40000, help="每一轮抽多少块")
@@ -635,7 +623,7 @@ def main():
     parser.add_argument("--cpu", action="store_true", help="不用显卡")
     parser.add_argument("--no-exam", action="store_true", help="训练完不自动考")
     args = parser.parse_args()
-    {"train": cmd_train, "exam": cmd_exam, "disputes": cmd_disputes, "rethreshold": cmd_rethreshold}[args.command](args)
+    {"train": cmd_train, "exam": cmd_exam, "disputes": cmd_disputes}[args.command](args)
 
 
 if __name__ == "__main__":
