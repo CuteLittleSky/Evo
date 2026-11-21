@@ -2,7 +2,7 @@ Cinzel（code/splash.py 启动画面上的 "APEX"）
 
 Copyright 2020 The Cinzel Project Authors (https://github.com/NDISCOVER/Cinzel)
 
-Noto Serif SC ExtraLight（启动画面上的 "爱好家"）
+Noto Serif SC ExtraLight（启动画面上的 "爱好者"）
 
 (c) 2017-2024 Adobe (http://www.adobe.com/).
 

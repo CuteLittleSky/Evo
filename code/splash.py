@@ -1,4 +1,4 @@
-"""Evo 窗口的启动画面：窗口刚出来、网页还没画好的那一两秒，显示标题栏、图标、「APEX 爱好家」和一条来回走的细加载条，不是一块黑。
+"""Evo 窗口的启动画面：窗口刚出来、网页还没画好的那一两秒，显示标题栏、图标、「APEX 爱好者」和一条来回走的细加载条，不是一块黑。
 
 - 为什么会有这一两秒：窗口进程打开窗口以后，WebView2（Edge 内核）要先启动自己的浏览器进程，再加载、画出面板网页
   （2026-11-21 量过：源码运行时窗口出来以后约 0.5 秒，打包版、电脑忙的时候更久）
@@ -7,7 +7,7 @@
   网页一直没来调（出错页等）：加载完 2 秒后也拿掉；最多盖 15 秒
 - 颜色跟着面板的主题：网页把现在选的主题告诉窗口（WindowApi.remember_theme，记在 settings.json 的 window_theme），
   下次打开时用它；没记过或选的是"跟随系统"，看 Windows 的深浅色设置
-- 那行字（TAGLINE，2026-11-22 用户定的样子和字体）：APEX 用 Cinzel，爱好家用思源宋体（Noto Serif SC）ExtraLight，
+- 那行字（TAGLINE，2026-11-22 用户定的样子和字体）：APEX 用 Cinzel，爱好者用思源宋体（Noto Serif SC）ExtraLight，
   assets/splash/ 里是只含这几个字的小字体文件（OFL 许可，python tools/splash_fonts.py 从 Google Fonts 取，改字以后重新取）；
   标题栏的 EVO 用面板自己的 Chakra Petch
 """
@@ -35,13 +35,13 @@ BAR_COLOR = "#3B9EFF"  # 图标最上面那一条的蓝色
 FONT_DIR = ASSETS_DIR / "splash"
 # 下面的大小都是网页里的像素（style.css），画的时候按 Windows 的缩放比例放大
 TAGLINE = [  # (字, 字体文件, 字号, 字间距)；改了字要重新运行 tools/splash_fonts.py
-    ("APEX", "Cinzel-tagline.ttf", 10, 3),
-    ("爱好家", "NotoSerifSC-ExtraLight-tagline.ttf", 10, 2),
+    ("APEX", "Cinzel-tagline.ttf", 20, 5),
+    ("爱好者", "NotoSerifSC-ExtraLight-tagline.ttf", 20, 4),
 ]
-TAGLINE_GAP = 6  # APEX 和爱好家之间
-ICON = 48
-GAP = 14  # 图标、字、加载条之间
-BAR_W, BAR_H = 56, 2
+TAGLINE_GAP = 10  # APEX 和爱好者之间
+ICON = 96
+GAP = 24  # 图标、字、加载条之间
+BAR_W, BAR_H = 110, 2
 BAR_SEGMENT = 0.4  # 走动的那一段占整条的多少
 BAR_PERIOD = 1.1  # 从左走到右一趟几秒
 TITLEBAR_H = 34  # 含下边框 1 像素（.titlebar）

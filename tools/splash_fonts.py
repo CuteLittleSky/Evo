@@ -1,6 +1,6 @@
 """取 Evo 窗口启动画面上那行字用的字体（开发工具）：python tools/splash_fonts.py
 
-启动画面（code/splash.py）的「APEX 爱好家」：APEX 用 Cinzel，爱好家用思源宋体（Noto Serif SC）ExtraLight，
+启动画面（code/splash.py）的「APEX 爱好者」：APEX 用 Cinzel，爱好者用思源宋体（Noto Serif SC）ExtraLight，
 都是 OFL 许可（assets/splash/OFL.txt）。从 Google Fonts 只取要用的那几个字（text= 参数，每个文件几 KB），
 存进 assets/splash/（文件名照 splash.TAGLINE），随安装包发。改了 TAGLINE 里的字就重新运行一次，再提交。
 """

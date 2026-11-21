@@ -157,7 +157,7 @@ def draw_checks():
         bx, by, bw, _ = at["bar"]
         result["px"] = {
             "titlebar": px(600, 10), "border": px(600, at["titlebar"] - 1), "bg": px(100, 400),
-            "icon": px(at["icon"][0] + 24, at["icon"][1] + 24), "track": px(bx + bw - 1, by),
+            "icon": px(at["icon"][0] + sp.images["icon"].Width // 2, at["icon"][1] + sp.images["icon"].Height // 2), "track": px(bx + bw - 1, by),
             "close": [px(1280 - 23 + d, 17 + d) for d in range(-3, 4)],
         }
         sp._remove_now()
