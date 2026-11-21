@@ -1589,6 +1589,13 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .rec-gap { position: absolute; top: 0; bottom: 0; pointer-events: auto; cursor: help;
   background: repeating-linear-gradient(135deg, var(--dashed) 0 3px, transparent 3px 7px); }
 .rec-head-line { position: absolute; top: -3px; bottom: -3px; left: 0; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); pointer-events: none; }
+/* 能拖（2026-11-21）：鼠标指到时间轴上，竖线顶上冒出一个圆头，提示可以拖；拖的时候圆头留着、手形变成"抓着" */
+.rec-track { user-select: none; touch-action: pan-y; }
+.rec-head-line::before { content: ""; position: absolute; top: -5px; left: 50%; width: 12px; height: 12px; margin-left: -6px;
+  border-radius: 50%; background: var(--text); box-shadow: 0 0 0 2px var(--card); transform: scale(0); transition: transform 0.15s ease-out; }
+.rec-track:hover .rec-head-line::before, .rec-track.dragging .rec-head-line::before { transform: scale(1); }
+.rec-track.dragging, .rec-track.dragging .rec-mark { cursor: grabbing; }
+.rec-track.dragging .rec-mark::after { opacity: 0; }
 .rec-mark { position: absolute; top: 3px; bottom: 3px; width: 10px; margin-left: -5px; padding: 0; border: 2px solid var(--card); border-radius: 3px;
   background: var(--ev, var(--muted)); cursor: pointer; }
 .rec-mark:hover, .rec-mark:focus-visible { z-index: 2; transform: scaleY(1.25); }

@@ -105,13 +105,15 @@
       video.currentTime = Math.max(0, Math.min(t, length() - 0.1));
       if (play) video.play().catch(function () {});
     }
-    // 播放的位置：已放过的一段（scaleX，不改宽度，不重新排版）和竖线
-    function paint() {
-      var f = length() ? Math.min(1, video.currentTime / length()) : 0;
+    // 播放的位置：已放过的一段（scaleX，不改宽度，不重新排版）和竖线；拖的时候画手指着的位置（drag.t），不画播放器的
+    var drag = null;
+    function paintAt(t) {
+      var f = length() ? Math.max(0, Math.min(1, t / length())) : 0;
       played.style.transform = "scaleX(" + f + ")";
       head.style.left = (f * 100) + "%";
-      now.textContent = clock(video.currentTime);
+      now.textContent = clock(t);
     }
+    function paint() { paintAt(drag && drag.moved ? drag.t : video.currentTime); }
     video.addEventListener("timeupdate", paint);
     video.addEventListener("seeked", paint);
     video.addEventListener("loadedmetadata", function () {
@@ -126,10 +128,54 @@
       });
     });
     // 点时间轴的空白处：跳到那里
-    track.addEventListener("click", function (e) {
+    function timeAt(x) {
       var r = track.getBoundingClientRect();
-      jump((e.clientX - r.left) / r.width * length(), !video.paused);
+      return Math.max(0, Math.min(1, (x - r.left) / r.width)) * length();
+    }
+    track.addEventListener("click", function (e) {
+      if (track.dataset.dragged) { delete track.dataset.dragged; return; }  // 刚拖完松手，不算点
+      jump(timeAt(e.clientX), !video.paused);
     });
+    // 拖时间轴（2026-11-21 用户要的）：按住移动超过 4 像素才算拖（只点一下照旧是点：标记从事件前几秒放，空白处跳过去）。
+    // 拖的时候先暂停，竖线、"已放过"和中间的时间跟着手走，画面也跟着换（上一次跳完了才跳下一次，免得一直解码跟不上）；
+    // 松手跳到那里，原来在放就接着放。拖出时间轴外也照样跟着（按住时把指针"抓"在时间轴上）
+    function seekTo(t) {
+      drag.want = t;
+      if (!video.seeking) video.currentTime = Math.min(t, length() - 0.1);
+    }
+    video.addEventListener("seeked", function () {
+      if (drag && drag.moved && Math.abs(drag.want - video.currentTime) > 0.05) video.currentTime = Math.min(drag.want, length() - 0.1);
+    });
+    track.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || !length()) return;
+      drag = { id: e.pointerId, x: e.clientX, t: timeAt(e.clientX), want: null, moved: false, playing: !video.paused };
+    });
+    track.addEventListener("pointermove", function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.moved) {
+        if (Math.abs(e.clientX - drag.x) < 4) return;
+        drag.moved = true;
+        track.setPointerCapture(e.pointerId);
+        track.classList.add("dragging");
+        video.pause();
+      }
+      drag.t = timeAt(e.clientX);
+      paintAt(drag.t);
+      seekTo(drag.t);
+    });
+    function endDrag(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var done = drag;
+      drag = null;
+      if (!done.moved) return;
+      track.classList.remove("dragging");
+      track.dataset.dragged = "1";  // 松手后浏览器还会补一个 click，跳过它
+      setTimeout(function () { delete track.dataset.dragged; }, 0);
+      jump(done.t, done.playing);
+      paintAt(done.t);
+    }
+    track.addEventListener("pointerup", endDrag);
+    track.addEventListener("pointercancel", endDrag);
     // 删除：先确认；删之前先让播放器放开文件（正在播放的文件 Windows 删不掉）
     var del = document.getElementById("rec-delete");
     del.addEventListener("submit", function (e) {
