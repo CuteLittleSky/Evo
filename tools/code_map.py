@@ -68,12 +68,12 @@ SECTIONS = [
         ("server/stats/", "匿名统计的服务器（Cloudflare Worker + D1）：worker.js 收数据、给汇总（按天增量算），schema.sql 建表，"
                           "test.mjs 汇总的测试（node server/stats/test.mjs），wrangler.toml 部署配置"),
         ("server/team/", "Evo 后台 team.evotracker.cn（原来叫赛事数据的协作网页；Cloudflare Worker + 不公开的 R2）：worker.js 路由，"
-                         "auth.js 成员、邀请链接、登录，store.js 读写存储桶里的 JSON，data.js 选手库、赛程、改动记录（换队、并队、批量填直播间），"
+                         "auth.js 成员、邀请链接、登录，store.js 读写存储桶里的 JSON，data.js 选手库、赛程、改动记录（换队、并队、批量修改、主舞台记下的直播间），teams.js 战队的赛区（ALGS 四个大区）、整队删、一次删几位，"
                          "esports.js 检查和生成 esports.json（照 tools/esports.py），publish.js 发布、平台开关、有改动还没发布的提醒，"
                          "liquipedia.js 问 Liquipedia、整理数据，lpsync.js 定时抓（额度、失败重试）和待确认，"
                          "overrides.js 手动修正 Liquipedia 的资料，manualpros.js Liquipedia 上没有页面的选手手动建资料，lpimport.js 从 Liquipedia 一键加进选手库，logos.js 战队队徽（队标库、挑选、上传、一键配队徽），statsroll.js 从匿名统计的数据库增量算「数据」页的数，"
-                         "pages.js / pages_esports.js / pages_lp.js / pages_pros.js / pages_logos.js / pages_stats.js 页面，test.mjs 测试（node server/team/test.mjs；"
-                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos、test_main、test_nostream、test_lpimport、test_tidy、test_manualpros、test_stats、test_observers），wrangler.toml 部署配置")]),
+                         "pages.js / pages_esports.js / pages_teams.js / pages_lp.js / pages_pros.js / pages_logos.js / pages_stats.js 页面，test.mjs 测试（node server/team/test.mjs；"
+                         "testkit、test_members、test_esports、test_lp、test_pros、test_logos、test_main、test_nostream、test_lpimport、test_tidy、test_manualpros、test_stats、test_observers、test_teams），wrangler.toml 部署配置")]),
     ("录像", None, ["code/recorder.py", "code/match_recording.py", "code/highlights.py", "code/process_audio.py",
                   "code/panel_recordings.py"]),
     ("测试工具（给玩家的 Evo测试工具.exe）", None, [

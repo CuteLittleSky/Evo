@@ -224,6 +224,27 @@ details.note > summary .help { color: inherit; opacity: .85; }
   .bulk-row { grid-template-columns: minmax(10em, 1fr) 9em 12em; }
   .bulk-who { grid-column: auto; }
 }
+/* 批量修改选手（11-21）：勾选那一格、名字、战队、平台、房间号。手机上：勾选一行，名字和战队一行，平台和房间号一行 */
+.bulk-edit { grid-template-columns: 1fr 1fr; }
+.bulk-edit .bulk-who { grid-column: 1 / -1; }
+.bulk-head { display: none; }
+@media (min-width: 900px) {
+  .bulk-edit, .bulk-head { grid-template-columns: 7em minmax(8em, 1fr) minmax(8em, 1fr) 8.5em 10em; }
+  .bulk-edit .bulk-who { grid-column: auto; }
+  .bulk-head { display: grid; gap: 6px 8px; padding: 0 0 6px; color: var(--muted); font-size: 13px; }
+  .bulk-head::before { content: ""; }  /* 勾选那一列 */
+}
+.del-pick { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; cursor: pointer; }
+.del-pick input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* 选手库顶上跳到某一队的目录（11-21） */
+.team-index { display: flex; flex-wrap: wrap; gap: 2px 4px; font-size: 14px; }
+.team-index a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 8px; border-radius: 6px; text-decoration: none; }
+.team-index a:hover { background: var(--row-border); }
+/* 战队页的一行：勾选、队名和几个数、赛区的下拉（手机上下拉在下面一行） */
+.row.team-row { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
+.team-region { grid-column: 1 / -1; }
+@media (min-width: 640px) { .row.team-row { grid-template-columns: auto 1fr 15em; } .team-region { grid-column: auto; } }
 .bulk-bar { position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 16px;
   background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 -6px 18px rgba(0,0,0,.18); }
 /* 一键配队徽：勾选、队名、猜的那张、换一张 */

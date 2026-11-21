@@ -13,6 +13,7 @@
 //   test_manualpros.mjs  Liquipedia 上没有页面的选手：手动建资料
 //   test_stats.mjs     「数据」页：从匿名统计的数据库增量算数（Node 自带的 SQLite 当 D1）、页面
 //   test_observers.mjs 发布全部选手；主舞台 24 路、记下的直播间（观战 11-21 并进了主舞台）
+//   test_teams.mjs     分赛区、战队页、整队删、批量修改（名字、战队）、勾选几位一起删、改完回到原来的地方（11-21）
 //
 // 另外几个用法（tests/test_team_publish.py 用，和 tools/esports.py 对照）：
 //   --build 输入.json          输入 {"players", "events", "switches", "now", "teams"}，打印生成的 esports.json 和检查结果
@@ -81,5 +82,7 @@ if (args[0] === "--build") {
   await import("./test_stats.mjs");
   console.log(String.fromCharCode(10) + "发布全部选手、主舞台的直播间记忆");
   await import("./test_observers.mjs");
+  console.log(String.fromCharCode(10) + "分赛区、战队页、批量修改和删除（11-21）");
+  await import("./test_teams.mjs");
   process.exit(summary());
 }

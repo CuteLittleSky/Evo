@@ -24,6 +24,8 @@ import {
 } from "./auth.js";
 import { APP_JS, homePage, invitePage, layout, loginPage, membersPage, messagePage, publishBanner } from "./pages.js";
 import { eventsPage, logPage, playersPage, publishPage, roomsPage } from "./pages_esports.js";
+import { confirmPage, teamAnchor, teamsPage } from "./pages_teams.js";
+import { NONE, REGIONS, deletePlayers, deleteTeams, saveRegions, teamOverview, teamRegions } from "./teams.js";
 import { importEvents, importPlayers } from "./esports.js";
 import {
   addEvent, addPlayer, deleteEvent, deletePlayer, events, forgetRooms, importEventRows, importPlayerRows, mergeTeam, movePlayer, players, published, recentLog,
@@ -89,7 +91,7 @@ async function readFields(request) {
   const out = { teams: [] };
   if (!/^(application\/x-www-form-urlencoded|multipart\/form-data)/.test(request.headers.get("Content-Type") ?? "")) return out;
   const form = await request.formData();
-  const lists = { main_platform: [], main_room: [], main_name: [], forget: [] };
+  const lists = { main_platform: [], main_room: [], main_name: [], forget: [], d: [], del: [] };
   for (const [key, value] of form.entries()) {
     if (typeof value !== "string") continue;
     if (key === "teams") out.teams.push(value);
@@ -100,6 +102,8 @@ async function readFields(request) {
     out.main = lists.main_platform.map((platform, i) => ({ platform, room: lists.main_room[i] ?? "", name: lists.main_name[i] ?? "" }));
   }
   out.forget = lists.forget;  // 赛程页"记下的直播间"里勾了要忘掉的（11-21）
+  out.d = lists.d;  // 批量修改页勾选要删的选手（编号）
+  out.del = lists.del;  // 战队页勾选要删的队（队名）
   if ((out.table ?? "").length > MAX_FORM) throw new Refuse("提交的内容太长了：一次少粘贴一些");
   return out;
 }
@@ -131,8 +135,11 @@ function okText(params) {
   }
   if (params.get("ok") === "rooms") {
     const n = count("n");
-    return n ? `保存好了：改了 ${n} 位的直播间` : "没有改动（和原来一样，没存）";
+    return n ? `保存好了：改了 ${n} 位` : "没有改动（和原来一样，没存）";
   }
+  if (params.get("ok") === "regions") return count("n") ? `保存好了：改了 ${count("n")} 支队的赛区` : "没有改动（和原来一样，没存）";
+  if (params.get("ok") === "pdeleted") return `删掉了 ${count("n")} 位选手`;
+  if (params.get("ok") === "tdeleted") return `删掉了 ${count("teams")} 支队（连同 ${count("players")} 位选手）`;
   if (params.get("ok") === "imported") {
     const added = Number.parseInt(params.get("added"), 10) || 0;
     const changed = Number.parseInt(params.get("changed"), 10) || 0;
@@ -273,31 +280,90 @@ export async function handle(request, env, now = Date.now()) {
   }
 
   // ---------- 选手库 ----------
-  if (path === "/players" || path.startsWith("/players/") || path === "/teams/rename" || path === "/teams/merge") {
+  if (path === "/players" || path.startsWith("/players/") || ["/teams", "/teams/rename", "/teams/merge", "/teams/regions", "/teams/delete"].includes(path)) {
+    // 赛区（11-21）：地址里的 region / view 只认这几个，别的当作"全部"
+    const regionParam = (text) => (Object.hasOwn(REGIONS, text) || text === NONE ? text : "all");
+    const region = regionParam(url.searchParams.get("region") ?? "");
     const show = async (options = {}, status = 200) => {
       const [items, logos, changed] = await Promise.all([players(bucket), teamLogos(bucket), unpublished(env, now)]);
-      return respond(playersPage(me, items, { now, logos, banner: publishBanner(me, changed, now), ...options }), { status });
+      return respond(playersPage(me, items, { now, logos, region, regions: await teamRegions(bucket, items), banner: publishBanner(me, changed, now),
+                                              ...options }), { status });
     };
-    // 一张表批量填直播间（11-19）
+    // 一张表批量修改（11-19 批量填直播间，11-21 名字、战队也能改，按赛区看）。view：pending（默认）、all、大区、none
+    const viewParam = (text) => (text === "all" || text === "pending" ? text : regionParam(text) === "all" ? "pending" : text);
     const showRooms = async (options = {}, status = 200) => {
       const [items, changed] = await Promise.all([players(bucket), unpublished(env, now)]);
-      return respond(roomsPage(me, items, { now, banner: publishBanner(me, changed, now), ...options }), { status });
+      return respond(roomsPage(me, items, { now, regions: await teamRegions(bucket, items), banner: publishBanner(me, changed, now), ...options }),
+                     { status });
+    };
+    // 战队页（11-21）
+    const showTeams = async (options = {}, status = 200) => {
+      const [rows, changed] = await Promise.all([teamOverview(bucket, now), unpublished(env, now)]);
+      return respond(teamsPage(me, rows, { now, region, banner: publishBanner(me, changed, now), ...options }), { status });
     };
     if (method === "GET") {
-      if (path === "/players/rooms") return showRooms({ all: url.searchParams.get("all") === "1", ok: okText(url.searchParams) });
+      if (path === "/players/rooms") {
+        const view = url.searchParams.get("all") === "1" ? "all" : viewParam(url.searchParams.get("view") ?? "");
+        return showRooms({ view, ok: okText(url.searchParams) });
+      }
+      if (path === "/teams") return showTeams({ ok: okText(url.searchParams) });
       return path === "/players" ? show({ ok: okText(url.searchParams) }) : notFound();
     }
     if (!can(me, "edit")) return readOnly();
     let form = {};
     try {
       form = await readFields(request);
+      const view = viewParam(form.view ?? (form.all === "1" ? "all" : ""));
+      const back = regionParam(form.view ?? "") === "all" ? "" : `&region=${form.view}`;  // 改完回到选手库的同一个赛区标签
       if (path === "/players/rooms") {
         try {
           const n = await saveRooms(bucket, me, form, now);
-          return redirect(`/players/rooms?ok=rooms&n=${n}${form.all === "1" ? "&all=1" : ""}`);
+          return redirect(`/players/rooms?ok=rooms&n=${n}${view === "pending" ? "" : `&view=${view}`}`);
         } catch (error) {
           if (!(error instanceof Refuse)) throw error;
-          return showRooms({ all: form.all === "1", error: error.message, draft: form }, 400);
+          return showRooms({ view, error: error.message, draft: form }, 400);
+        }
+      }
+      if (path === "/players/bulk-delete") {  // 批量修改页勾选的几位：先问一次，再删（11-21）
+        try {
+          if (form.confirm !== "1") {
+            const items = await players(bucket);
+            const picked = items.filter((p) => (form.d ?? []).includes(p.id));
+            if (!picked.length) throw new Refuse("没有勾选要删的选手：在要删的人前面打勾，再点“删掉勾选的…”");
+            const backTo = `/players/rooms${view === "pending" ? "" : `?view=${view}`}`;
+            return respond(confirmPage(me, { title: `删掉 ${picked.length} 位选手？`, lead: "下面这几位会从选手库里删掉（赛程里的队不动）：",
+              items: picked.map((p) => ({ text: p.name, meta: p.team })), action: "/players/bulk-delete",
+              hidden: [...picked.map((p) => ["d", p.id]), ["view", view]], back: backTo, button: `确定删掉这 ${picked.length} 位` }));
+          }
+          const n = await deletePlayers(bucket, me, form.d ?? [], now);
+          return redirect(`/players/rooms?ok=pdeleted&n=${n}${view === "pending" ? "" : `&view=${view}`}`);
+        } catch (error) {
+          if (!(error instanceof Refuse)) throw error;
+          return showRooms({ view, error: error.message }, 400);
+        }
+      }
+      if (path === "/teams/regions" || path === "/teams/delete") {
+        const regionBack = regionParam(form.region ?? "") === "all" ? "" : `region=${form.region}`;
+        try {
+          if (path === "/teams/regions") {
+            const n = await saveRegions(bucket, me, form, now);
+            return redirect(`/teams?ok=regions&n=${n}${regionBack ? `&${regionBack}` : ""}`);
+          }
+          const picked = [...new Set((form.del ?? []).map((t) => t.trim()).filter(Boolean))];
+          if (!picked.length) throw new Refuse("没有勾选要删的队：在要删的队前面打勾，再点“删掉勾选的队…”");
+          if (form.confirm !== "1") {
+            const items = await players(bucket);
+            const members = (t) => items.filter((p) => p.team === t);
+            return respond(confirmPage(me, { title: `删掉 ${picked.length} 支队？`, lead: "下面这几支队连同队里的选手一起删掉（队徽、赛区也去掉）：",
+              items: picked.map((t) => ({ text: t, meta: `${members(t).length} 位选手：${members(t).map((p) => p.name).join("、")}` })),
+              action: "/teams/delete", hidden: [...picked.map((t) => ["del", t]), ["region", form.region ?? ""]],
+              back: `/teams${regionBack ? `?${regionBack}` : ""}`, button: `确定删掉这 ${picked.length} 支队` }));
+          }
+          const result = await deleteTeams(bucket, me, picked, now);
+          return redirect(`/teams?ok=tdeleted&teams=${result.teams}&players=${result.players}${regionBack ? `&${regionBack}` : ""}`);
+        } catch (error) {
+          if (!(error instanceof Refuse)) throw error;
+          return showTeams({ error: error.message }, 400);
         }
       }
       if (path === "/players/add") {
@@ -321,13 +387,17 @@ export async function handle(request, env, now = Date.now()) {
       }
       const action = path.match(/^\/players\/([0-9a-f]{8})\/(save|delete|move)$/);
       if (!action) return notFound();
+      // 改完回到那个人（#p-…）、删了回到他那一队（#t-…）；换队以后他可能在别的赛区，回到"全部"
       if (action[2] === "move") {
         const moved = await movePlayer(bucket, me, action[1], form.team, form.rev, now);
-        return redirect(`/players?ok=${moved.emptied ? "moved_emptied" : "moved"}`);
+        return redirect(`/players?ok=${moved.emptied ? "moved_emptied" : "moved"}#p-${action[1]}`);
       }
-      if (action[2] === "save") await savePlayer(bucket, me, action[1], form, now);
-      else await deletePlayer(bucket, me, action[1], now);
-      return redirect(`/players?ok=${action[2] === "save" ? "saved" : "deleted"}`);
+      if (action[2] === "save") {
+        await savePlayer(bucket, me, action[1], form, now);
+        return redirect(`/players?ok=saved${back}#p-${action[1]}`);
+      }
+      const gone = await deletePlayer(bucket, me, action[1], now);
+      return redirect(`/players?ok=deleted${back}#${teamAnchor(gone.team)}`);
     } catch (error) {
       if (!(error instanceof Refuse)) throw error;
       return show({ error: error.message, draft: path === "/players/add" ? form : null,

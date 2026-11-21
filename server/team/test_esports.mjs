@@ -105,7 +105,7 @@ check("一支队几个人都行：2 人的队不提示", r.text.includes("2 人<
 // ---------- 修改、两个人同时改 ----------
 const kite = () => playerList().find((x) => x.name === "Kite");
 r = await editor.post(`/players/${kite().id}/save`, { rev: "1", name: "Kite", team: "星火电竞", platform: "douyu", room: "520014", liquipedia: "Kite_(player)" });
-check("改房间号 → 保存好了、rev 2", r.location === "/players?ok=saved" && kite().room === "520014" && kite().rev === 2 && kite().updatedBy === "Momona");
+check("改房间号 → 保存好了、rev 2、回到那个人（#p-…）", r.location === `/players?ok=saved#p-${kite().id}` && kite().room === "520014" && kite().rev === 2 && kite().updatedBy === "Momona");
 check("改动记录写明改了什么", logTexts()[0] === "修改选手 Kite：房间号 520014 → 520014".replace("520014 →", "520013 →") + "，Liquipedia （空） → Kite_(player)");
 r = await admin.post(`/players/${kite().id}/save`, { rev: "1", name: "Kite", team: "星火电竞", platform: "douyu", room: "1" });
 check("拿着旧的 rev 保存 → 提示别人刚改过、不保存", r.status === 400 && r.text.includes("Momona 刚改过") && kite().room === "520014");

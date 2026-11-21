@@ -143,6 +143,7 @@ export async function deletePlayer(bucket, by, id, now) {
     return item;
   });
   await writeLog(bucket, by, now, `删除选手 ${playerText(gone)}`);
+  return gone;
 }
 
 function teamName(text, what = "队名") {
@@ -169,56 +170,67 @@ export async function movePlayer(bucket, by, id, team, rev, now) {
   return diff;
 }
 
-// 一张表批量填直播间（2026-11-19 用户要的：原来一次只能改一个人，2ephykr 11-18 花了 54 分钟填了 20 人）。
-// form 里每个人三格：p_<编号> 平台、r_<编号> 房间号、v_<编号> 打开页面时的 rev。只存改过的；有一个人不对整批都不存，
-// 一条一条写清楚是谁；别人刚改过的那个人也不存（rev 对不上）。平台空着（"直播间待填"）只能是原来就待填、房间号也空着的
+// 一张表批量修改选手（2026-11-19 用户要的批量填直播间：原来一次只能改一个人，2ephykr 11-18 花了 54 分钟填了 20 人；
+// 2026-11-21 赛管毛毛要的"支持多条修改"：名字、战队也能改）。
+// form 里每个人几格：n_<编号> 名字、t_<编号> 战队（老页面没有这两格就照旧）、p_<编号> 平台、r_<编号> 房间号、v_<编号> 打开页面时的 rev。
+// 只存改过的；有一个人不对整批都不存，一条一条写清楚是谁；别人刚改过的那个人也不存（rev 对不上）。
+// 平台空着（"直播间待填"）只能是原来就待填、房间号也空着的（名字、战队照样能改）；名字、房间号改完以后也不能和别人重
 export async function saveRooms(bucket, by, form, now) {
   const result = await updateDoc(bucket, PLAYERS, emptyList, (list) => {
     const errors = [];
     const changed = [];
     for (const item of list.items) {
       if (!Object.hasOwn(form, `p_${item.id}`)) continue;
+      const name = Object.hasOwn(form, `n_${item.id}`) ? form[`n_${item.id}`] : item.name;
+      const team = Object.hasOwn(form, `t_${item.id}`) ? form[`t_${item.id}`] : item.team;
       const platform = squash(form[`p_${item.id}`]);
       const room = squash(form[`r_${item.id}`]);
-      if (!platform) {
-        if (room) errors.push(`「${item.name}」：填了房间号，先选平台`);
-        else if (item.platform) errors.push(`「${item.name}」：选一个平台（不开直播的选"不直播"）`);
-        continue;
-      }
       let fields;
       try {
-        fields = cleanPlayerFields({ ...item, platform, room });
+        if (!platform) {
+          if (room) throw new Refuse("填了房间号，先选平台");
+          if (item.platform) throw new Refuse("选一个平台（不开直播的选\"不直播\"）");
+          const checked = cleanPlayerFields({ ...item, name, team, platform: NO_STREAM, room: "" });  // 原来就待填：只查名字、战队
+          fields = { name: checked.name, team: checked.team, platform: "", room: "" };
+        } else {
+          const checked = cleanPlayerFields({ ...item, name, team, platform, room });
+          fields = { name: checked.name, team: checked.team, platform: checked.platform, room: checked.room };
+        }
       } catch (error) {
         if (!(error instanceof Refuse)) throw error;
         errors.push(`「${item.name}」：${error.message}`);
         continue;
       }
-      if (fields.platform === item.platform && fields.room === item.room) continue;
+      if (Object.keys(fields).every((k) => fields[k] === (item[k] ?? ""))) continue;
       const rev = form[`v_${item.id}`];
       if (rev !== undefined && rev !== "" && Number(rev) !== item.rev) {
-        errors.push(`「${item.name}」：${item.updatedBy} 刚改过（你打开以后），看一眼现在的样子再填`);
+        errors.push(`「${item.name}」：${item.updatedBy} 刚改过（你打开以后），看一眼现在的样子再改`);
         continue;
       }
       changed.push({ item, fields });
     }
     const after = new Map(list.items.map((p) => [p.id, p]));
-    for (const { item, fields } of changed) after.set(item.id, { ...item, platform: fields.platform, room: fields.room });
+    for (const { item, fields } of changed) after.set(item.id, { ...item, ...fields });
+    const names = new Map();
     const rooms = new Map();
     for (const p of after.values()) {
+      if (names.has(p.name)) errors.push(`名字「${p.name}」有两位了（「${names.get(p.name)}」和「${p.team}」各一位）`);
+      names.set(p.name, p.team);
       if (p.platform === NO_STREAM || !p.platform) continue;
       const key = `${p.platform}-${p.room}`;
       if (rooms.has(key)) errors.push(`${platformName(p.platform)} 房间 ${p.room} 同时填给了「${rooms.get(key)}」和「${p.name}」`);
       rooms.set(key, p.name);
     }
     if (errors.length) throw new Refuse(`没有保存，有 ${errors.length} 处要改：\n${errors.join("\n")}`);
-    for (const { item, fields } of changed) {
-      item.platform = fields.platform;
-      item.room = fields.room;
+    const shown = (p) => ({ ...p, platform: p.platform ? platformName(p.platform) : "直播间待填" });
+    return changed.map(({ item, fields }) => {
+      const before = shown(item);
+      Object.assign(item, fields);
       stamp(item, by, now);
-    }
-    return changed.map(({ item }) => `${item.name} ${item.platform === NO_STREAM ? platformName(item.platform) : `${platformName(item.platform)} ${item.room}`}`);
+      return `${before.name}：${changes(before, shown(item), PLAYER_LABELS).join("，")}`;
+    });
   });
-  if (result.length) await writeLog(bucket, by, now, `批量填直播间（${result.length} 位）：${result.join("、")}`);
+  if (result.length) await writeLog(bucket, by, now, `批量修改选手（${result.length} 位）：${result.join("；")}`);
   return result.length;
 }
 
@@ -254,6 +266,10 @@ export async function mergeTeam(bucket, by, from, to, now) {
     delete data.items[oldName];
     return moved;
   });
+  await updateDoc(bucket, "manual/regions.json", () => ({ items: {} }), (data) => {  // 手动标的赛区（teams.js）：那一队没标过才用这一队的
+    if (data.items[oldName] && !data.items[newName]) data.items[newName] = data.items[oldName];
+    delete data.items[oldName];
+  });
   await writeLog(bucket, by, now, `战队「${oldName}」并进「${newName}」（${count} 位选手${changed ? `，赛程里 ${changed} 场跟着改了` : ""}`
     + `${logo ? `，队徽用「${oldName}」的` : ""}）`);
 }
@@ -281,12 +297,14 @@ export async function renameTeam(bucket, by, from, to, now) {
       }
     }
   });
-  await updateDoc(bucket, "manual/teams.json", () => ({ items: {} }), (data) => {  // 队徽跟着搬（logos.js）
-    if (data.items[oldName]) {
-      data.items[newName] = data.items[oldName];
-      delete data.items[oldName];
-    }
-  });
+  for (const key of ["manual/teams.json", "manual/regions.json"]) {  // 队徽（logos.js）、手动标的赛区（teams.js）跟着搬
+    await updateDoc(bucket, key, () => ({ items: {} }), (data) => {
+      if (data.items[oldName]) {
+        data.items[newName] = data.items[oldName];
+        delete data.items[oldName];
+      }
+    });
+  }
   await writeLog(bucket, by, now, `战队改名 ${oldName} → ${newName}（${count} 位选手，赛程里也跟着改了）`);
 }
 

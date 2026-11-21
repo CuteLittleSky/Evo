@@ -9,6 +9,8 @@ import { PUBLIC_URL, TARGETS, describe } from "./publish.js";
 import { ago, escape, layout, logList, noteList } from "./pages.js";
 import { PUBLIC_LOGO_URL } from "./logos.js";
 import { logoBox, logoHref } from "./pages_logos.js";
+import { regionName, regionTabs, teamAnchor } from "./pages_teams.js";
+import { NONE } from "./teams.js";
 
 function notes({ error = "", ok = "" }) {
   return (error ? `<div class="note note-error" role="alert">${escape(error).replace(/\n/g, "<br>")}</div>` : "")
@@ -19,10 +21,10 @@ function by(item, now) {
   return `${escape(item.updatedBy ?? item.createdBy ?? "")} ${escape(ago(item.updated ?? item.created, now))}改的`;
 }
 
-function confirmDelete(action, what) {
+function confirmDelete(action, what, hidden = "") {
   return `<details class="act"><summary class="btn btn-danger">删除</summary>
     <div class="panel"><p class="small">删掉「${escape(what)}」？删了找不回来，要的话得重新添加。</p>
-      <form method="post" action="${action}"><button class="btn btn-danger btn-wide" type="submit">确定删除</button></form></div></details>`;
+      <form method="post" action="${action}">${hidden}<button class="btn btn-danger btn-wide" type="submit">确定删除</button></form></div></details>`;
 }
 
 // ---------- 选手库 ----------
@@ -37,9 +39,9 @@ function playerPlatformOptions(selected) {
     + `<option value="${NO_STREAM}"${selected === NO_STREAM ? " selected" : ""}>${NO_STREAM_NAME}</option>`;
 }
 
-function playerForm(action, p, teamNames, submit) {
+function playerForm(action, p, teamNames, submit, view = "") {
   return `<form class="stack" method="post" action="${action}">
-    ${p.rev ? `<input type="hidden" name="rev" value="${p.rev}">` : ""}
+    ${p.rev ? `<input type="hidden" name="rev" value="${p.rev}">` : ""}${view ? `<input type="hidden" name="view" value="${escape(view)}">` : ""}
     <label class="field">选手<span class="help">直播间里的名字，比如 Kite</span>
       <input class="input" name="name" value="${escape(p.name)}" maxlength="40" required autocomplete="off"></label>
     <label class="field">战队<span class="help">从下拉里选已有的队，或者写一个新队名</span>
@@ -79,56 +81,75 @@ function pendingRooms(items) {
     <p><a class="btn" href="/players/rooms">在一张表里填 ›</a></p></details>`;
 }
 
-// ---------- 一张表批量填直播间（2026-11-19 用户要的）----------
-// 默认只列直播间待填的人，可以切到全部；按队分组。只存改过的，有一个不对整批不存（data.js 的 saveRooms）。
-// draft：保存出错时填的样子（form 原样），照它显示
-export function roomsPage(me, items, { now, all = false, error = "", ok = "", draft = null, banner = "" }) {
+// ---------- 一张表批量修改选手（2026-11-19 用户要的批量填直播间；2026-11-21 赛管毛毛要的"支持多条修改"：名字、战队也能改，按赛区看，勾选几位一起删）----------
+// view：pending 直播间待填的（默认）、all 全部、大区 / none 某个赛区。按队分组。只存改过的，有一个不对整批不存（data.js 的 saveRooms）。
+// 勾选的几位点"删掉勾选的…"先到确认页（worker.js 的 /players/bulk-delete）。draft：保存出错时填的样子（form 原样），照它显示
+export function roomsPage(me, items, { now, view = "pending", regions = {}, error = "", ok = "", draft = null, banner = "" }) {
   const editable = can(me, "edit");
+  const regionOf = (p) => regions[p.team]?.region ?? NONE;
   const pendingCount = items.filter((p) => !p.platform).length;
-  const shown = all ? items : items.filter((p) => !p.platform || (draft && Object.hasOwn(draft, `p_${p.id}`)));
+  const shown = view === "all" ? items
+    : view === "pending" ? items.filter((p) => !p.platform || (draft && Object.hasOwn(draft, `p_${p.id}`)))
+      : items.filter((p) => regionOf(p) === view || (draft && Object.hasOwn(draft, `p_${p.id}`)));
   const teams = [...new Set(shown.map((p) => p.team))];
   const value = (p, key, current) => (draft && Object.hasOwn(draft, `${key}_${p.id}`) ? draft[`${key}_${p.id}`] : current);
+  const off = editable ? "" : " disabled";
   const row = (p) => {
     const platform = value(p, "p", p.platform);
     const room = value(p, "r", p.room);
-    return `<li class="bulk-row">
-      <div class="bulk-who"><b>${escape(p.name)}</b>${p.platform ? "" : '<span class="badge badge-warn">待填</span>'}
+    return `<li class="bulk-row bulk-edit" id="p-${p.id}">
+      <div class="bulk-who">${editable ? `<label class="del-pick"><input type="checkbox" name="d" value="${p.id}" aria-label="勾选 ${escape(p.name)}（删掉用）"><span class="small muted">勾选</span></label>` : ""}
+        ${p.platform ? "" : '<span class="badge badge-warn">待填</span>'}
         ${p.platform && p.platform !== NO_STREAM ? `<a class="small" href="${escape(roomUrl(p.platform, p.room))}" target="_blank" rel="noopener noreferrer">打开直播间</a>` : ""}</div>
       <input type="hidden" name="v_${p.id}" value="${p.rev ?? ""}">
-      <select class="input" name="p_${p.id}" aria-label="${escape(p.name)} 的平台"${editable ? "" : " disabled"}>
+      <input class="input" name="n_${p.id}" value="${escape(value(p, "n", p.name))}" aria-label="${escape(p.name)} 的名字" maxlength="40" required autocomplete="off"${off}>
+      <input class="input" name="t_${p.id}" value="${escape(value(p, "t", p.team))}" list="team-names" aria-label="${escape(p.name)} 的战队" maxlength="40" required autocomplete="off"${off}>
+      <select class="input" name="p_${p.id}" aria-label="${escape(p.name)} 的平台"${off}>
         ${platform ? "" : '<option value="" selected>直播间待填</option>'}${platformOptions(platform)}
         <option value="${NO_STREAM}"${platform === NO_STREAM ? " selected" : ""}>${NO_STREAM_NAME}</option></select>
       <input class="input" name="r_${p.id}" value="${escape(room)}" placeholder="房间号" aria-label="${escape(p.name)} 的房间号" maxlength="24"
-        autocomplete="off" autocapitalize="off" spellcheck="false"${editable ? "" : " disabled"}>
+        autocomplete="off" autocapitalize="off" spellcheck="false"${off}>
     </li>`;
   };
-  const groups = teams.map((team) => `<section class="bulk-team"><h3>${escape(team)}</h3>
+  const groups = teams.map((team) => `<section class="bulk-team" id="${teamAnchor(team)}"><h3>${escape(team)}${view === "pending" || view === "all"
+    ? ` <span class="badge">${escape(regionName(regions[team]?.region))}</span>` : ""}</h3>
+    <div class="bulk-head" aria-hidden="true"><span>名字</span><span>战队</span><span>平台</span><span>房间号</span></div>
     <ul class="list bulk-list">${shown.filter((p) => p.team === team).map(row).join("")}</ul></section>`).join("");
-  const tabs = `<nav class="tabs" aria-label="列哪些人">
-    <a href="/players/rooms"${all ? "" : ' aria-current="page"'}>直播间待填的（${pendingCount}）</a>
-    <a href="/players/rooms?all=1"${all ? ' aria-current="page"' : ""}>全部（${items.length}）</a></nav>`;
-  return layout({ title: "批量填直播间", me, current: "players", banner, body: `
+  const counts = {};
+  for (const p of items) counts[regionOf(p)] = (counts[regionOf(p)] ?? 0) + 1;
+  const href = (k) => (k === "pending" ? "/players/rooms" : `/players/rooms?view=${k}`);
+  const tabs = regionTabs(view, counts, href, items.length, { label: "位选手",
+    extra: [`<a href="/players/rooms"${view === "pending" ? ' aria-current="page"' : ""}>直播间待填（${pendingCount}）</a>`] });
+  const datalist = `<datalist id="team-names">${[...teamsOf(items).keys()].map((t) => `<option value="${escape(t)}">`).join("")}</datalist>`;
+  return layout({ title: "批量修改选手", me, current: "players", banner, body: `
 <p class="small"><a href="/players">‹ 选手库</a></p>
-<div class="stack"><h1>批量填直播间</h1>
-  <p class="muted">一张表里改很多人的平台和房间号，点一次保存。房间号是直播间地址最后那一段：一般是数字；抖音也可以是主播的抖音号。不开直播的选"不直播"，房间号空着。
-    只存改过的；有一个人不对就整批都不存，会说是谁。</p></div>
+<div class="stack"><h1>批量修改选手</h1>
+  <p class="muted">一张表里改很多人的名字、战队、平台和房间号，点一次保存。战队可以从下拉里选，也可以写新队名（就是换队）。房间号是直播间地址最后那一段：一般是数字；抖音也可以是主播的抖音号。
+    不开直播的选"不直播"，房间号空着。只存改过的；有一个人不对就整批都不存，会说是谁。要删的人先勾上，再点"删掉勾选的…"（删之前会再问一次）。</p></div>
 ${notes({ error, ok })}
 ${tabs}
-${shown.length ? `<form class="stack" method="post" action="/players/rooms">${all ? '<input type="hidden" name="all" value="1">' : ""}
+${shown.length ? `${datalist}<form class="stack" method="post" action="/players/rooms"><input type="hidden" name="view" value="${escape(view)}">
   ${groups}
   ${editable ? `<div class="bulk-bar"><button class="btn btn-primary" type="submit">保存改过的</button>
+    <button class="btn btn-danger" type="submit" formaction="/players/bulk-delete" formnovalidate>删掉勾选的…</button>
     <span class="small muted">改了还没保存的，换页、刷新就没了</span></div>` : ""}
-</form>` : `<p class="muted">${all ? "选手库里还没有人。" : "没有直播间待填的人了。"}</p>`}` });
+</form>` : `<p class="muted">${view === "pending" ? "没有直播间待填的人了。" : "这里还没有人。"}</p>`}` });
 }
 
-export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "", logos = {}, banner = "" }) {
+// region（11-21 赛管要的分赛区）：all 全部，或者一个大区 / none 没标赛区；regions 是 teams.js 的 teamRegions。
+// 每支队、每个人有编号（#t-…、#p-…）：改完、换队、删人以后回到原来的地方，不跳回最上面（用户 11-21："改动一条保存直接刷新到最上面了，又要拖下来找"）
+export function playersPage(me, items, { now, error = "", ok = "", draft = null, draftTable = "", logos = {}, banner = "", regions = {}, region = "all" }) {
   const editable = can(me, "edit");
-  const teams = teamsOf(items);
+  const regionOf = (team) => regions[team]?.region ?? NONE;
+  const allTeams = teamsOf(items);
+  const teams = new Map([...allTeams].filter(([team]) => region === "all" || regionOf(team) === region));
+  const view = region === "all" ? "" : region;
+  const hiddenView = view ? `<input type="hidden" name="view" value="${escape(view)}">` : "";
   const problems = checkPlayers(items).errors;
-  const datalist = `<datalist id="team-names">${[...teams.keys()].map((t) => `<option value="${escape(t)}">`).join("")}</datalist>`;
+  const datalist = `<datalist id="team-names">${[...allTeams.keys()].map((t) => `<option value="${escape(t)}">`).join("")}</datalist>`;
   const blank = { name: "", team: "", platform: "douyu", room: "", liquipedia: "" };
   const add = editable ? `<details class="card fold"${!items.length || draft ? " open" : ""}><summary class="fold-head"><span>添加选手</span><span class="muted small">一个一个加</span></summary>
-    ${playerForm("/players/add", draft ? { ...blank, ...draft, rev: undefined } : blank, teams, "添加")}</details>` : "";
+    ${playerForm("/players/add", draft ? { ...blank, ...draft, rev: undefined } : blank, allTeams, "添加")}</details>` : "";
   const sections = [...teams.keys()].map((team) => {
     const members = items.filter((p) => p.team === team);
     const size = `<span class="badge">${members.length} 人</span>`;  // 一支队几个人不限（11-18 用户定的）
@@ -137,7 +158,7 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
         <label class="field">新队名<span class="help">选手库和赛程里一起改</span>
           <input class="input" name="to" value="${escape(team)}" maxlength="40" required></label>
         <button class="btn btn-primary" type="submit">改名</button></form></details>` : "";
-    const others = [...teams.keys()].filter((t) => t !== team);
+    const others = [...allTeams.keys()].filter((t) => t !== team);
     // 两支队并成一支（11-19 用户要的）：这一队的人都挪过去，赛程跟着改。队名用页面上那一份下拉（datalist），不每个按钮放一份 40 个选项
     const merge = editable && others.length ? `<details class="act"><summary class="btn">并到另一支队</summary>
       <form class="panel" method="post" action="/teams/merge"><input type="hidden" name="from" value="${escape(team)}">
@@ -148,12 +169,12 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
         <button class="btn btn-primary" type="submit">并过去</button></form></details>` : "";
     // 选手换队（11-19 用户要的）：从下拉里选，或者写一个新队名
     const move = (p) => `<details class="act"><summary class="btn">换队</summary>
-      <form class="panel" method="post" action="/players/${p.id}/move"><input type="hidden" name="rev" value="${p.rev}">
+      <form class="panel" method="post" action="/players/${p.id}/move"><input type="hidden" name="rev" value="${p.rev}">${hiddenView}
         <label class="field">换到哪一队<span class="help">点输入框从下拉里选；选手库里还没有的队，直接写新队名</span>
           <input class="input" name="team" list="team-names" maxlength="40" required autocomplete="off"></label>
         <p class="small muted">只挪「${escape(p.name)}」一个人，赛程不动。整支队改名、并队用队名旁边的按钮。</p>
         <button class="btn btn-primary" type="submit">换过去</button></form></details>`;
-    const rows = members.map((p) => `<li class="row">
+    const rows = members.map((p) => `<li class="row" id="p-${p.id}">
       <div class="row-main">
         <div class="row-name">${escape(p.name)}</div>
         <div class="row-meta">${!p.platform ? '<span class="badge badge-warn">直播间待填</span>' : p.platform === NO_STREAM ? '<span class="badge">不直播</span>'
@@ -161,25 +182,29 @@ export function playersPage(me, items, { now, error = "", ok = "", draft = null,
           ${p.liquipedia ? `<span>Liquipedia：${escape(p.liquipedia)}</span>` : ""}<span>${by(p, now)}</span></div>
       </div>
       ${editable ? `<div class="row-actions">
-        <details class="act"><summary class="btn">改</summary><div class="panel">${playerForm(`/players/${p.id}/save`, p, teams, "保存")}</div></details>
+        <details class="act"><summary class="btn">改</summary><div class="panel">${playerForm(`/players/${p.id}/save`, p, allTeams, "保存", view)}</div></details>
         ${move(p)}
-        ${confirmDelete(`/players/${p.id}/delete`, p.name)}</div>` : ""}
+        ${confirmDelete(`/players/${p.id}/delete`, p.name, hiddenView)}</div>` : ""}
     </li>`).join("");
     const logo = logos[team]?.logo;
     const badge = `<a class="logo-link" href="${logoHref(team)}" title="队徽">${logo ? logoBox(PUBLIC_LOGO_URL + logo, team, "small")
       : '<span class="logo-box logo-small logo-empty" aria-hidden="true">＋</span>'}<span class="small">${logo ? "队徽" : "加队徽"}</span></a>`;
-    return `<section class="card"><div class="title-row team-head">${badge}<h2>${escape(team)}</h2>${size}<span class="grow"></span>${rename}${merge}</div>
+    const where = regions[team] ? `<a class="badge" href="/teams${regionOf(team) === NONE ? "" : `?region=${regionOf(team)}`}" title="在战队页改赛区">${escape(regionName(regionOf(team)))}${regions[team].guessed ? "（猜的）" : ""}</a>` : "";
+    return `<section class="card" id="${teamAnchor(team)}"><div class="title-row team-head">${badge}<h2>${escape(team)}</h2>${size}${where}<span class="grow"></span>${rename}${merge}</div>
       <ul class="list">${rows}</ul></section>`;
   }).join("");
   return layout({ title: "选手库", me, current: "players", banner, body: `
 <div class="stack"><h1>选手库</h1>
-  <p class="muted">${items.length} 位选手、${teams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p>
-  ${editable && items.length ? '<p class="links"><a href="/players/rooms">在一张表里批量填直播间 ›</a><a href="/logos">一键配队徽 ›</a></p>' : ""}</div>
+  <p class="muted">${items.length} 位选手、${allTeams.size} 支队。一支队几个人都行（不开直播的平台选"不直播"），一个选手只能在一支队。点平台和房间号能打开直播间核对。</p>
+  ${items.length ? `<p class="links">${editable ? `<a href="/players/rooms${view ? `?view=${view}` : ""}">在一张表里批量修改 ›</a>` : ""}<a href="/teams">战队和赛区 ›</a>${editable ? '<a href="/logos">一键配队徽 ›</a>' : ""}</p>` : ""}</div>
 ${notes({ error, ok })}
 ${noteList("error", `发布前要改好（${problems.length} 处）：`, problems)}
 ${pendingRooms(items)}
 ${datalist}${add}
-${sections || `<p class="muted">还没有选手。</p>`}
+${items.length ? regionTabs(region, Object.fromEntries([...new Set([...allTeams.keys()].map(regionOf))].map((k) => [k, [...allTeams.keys()].filter((t) => regionOf(t) === k).length])),
+  (k) => (k === "all" ? "/players" : `/players?region=${k}`), allTeams.size) : ""}
+${teams.size > 1 ? `<nav class="team-index" aria-label="跳到某一队">${[...teams.keys()].map((t) => `<a href="#${teamAnchor(t)}">${escape(t)}</a>`).join("")}</nav>` : ""}
+${sections || `<p class="muted">${items.length ? "这个赛区还没有队。" : "还没有选手。"}</p>`}
 ${editable ? importBox("/players/import", PLAYER_COLUMNS, "Kite\t星火电竞\t斗鱼\t520013\t", draftTable) : ""}` });
 }
 
