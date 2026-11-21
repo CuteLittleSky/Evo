@@ -38,7 +38,6 @@
     <div class="setting">
       <div class="setting-text">
         <label class="setting-name" for="rec-size">分辨率</label>
-        <div class="setting-desc">原画面和游戏窗口一样大；选小的，抓的时候就缩小，文件也小</div>
       </div>
       <select id="rec-size" name="size">
         {% for one in rec.sizes %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.size }}>{{ one.name }}</option>{% endfor %}
