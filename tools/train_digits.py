@@ -160,7 +160,7 @@ def training_rows(conn):
         else:
             continue  # "要人看"还没核对的、借不到答案的
         out.append({"id": r["id"], "img": r["img"], "label": label_text(label, r["field"]), "group": group,
-                    "source": r["source"], "field": r["field"]})
+                    "source": r["source"], "field": r["field"], "engine": r["engine_value"]})
     return out
 
 
@@ -293,15 +293,30 @@ def tally(items, reads, threshold, ranges):
     return right, wrong, missed
 
 
+THRESHOLDS = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.93, 0.95, 0.97, 0.98, 0.99]
+
+
+def engine_wrong(items):
+    """现在的引擎在这些块上读错几块（读出了数、和答案不一样）。"""
+    return sum(1 for it in items
+               if data.number(it.get("engine")) is not None and data.number(it.get("engine")) != data.number(it["label"] or None))
+
+
 def pick_threshold(items, reads, ranges):
-    """在验证用的视频上挑"把握"的门槛：读错的每一块算 20 块没读出那么糟（读错会记进战绩，没读出只是留空）。"""
+    """在验证用的视频上挑"把握"的门槛：读错不能比现在的引擎多（同一批块上数；用户定的"读错不能比引擎多"），
+    满足的门槛里挑读对最多的（一样多挑低的）；一个都满足不了就用最严的。返回 (门槛, 读对, 读错, 没读出)。
+    第 4 次训练以前是"读错一块算 20 块没读出"：验证视频只有约 200 块、还有没复核到的错答案，门槛被推到 0.99，
+    考卷上读对了字、只是把握不到 0.99 的有 176 块。"""
+    limit = engine_wrong(items)
     best = None
-    for t in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99]:
+    for t in THRESHOLDS:
         right, wrong, missed = tally(items, reads, t, ranges)
-        cost = wrong * 20 + missed
-        if best is None or cost < best[0]:
-            best = (cost, t, right, wrong, missed)
-    return best[1:]
+        if wrong <= limit and (best is None or right > best[1]):
+            best = (t, right, wrong, missed)
+    if best is None:
+        t = THRESHOLDS[-1]
+        best = (t, *tally(items, reads, t, ranges))
+    return best
 
 
 def use_train_env():
@@ -408,12 +423,11 @@ def cmd_train(args):
                          "values (?, ?, ?, ?, ?, ?, ?, ?)",
                          (run, epoch, total / steps, right / len(val_items), wrong, missed, len(val_items), time.time() - t0))
             conn.commit()
-            # 挑最好的一轮：每一轮先挑好"把握"门槛再比（读错一块算 20 块没读出那么糟）。
+            # 挑最好的一轮：每一轮先挑好"把握"门槛（读错不比引擎多），再比读对几块。
             # 不能固定用 0.8 比：那样后面学得好、只是门槛该更高的几轮会被前面还没学会的一轮比下去（第 1 次训练就是这样）
-            _, _, w_best, m_best = pick_threshold(val_items, reads, ranges)
-            cost = w_best * 20 + m_best
-            if best is None or cost <= best[0]:  # 一样好时选后面的（学得更久）
-                best = (cost, epoch)
+            _, r_best, _, _ = pick_threshold(val_items, reads, ranges)
+            if best is None or r_best >= best[0]:  # 一样好时选后面的（学得更久）
+                best = (r_best, epoch)
                 torch.save(model.state_dict(), best_path)
             print(f"第 {epoch}/{args.epochs} 轮：loss {total / steps:.3f}，验证 读对 {right}/{len(val_items)}，"
                   f"读错 {wrong}，没读出 {missed}（{time.time() - t0:.0f} 秒）", flush=True)
@@ -576,10 +590,42 @@ def cmd_disputes(args):
     report_disputes(mark_disputes(conn, session, run, run_channels(path.with_suffix(".json"))))
 
 
+def cmd_rethreshold(args):
+    """不重新训练，只按现在的规则和答案（复核以后会变）在验证视频上重新挑门槛，再考一遍考卷（Evo 自己的环境）。"""
+    import onnxruntime as ort
+
+    conn = data.connect()
+    run = args.run or conn.execute("select max(id) from train_runs where status='done'").fetchone()[0]
+    info = conn.execute("select * from train_runs where id=?", (run,)).fetchone()
+    if info is None or not info["model_path"]:
+        sys.exit("还没有训练好的小模型：先训练（见文件开头）")
+    path = data.TRAIN / info["model_path"]
+    channels = run_channels(path.with_suffix(".json"))
+    ranges = field_ranges()
+    vid, vname = val_source(conn)
+    val_items = [r for r in training_rows(conn) if r["source"] == vid and r["group"] != "extra"]
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 4
+    session = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
+    probs = session.run(None, {"x": np.stack([prepare(load_crop(it["img"]), channels) for it in val_items])})[0]
+    threshold, right, wrong, missed = pick_threshold(val_items, [decode(p) for p in probs], ranges)
+    conn.execute("update train_runs set threshold=?, val_right=?, val_wrong=?, val_missed=?, val_n=? where id=?",
+                 (threshold, right, wrong, missed, len(val_items), run))
+    conn.commit()
+    meta_path = path.with_suffix(".json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["threshold"] = threshold
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    print(f"第 {run} 次训练重新挑门槛：{threshold}（{vname} 的 {len(val_items)} 块：读对 {right}，读错 {wrong}，没读出 {missed}；"
+          f"引擎在这些块上读错 {engine_wrong(val_items)} 块）")
+    args.run = run
+    cmd_exam(args)
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="训练读数字的小模型，用考卷考")
-    parser.add_argument("command", choices=("train", "exam", "disputes"))
+    parser.add_argument("command", choices=("train", "exam", "disputes", "rethreshold"))
     parser.add_argument("--run", type=int, help="exam、disputes：用第几次训练的小模型（默认最新的）")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--per-epoch", type=int, default=40000, help="每一轮抽多少块")
@@ -589,7 +635,7 @@ def main():
     parser.add_argument("--cpu", action="store_true", help="不用显卡")
     parser.add_argument("--no-exam", action="store_true", help="训练完不自动考")
     args = parser.parse_args()
-    {"train": cmd_train, "exam": cmd_exam, "disputes": cmd_disputes}[args.command](args)
+    {"train": cmd_train, "exam": cmd_exam, "disputes": cmd_disputes, "rethreshold": cmd_rethreshold}[args.command](args)
 
 
 if __name__ == "__main__":
