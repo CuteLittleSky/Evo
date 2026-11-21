@@ -691,9 +691,26 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .locked-foot { margin: 0; color: var(--muted); font-size: 12px; }
 
 /* ---------- 设置页 ---------- */
-.settings-layout { display: grid; grid-template-columns: 1fr minmax(280px, 350px); gap: 20px; align-items: start; }
-.settings-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.settings-side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }  /* 右边一列：关于 Evo + 鸣谢 */
+/* 三列：分类 | 设置 | 关于 Evo + 鸣谢（2026-11-21 加了分类）。内容区窄了：关于挪到设置下面 → 分类变成上面一排（见下面 @container） */
+.settings-layout { display: grid; grid-template-columns: 132px minmax(0, 1fr) minmax(260px, 320px);
+  grid-template-areas: "nav main side"; gap: 20px; align-items: start; }
+.settings-main { grid-area: main; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.settings-side { grid-area: side; display: flex; flex-direction: column; gap: 20px; min-width: 0; }  /* 右边一列：关于 Evo + 鸣谢 */
+/* 分类：滚动时停在上面；样子跟侧边栏的导航一样（选中的一项有底色、左边一道红），只是没有图标、小一号 */
+.settings-nav { grid-area: nav; position: sticky; top: 24px; }
+.settings-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings-nav a { position: relative; display: flex; align-items: center; min-height: 36px; padding: 0 12px; border-radius: 6px;
+  color: var(--muted); font-size: 14px; white-space: nowrap; transition: color 0.15s, background-color 0.15s; }
+.settings-nav a:hover { color: var(--text); background: var(--side-hover-bg); }
+.settings-nav a[aria-current] { color: var(--text); background: var(--card); font-weight: 500; }
+.settings-nav a[aria-current]::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent); }
+[data-theme="light"] .settings-nav a[aria-current] { box-shadow: 0 0 0 1px var(--border); }
+.settings-nav a:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: -2px; }
+/* 点分类滚到的那一栏：标题上面留出卡片的边（卡片上边距 24 + 16） */
+.settings-card h2 { scroll-margin-top: 40px; }
+.settings-card h2[tabindex]:focus { outline: none; }
+.settings-card h2[tabindex]:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 4px; border-radius: 2px; }
 .settings-card, .about-card { padding: 24px; }
 /* 鸣谢卡片（2026-11-07）：三项上下排，中间细线隔开；名字之间至少 8px（ui-ux-pro-max：可点的东西别挤在一起） */
 .credits-card { padding: 8px 24px; }
@@ -930,8 +947,19 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 @container page (max-width: 1019px) {
   .stats-grid { grid-template-columns: 1fr; }  /* 数据页的卡片：两列放不下"你"那一列时变回一列 */
 }
+/* 设置页：放不下三列（设置那一列不到约 450）时关于挪到设置下面，分类照旧在左边；再窄分类变成上面一排、不再停在上面 */
+@container page (max-width: 919px) {
+  .settings-layout { grid-template-columns: 132px minmax(0, 1fr); grid-template-areas: "nav main" "nav side"; }
+}
+@container page (max-width: 679px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "nav" "main" "side"; }
+  .settings-nav { position: static; }
+  .settings-nav ul { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .settings-nav a { min-height: 32px; border: 1px solid var(--border); border-radius: 999px; }
+  .settings-nav a[aria-current]::before { display: none; }
+  .settings-nav a[aria-current] { border-color: var(--accent); }
+}
 @container page (max-width: 820px) {
-  .settings-layout { grid-template-columns: 1fr; }
   .ov-top, .ov-bottom { grid-template-columns: 1fr; }
   .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .beat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }

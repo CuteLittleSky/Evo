@@ -15,8 +15,15 @@
       theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
     }
     document.documentElement.dataset.theme = theme;
-    // 侧边栏收起过：画页面之前就收起（每次换页都是重新打开一页，晚了会先展开再收起）
-    try { if (localStorage.getItem("evo-side") === "collapsed") document.documentElement.classList.add("side-collapsed"); } catch (e) {}
+    // 侧边栏收起过：画页面之前就收起（每次换页都是重新打开一页，晚了会先展开再收起）。
+    // 在设置页点分类时自动收起的（evo-side-auto，2026-11-21 用户要的）：离开设置页就展开回来
+    try {
+      if (localStorage.getItem("evo-side-auto") && location.pathname !== "{{ url_for('settings') }}") {
+        localStorage.removeItem("evo-side-auto");
+        localStorage.removeItem("evo-side");
+      }
+      if (localStorage.getItem("evo-side") === "collapsed") document.documentElement.classList.add("side-collapsed");
+    } catch (e) {}
   })();
 </script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -360,18 +367,26 @@
       toggle.setAttribute("aria-label", label);
       toggle.dataset.tip = label;
     }
-    function setCollapsed(on, then) {
+    // auto：设置页点分类时自动收起的（离开设置页会展开回来）；自己点按钮展开、收起的不算，记住自己选的。
+    // 返回 Promise：过渡动画播完时 resolve（设置页等收好了再滚到那一栏，不然内容区宽度在滚的时候变）
+    function setCollapsed(on, then, auto) {
       try {
         if (on) localStorage.setItem("evo-side", "collapsed");
         else localStorage.removeItem("evo-side");
+        if (auto) localStorage.setItem("evo-side-auto", "1");
+        else localStorage.removeItem("evo-side-auto");
       } catch (e) {}
       function apply() { root.classList.toggle("side-collapsed", on); sync(); if (then) then(); }
-      if (collapsed() === on) { if (then) then(); return; }
-      if (!document.startViewTransition || reduceMotion.matches) { apply(); return; }
+      if (collapsed() === on) { if (then) then(); return Promise.resolve(); }
+      if (!document.startViewTransition || reduceMotion.matches) { apply(); return Promise.resolve(); }
       root.classList.add("side-moving");  // 只在这时给侧边栏和内容起名字（style.css），切换主题时还是整页淡入淡出
-      document.startViewTransition(apply).finished.finally(function () { root.classList.remove("side-moving"); });
+      return document.startViewTransition(apply).finished.finally(function () { root.classList.remove("side-moving"); });
     }
     toggle.addEventListener("click", function () { setCollapsed(!collapsed()); });
+    // 设置页点分类时调用：展开着就收起（记作自动收起的）；已经收起的不动，也不改成"自动"
+    window.evoAutoCollapseSide = function () {
+      return collapsed() ? Promise.resolve() : setCollapsed(true, null, true);
+    };
 
     // 只有图标的地方（收起时的每一项，和展开时标志右边的主题按钮）：鼠标指上去、用键盘移过去时在右边显示名字。
     // 一块 fixed 的提示放到那一项右边（挂在每一项上会被会滚动的侧边栏裁掉）；点了、移开、滚动时收起

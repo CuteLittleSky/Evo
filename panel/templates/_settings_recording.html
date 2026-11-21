@@ -2,7 +2,7 @@
    开关默认关（原则 2）；打开以后才显示画质、硬盘上限、保存位置。改了从下一局开始生效。
    保存的结果写在那一项下面（rec.note，只显示一次），保存完跳回这一栏（#h-video），页面最上面的提示看不到。
    找不到 ffmpeg、录像也没开着时整栏不显示（rec.shown）：正式版不带 ffmpeg，只有测试版（0.7.0b，实验功能）有这一栏 #}
-{% set rec = recording_settings() %}
+{% set rec = rec_view if rec_view is defined else recording_settings() %}{# settings.html 已经取过（分类栏要知道显示不显示） #}
 {% macro note(rec, where) -%}
 {% if rec.note and rec.note.where == where %}<div class="setting-desc rec-note-line {{ 'update-error' if rec.note.error else 'rec-saved' }}"
   role="{{ 'alert' if rec.note.error else 'status' }}" id="rec-note-{{ where }}">{{ rec.note.text }}</div>{% endif %}
