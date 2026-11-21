@@ -1581,6 +1581,12 @@ button.watch-mate:focus-visible { outline: 2px solid var(--p3-bg); outline-offse
 .ev-kill { --ev: var(--accent); }
 .ev-knock { --ev: var(--series-1); }  /* 击倒对手：橙色 */
 .ev-assist { --ev: var(--series-4); }  /* 助攻：粉色 */
+.ev-assist-knock { --ev: var(--series-3); }  /* 助攻击倒：琥珀色（和击倒的橙色一类） */
+/* 挨得很近的几个事件合成的标记：上下几段颜色（一个事件一段）、右上角个数（panel_recordings.group_marks） */
+.rec-mark-group { width: 14px; margin-left: -7px; display: flex; flex-direction: column; gap: 1px; background: var(--card); }
+.rec-seg { flex: 1; min-height: 0; border-radius: 1px; background: var(--ev, var(--muted)); }
+.rec-mark-count { position: absolute; top: -10px; right: -10px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+  background: var(--text); color: var(--card); font-size: 10px; line-height: 15px; text-align: center; pointer-events: none; }
 .rec-events { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .rec-event { font: inherit; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
   background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; }

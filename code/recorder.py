@@ -469,9 +469,12 @@ class Recording:
         return False
 
     def mark(self, kind, **info):
-        """记一个事件（倒地、成盒、被救、冠军、击杀……），时刻用现在。info 是附带的说明（如 kills=3）。"""
+        """记一个事件（倒地、成盒、被救、冠军、击杀……），时刻用现在。info 是附带的说明（如 kills=3）。
+        返回记下的那一项（之后还能改，比如击倒改成助攻击倒），还没开始录返回 None。"""
         if hasattr(self, "t0_us"):
             self.events.append({"t": round(self.since_t0(), 3), "kind": kind, **info})
+            return self.events[-1]
+        return None
 
     def hud_change(self):
         """右上角变了（击杀、伤害、剩余小队数……）：记下时刻。"""

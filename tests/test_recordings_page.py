@@ -5,6 +5,7 @@
 - 列表：从新到旧，每张卡片有缩略图、时长、传奇、模式和地图（对上的战绩里的）、名次、击杀、伤害、事件数；
   没 .json 的（上次崩了拼回来的）标"未完成"；上面写共多大、上限；没有录像时的说明
 - 播放页：播放器不自动播放；时间轴上事件标在对应位置（时长 120 秒、60 秒处的倒地在 50%），每个是按钮、念得出名字和时刻；
+  挨得很近的几个合成一个标记（几段颜色、个数、悬停写出全部），下面的列表照样一条一条列；
   断掉的那段画出来；下面的事件列表；对上的战绩能点过去；网址带 t= 从那一刻开始；删除要先确认
 - 录像文件支持拖动（Range 请求回 206）；缩略图；网址不能指到录像文件夹以外、分段文件夹里的文件
 - 删除：MP4、.json、.jpg 一起删；没有口令不让删
@@ -271,6 +272,26 @@ def checks():
     out["对上的战绩：名次、击杀、伤害，点了去战绩页展开那一局"] = (
         f'href="/matches?open={linked}"' in raw and "在战绩里看" in raw)
     out["删除要先确认（写着文件名、多大、不能恢复）"] = "data-confirm" in raw and new.name in raw and "不能恢复" in raw
+
+    # 挨得很近的事件合成一个标记（11-21 那局：6:21.8 倒地、6:22.1 助攻击倒；2:50.3 击杀、2:50.6 助攻）
+    close = make_recording(base, NOW - timedelta(minutes=50), "挨得近", 617, events=[
+        {"t": 160.4, "kind": "knock"}, {"t": 170.3, "kind": "kill", "kills": 1, "count": 1},
+        {"t": 170.6, "kind": "assist", "assists": 1, "count": 1}, {"t": 381.8, "kind": "knocked"},
+        {"t": 382.1, "kind": "assist_knock"}, {"t": 500, "kind": "dead"}])
+    raw = client.get("/recordings/watch", query_string={"v": f"{close.parent.name}/{close.stem}"}).get_data(as_text=True)
+    marks = re.findall(r'<button type="button" class="rec-mark [^"]*"[^>]*>.*?</button>', raw, re.S)
+    groups = [m for m in marks if "rec-mark-group" in m]
+    listed = text("".join(re.findall(r'<ol class="rec-events".*?</ol>', raw, re.S)))
+    second = groups[1] if len(groups) > 1 else ""
+    out[f"挨得很近的合成一个标记：6 个事件 4 个标记，两段颜色、角上写 2、悬停写出全部、点了从第一个开始（{len(marks)} 个）"] = (
+        len(marks) == 4 and len(groups) == 2 and second.count('class="rec-seg') == 2
+        and "ev-knocked" in second and "ev-assist-knock" in second and '>2</span>' in second
+        and 'data-label="6:21 倒地 · 6:22 助攻击倒"' in second and 'data-t="381.8"' in second
+        and "2 个事件：倒地 6:21，助攻击倒 6:22" in second)
+    out[f"下面的事件列表照样一条一条列，助攻击倒有自己的名字（{listed}）"] = (
+        listed.count("助攻击倒") == 1 and listed.count(":") == 6 and "6:22 助攻击倒" in listed)
+    for extra in (close, close.with_suffix(".json"), close.with_suffix(".jpg")):
+        extra.unlink(missing_ok=True)
 
     r = client.get("/recordings/video", query_string={"v": rid}, headers={"Range": "bytes=0-9"})
     out[f"录像文件支持拖动：Range 请求回 206 和那一段（{r.status_code}，{len(r.data)} 字节）"] = (

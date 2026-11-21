@@ -5,7 +5,8 @@
 - 开始：看到开局画面，或第一次看到自己的界面（靶场没有开局画面，也录）
 - 事件（.json 的 events，时刻是 MP4 里的位置）：倒地 knocked、被扶起 revived、成盒 dead、被复活 respawned、冠军 champion
   看的是 InMatchWatcher 记下的状态（in_match.py）；击倒对手 knock 看画面中间那一行的"击倒"（hud.knock，只比外观，
-  录像开着时才看）：rearm_seconds 没看到才算下一次，还在显示时左右挪了 moved 以上（换了名字）也算
+  录像开着时才看）：rearm_seconds 没看到才算下一次，还在显示时左右挪了 moved 以上（换了名字）也算。"击倒"左边有
+  "助攻，"的是助攻击倒 assist_knock（hud.knock_assist；2026-11-21 分开标，以前都算成击倒）
 - 右上角每变一次记一个时刻（.json 的 hud_changes）
 - 击杀 kill、助攻 assist（.json 里还带 kills / assists = 这一下之后的数、count = 一下多了几个；助攻 2026-11-20 加的）：
   和 Evo 一贯的"对局中只存、赛后才读"一样。对局中右上角击杀 / 助攻那一行里击杀数、助攻数那两格（hud.kp_cells：先找骷髅、
@@ -127,7 +128,9 @@ class MatchRecorder:
             return
         self._follow(screen, in_match, frame)
         if frame is not None and screen is None:
-            self._watch_knock(in_match.hud.knock(frame), in_match.hud.cfg.get("knock") or {}, tick)
+            hud = in_match.hud
+            x = hud.knock(frame)
+            self._watch_knock(x, x is not None and hud.knock_assist(frame, x), hud.cfg.get("knock") or {}, tick)
         if self.stop_at is None and (in_match.done or screen in END_SCREENS or screen == "lobby"):
             self.stop_at = tick + self.rules.get("tail_seconds", 3)
         if self.stop_at is not None and tick >= self.stop_at:
@@ -178,7 +181,7 @@ class MatchRecorder:
                 self.log(f"录像：录不了（{e}）")
             return
         self.rec, self.state, self.top, self.stop_at = rec, in_match.state, None, None
-        self.knock_seen, self.knock_x = None, None
+        self.knock_seen, self.knock_x, self.knock_event = None, None, None
         self.kp_snips, self.kp_last = [], {}
         self.limit = float(settings.get("recording_limit_gb", DEFAULT_LIMIT_GB)) * 2 ** 30
         self.next_poll = self.clock() + POLL_SECONDS
@@ -211,14 +214,18 @@ class MatchRecorder:
         if in_match.legend is not None:
             self.legend_name = in_match.hud.legends.name(in_match.legend)
 
-    def _watch_knock(self, x, cfg, tick):
-        """中间那一行的"击倒"：刚出现、或者隔了 rearm_seconds 又出现、或者还在显示但左右挪了（换了名字）→ 一次击倒。"""
+    def _watch_knock(self, x, assist, cfg, tick):
+        """中间那一行的"击倒"：刚出现、或者隔了 rearm_seconds 又出现、或者还在显示但左右挪了（换了名字）→ 记一次。
+        "击倒"左边有"助攻，"（assist）记助攻击倒 assist_knock，没有记击倒 knock。同一行还在显示时后面哪一帧看出是助攻击倒，
+        就把刚记的那一次改过来（文字滑进来的那一帧可能还看不清）。"""
         if x is None:
             return
         fresh = (self.knock_seen is None or tick - self.knock_seen > cfg.get("rearm_seconds", 0.6)
                  or abs(x - self.knock_x) > cfg.get("moved", 20))
         if fresh:
-            self.rec.mark("knock")
+            self.knock_event = self.rec.mark("assist_knock" if assist else "knock")
+        elif assist and self.knock_event is not None and self.knock_event["kind"] == "knock":
+            self.knock_event["kind"] = "assist_knock"
         self.knock_seen, self.knock_x = tick, x
 
     def _watch_kp(self, hud, snip):

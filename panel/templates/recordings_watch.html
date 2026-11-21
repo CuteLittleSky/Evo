@@ -38,9 +38,19 @@
       <span class="rec-gap" style="left: {{ '%.3f' | format(o.left) }}%; width: {{ '%.3f' | format(o.width) }}%" title="这 {{ '%.0f' | format(o.seconds) }} 秒没录到（切窗口等）" aria-hidden="true"></span>
       {% endfor %}
       <span class="rec-head-line" aria-hidden="true"></span>
-      {% for e in item.events %}
-      <button type="button" class="rec-mark {{ e.css }}" style="left: {{ '%.3f' | format(e.left) }}%" data-t="{{ e.t }}"
-              data-label="{{ e.label }} {{ e.clock }}" aria-label="{{ e.label }}，{{ e.clock }}，从前 {{ lead }} 秒开始放"></button>
+      {# 挨得很近的事件合成一个标记（panel_recordings.group_marks）：上下分成几段颜色、角上写个数，点了从第一个前几秒开始放 #}
+      {% for m in item.marks %}
+      {% if m.events | length == 1 %}{% set e = m.events[0] %}
+      <button type="button" class="rec-mark {{ e.css }}" style="left: {{ '%.3f' | format(m.left) }}%" data-t="{{ m.t }}"
+              data-label="{{ m.label }}" aria-label="{{ e.label }}，{{ e.clock }}，从前 {{ lead }} 秒开始放"></button>
+      {% else %}
+      <button type="button" class="rec-mark rec-mark-group" style="left: {{ '%.3f' | format(m.left) }}%" data-t="{{ m.t }}"
+              data-label="{{ m.label }}"
+              aria-label="{{ m.events | length }} 个事件：{% for e in m.events %}{{ e.label }} {{ e.clock }}{{ '，' if not loop.last }}{% endfor %}；从前 {{ lead }} 秒开始放">
+        {% for e in m.events %}<span class="rec-seg {{ e.css }}" aria-hidden="true"></span>{% endfor %}
+        <span class="rec-mark-count num" aria-hidden="true">{{ m.events | length }}</span>
+      </button>
+      {% endif %}
       {% endfor %}
     </div>
     <div class="rec-ticks num" aria-hidden="true"><span>0:00</span><span id="rec-now">0:00</span><span>{{ item.clock }}</span></div>

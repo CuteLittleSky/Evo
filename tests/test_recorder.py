@@ -289,6 +289,7 @@ class FakeRecording:
 
     def mark(self, kind, **info):
         self.events.append({"kind": kind, **info})
+        return self.events[-1]
 
     def hud_change(self):
         self.hud_changes += 1
@@ -427,24 +428,30 @@ def match_checks(tmp):
         and not m.pending and any("标上了 2 次击杀、1 次助攻" in line for line in logs))
     m.close()
 
-    # 击倒对手：中间那一行的"击倒"（hud.knock 给的位置）
+    # 击倒对手：中间那一行的"击倒"（hud.knock 给的位置）；左边有"助攻，"的是助攻击倒（hud.knock_assist）
     m, im = make(), FakeInMatch()
-    script = []
+    script, assists = [], []
     im.hud.knock = lambda frame: script.pop(0) if script else None
+    im.hud.knock_assist = lambda frame, x: assists.pop(0) if assists else False
     im.hud.cfg = {"knock": {"rearm_seconds": 0.6, "moved": 20}}
     step(m, "match_start", im)
     im.started, im.active, im.state = 7, True, "存活"
     rec = FakeRecording.made[0]
-    seen = [None, 299, 299, 300, 299, None, None, None, 299, 299, 352, 352, None]
-    for x in seen:
+    # 每一帧：("击倒"的位置, 左边有没有"助攻，")。第 1 行自己击倒；第 2 行一出现就是助攻；第 3 行（挪了）第二帧才看出是助攻
+    seen = [(None, False), (299, False), (299, False), (300, False), (299, False), (None, False), (None, False),
+            (None, False), (330, True), (330, True), (None, False), (None, False), (None, False),
+            (352, False), (352, True), (None, False)]
+    for x, assist in seen:
         script.append(x)
+        if x is not None:
+            assists.append(assist)
         clock[0] += 0.3
         m.update(None, im, frame="一张截图")
     clock[0] += 0.3
     m.update("summary", im, frame="结算画面")  # 不在对局中的画面不看
-    knocks = [e for e in rec.events if e["kind"] == "knock"]
-    out[f"击倒对手：同一行显示着只算一次；隔一会儿又出现算下一次；还在显示但左右挪了（换了名字）也算（{len(knocks)} 次）"] = (
-        len(knocks) == 3)
+    kinds = [e["kind"] for e in rec.events if e["kind"] in ("knock", "assist_knock")]
+    out[f"击倒对手：同一行显示着只算一次，隔一会儿又出现算下一次；左边有'助攻，'记助攻击倒，第二帧才看出来也改过来（{kinds}）"] = (
+        kinds == ["knock", "assist_knock", "assist_knock"])
     m.close()
 
     # 录不了：一局最多试两次（横幅、看到自己的界面），日志里只说一次，下一局再试
@@ -499,6 +506,17 @@ def knock_checks():
     out[f"中间那一行的'击倒'：贴在横带里不同的位置都找得到（{found}），没有时是空"] = (
         found[0] is not None and abs(found[0] - 300) <= 2 and found[1] is not None and abs(found[1] - 450) <= 2
         and blank is None)
+    helper = reader.knock_assist_template
+    if helper is None:
+        out["助攻击倒：有参照图 config/templates/hud/knock_assist.png"] = False
+        return out
+    frame = np.full((1080, 1920, 3), 30, np.uint8)
+    x0, y0 = k["band"][0] + 400, k["band"][1] + 31
+    frame[y0:y0 + tpl.shape[0], x0:x0 + tpl.shape[1]] = tpl[:, :, None]
+    plain = reader.knock_assist(frame, reader.knock(frame))
+    frame[y0:y0 + helper.shape[0], x0 - 73:x0 - 73 + helper.shape[1]] = helper[:, :, None]  # "助攻"在"击倒"左边 73 像素
+    with_helper = reader.knock_assist(frame, reader.knock(frame))
+    out[f"助攻击倒：'击倒'左边贴上'助攻'才算（没贴 {plain}、贴了 {with_helper}）"] = plain is False and with_helper is True
     return out
 
 

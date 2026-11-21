@@ -5,8 +5,10 @@
   对上的那一局战绩（名次徽章、击杀、伤害）和事件数。从新到旧。上面一行：共几个、占多大、上限、"打开文件夹"
 - 上次 Evo 崩了拼回来的（名字带"_未完成"，没有 .json）也列出来，标"未完成"
 播放 /recordings/watch?v=<年-月/文件名>（recordings_watch.html）
-- 播放器（不自动播放）、下面自己画的时间轴：事件标在对应的位置（击倒对手、倒地、被扶起、成盒、被复活、冠军、击杀、助攻），断掉的那几段
-  画成斜线；点事件从它前 EVENT_LEAD 秒开始放。事件也按时间列在下面（按钮，键盘、读屏软件都能用）
+- 播放器（不自动播放）、下面自己画的时间轴：事件标在对应的位置（击倒对手、助攻击倒、倒地、被扶起、成盒、被复活、冠军、击杀、助攻），
+  断掉的那几段画成斜线；点事件从它前 EVENT_LEAD 秒开始放。挨得很近的几个（相隔不到 GROUP_GAP 的时长、至少 GROUP_MIN_SECONDS 秒，
+  在进度条上会叠在一起）合成一个标记：上下分成几段颜色、角上写个数，悬停写出全部，点了从第一个前 EVENT_LEAD 秒开始放（2026-11-21
+  用户选的）。事件也按时间一条一条列在下面（按钮，键盘、读屏软件都能用）
 - 网址带 t=秒：从那一刻开始（战绩页以后可以直接跳到某个事件）
 - "在资源管理器中显示"、"删除"（先确认；删 MP4 和同名的 .json、.jpg）
 录像文件 /recordings/video?v=…（send_file 支持 Range：播放器能拖进度条）、缩略图 /recordings/thumb?v=…
@@ -45,11 +47,14 @@ EVENTS = {  # 事件 → (显示名, 样式)：颜色以外还写着名字（时
     "dead": ("成盒", "ev-dead"),
     "respawned": ("被复活", "ev-respawned"),
     "knock": ("击倒", "ev-knock"),
+    "assist_knock": ("助攻击倒", "ev-assist-knock"),
     "champion": ("冠军", "ev-champion"),
     "kill": ("击杀", "ev-kill"),
     "assist": ("助攻", "ev-assist"),
 }
 EVENT_LEAD = 3  # 点事件时从它前几秒开始放：看得到是怎么发生的
+GROUP_GAP = 0.012  # 进度条上相隔不到时长的这么多（约一个标记宽）的事件合成一个标记
+GROUP_MIN_SECONDS = 1.0  # 再短的录像，相隔这么近的也合成一个
 MATCH_SLACK = timedelta(minutes=2)  # 战绩里那一局的结束时刻比录像的结尾晚这么多以内，也算同一局（结算画面上才记下）
 MODES = {"ranked": "排位", "pubs": "匹配", "other": "其他"}
 DEFAULT_LIMIT_GB = 30  # 和 match_recording.DEFAULT_LIMIT_GB 一样（那个文件加载识别用的库，这里不导入）
@@ -133,6 +138,7 @@ def load(video):
                 label = f"{label} ×{e['count']}"
             events.append({"t": e["t"], "clock": clock(e["t"]), "label": label, "css": css,
                            "left": min(100.0, max(0.0, e["t"] / duration * 100)) if duration else 0})
+    marks = group_marks(events, duration)
     outages = [{"left": a / duration * 100, "width": max(0.4, (b - a) / duration * 100), "seconds": b - a}
                for a, b in meta.get("outages", []) if duration and b > a]
     legend = (meta.get("match") or {}).get("legend")
@@ -142,8 +148,23 @@ def load(video):
         "when": when_text(started), "duration": duration, "clock": clock(duration),
         "size": video.stat().st_size, "size_text": size_text(video.stat().st_size),
         "legend": legend, "title": legend or "录像", "unfinished": "_未完成" in video.stem,
-        "events": events, "outages": outages, "match": None,
+        "events": events, "marks": marks, "outages": outages, "match": None,
     }
+
+
+def group_marks(events, duration):
+    """时间轴上的标记：events（按时间排好）里挨得很近的（和前一个相隔不到 GROUP_GAP 的时长、至少 GROUP_MIN_SECONDS 秒）
+    合成一个。每个标记 {"t": 第一个的时刻, "left": 位置, "events": [...], "label": 悬停写的}。"""
+    gap = max(GROUP_MIN_SECONDS, (duration or 0) * GROUP_GAP)
+    groups = []
+    for e in events:
+        if groups and e["t"] - groups[-1][-1]["t"] <= gap:
+            groups[-1].append(e)
+        else:
+            groups.append([e])
+    return [{"t": g[0]["t"], "left": g[0]["left"], "events": g,
+             "label": f"{g[0]['label']} {g[0]['clock']}" if len(g) == 1 else " · ".join(f"{e['clock']} {e['label']}" for e in g)}
+            for g in groups]
 
 
 def entries():

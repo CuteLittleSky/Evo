@@ -122,6 +122,7 @@ class Hud:
         self.mate_templates = self.legends.scaled(mates["scale"])
         self.spectate_template = load_hud_template("spectate", lang)
         self.knock_template = load_hud_template("knock", lang)  # 中间那一行的"击倒"（录像标事件用）；别的语言还没有
+        self.knock_assist_template = load_hud_template("knock_assist", lang)  # 它左边的"助攻"（助攻击倒）
         self.icon_template = load_hud_template("damage_icon", lang)
         icons = self.cfg["top_right"]["kp_row"]["icons"]
         self.kp_templates = {name: load_hud_template(icons[name]["template"], lang) for name in KP_ROW}  # 每一项前面的图标
@@ -155,6 +156,18 @@ class Hud:
             return None
         score, x, _ = best_match(gray_crop(frame, k["band"], self.base, k.get("anchor")), self.knock_template)
         return x if score >= k["min_similarity"] else None
+
+    def knock_assist(self, frame, x):
+        """"击倒"（knock 给的位置 x）左边有没有"助攻，"：有 = 助攻击倒（队友击倒、自己有伤害："助攻，击倒 名字 +100"），
+        没有 = 自己击倒的（"击倒 名字 +150"）。在"击倒"左边 assist.left 宽里找"助攻"两个字（config/hud.json 的 knock.assist）。
+        没有参照图时当作不是。"""
+        k = self.cfg.get("knock") or {}
+        a = k.get("assist")
+        if not a or self.knock_assist_template is None:
+            return False
+        band = gray_crop(frame, k["band"], self.base, k.get("anchor"))
+        score, _, _ = best_match(band[:, max(0, x - a["left"]):x], self.knock_assist_template)
+        return score >= a["min_similarity"]
 
     def spectated_legend(self, frame):
         """观战时被观战的人用的传奇（编号），认不出返回 None。只在 spectating() 为真时问。"""
