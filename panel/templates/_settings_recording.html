@@ -13,7 +13,6 @@
   <div class="setting">
     <div class="setting-text">
       <div class="setting-name" id="rec-name">录下每一局</div>
-      <div class="setting-desc">从开局录到结算，在“录像”页看，进度条上标着击倒、击杀、倒地这些时刻。只抓 Apex 的窗口画面，用显卡编码；录哪些声音、录不录麦克风可以自己选。</div>
       {% if rec.encoder and rec.enabled %}<div class="setting-desc">这台电脑用 {{ rec.encoder }}编码</div>{% endif %}
       {% if rec.blocked %}<div class="setting-desc update-hint" id="rec-blocked">{{ rec.blocked }}</div>{% endif %}
       {{ note(rec, "toggle") }}
@@ -74,7 +73,6 @@
     <div class="setting">
       <div class="setting-text">
         <label class="setting-name" for="rec-audio">声音</label>
-        <div class="setting-desc">选"电脑上所有的声音"能录到 KOOK、YY、Discord 等语音软件里队友的声音；电脑上放的音乐也会录进去</div>
       </div>
       <select id="rec-audio" name="audio_source">
         {% for one in rec.audio_sources %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.audio_source }}>{{ one.name }}</option>{% endfor %}
@@ -95,8 +93,6 @@
     <div class="setting">
       <div class="setting-text">
         <div class="setting-name" id="rec-mic-name">录麦克风</div>
-        <div class="setting-desc">用 Windows 设置里的默认麦克风，用耳机效果最好（用音箱时游戏声音会被麦克风再录一遍）。录麦克风时，录像里第一条音轨是混好的，另外各存一条原声，剪辑时能单独调</div>
-        {{ note(rec, "mic") }}
       </div>
       <form method="post" action="{{ url_for('recordings.save_mic') }}">
         <input type="hidden" name="token" value="{{ token }}">
@@ -113,7 +109,7 @@
       <input type="hidden" name="token" value="{{ token }}">
       <div class="setting-text">
         <label class="setting-name" for="rec-mic-volume">麦克风音量</label>
-        <div class="setting-desc" id="rec-mic-status" aria-live="polite">点"测试"录 <span class="num">{{ rec.mic_test_seconds }}</span> 秒，录完按现在的音量放给你听</div>
+        <div class="setting-desc" id="rec-mic-status" aria-live="polite"></div>
         <div class="rec-meter" aria-hidden="true"><span id="rec-mic-level"></span></div>
       </div>
       <div class="setting-actions inline rec-mic-actions">
@@ -131,7 +127,7 @@
     <input type="hidden" name="token" value="{{ token }}">
     <div class="setting-text">
       <label class="setting-name" for="rec-limit">硬盘上限</label>
-      <div class="setting-desc">现在 <span class="num">{{ rec.count }}</span> 个录像，共 <span class="num">{{ rec.used }}</span>{% if rec.free %}，{{ rec.free }}{% endif %}。超过上限时，录完一局从最旧的删起</div>
+      <div class="setting-desc">当前有 <span class="num">{{ rec.count }}</span> 个录像，共 <span class="num">{{ rec.used }}</span>{% if rec.free %}，{{ rec.free }}{% endif %}。超过上限时，录完一局从最旧的删起</div>
       {{ note(rec, "limit") }}
     </div>
     <div class="setting-actions inline rec-limit">

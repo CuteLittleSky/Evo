@@ -543,10 +543,9 @@ def save_quality():
 
 @bp.post("/settings/recording/mic")
 def save_mic():
-    """录不录麦克风（开关）。"""
-    on = request.form.get("on") == "1"
-    app_settings.set_value("recording_mic", on)
-    return _done("mic", "打开了：从下一局开始录麦克风" if on else "关掉了：以后不录麦克风")
+    """录不录麦克风（开关）。开关自己写着已开启 / 已关闭，下面不另写结果（2026-11-21 用户删了"打开了：从下一局开始录麦克风"）。"""
+    app_settings.set_value("recording_mic", request.form.get("on") == "1")
+    return redirect(url_for("settings") + "#h-video")
 
 
 @bp.post("/settings/recording/mic-volume")

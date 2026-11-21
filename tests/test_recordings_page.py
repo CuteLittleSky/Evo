@@ -237,8 +237,8 @@ def settings_checks(client, token, base):
         out["声音乱填的不保存"] = said.startswith("alert:没保存") and app_settings.get("recording_audio_source") == "system"
         box, said = note(client, "/settings/recording/mic", {"on": "1"}, token)
         mic_switch = re.findall(r'<button type="submit" class="switch"[^>]*aria-labelledby="rec-mic-name"', box)
-        out[f"打开录麦克风（{said}）"] = (
-            app_settings.get("recording_mic") is True and said.startswith("status:打开了") and 'aria-checked="true"' in mic_switch[0])
+        out[f"打开录麦克风：开关是开着的，下面不另写结果（{said or '没写'}）"] = (
+            app_settings.get("recording_mic") is True and said == "" and 'aria-checked="true"' in mic_switch[0])
         fetch = {"X-Evo-Fetch": "1"}
         saved = client.post("/settings/recording/mic-volume", data={"volume": "150", "token": token}, headers=fetch)
         wrong = [client.post("/settings/recording/mic-volume", data={"volume": v, "token": token}, headers=fetch).status_code
