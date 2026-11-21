@@ -41,6 +41,7 @@ STREAMERS = [{"id": "douyu-901", "name": "大主播", "platform": "douyu", "room
 
 
 def serve(folder, platforms=None, teams=None, main=None, off=False, streamers=None, observers=None, nobody=False):
+    """observers：老文件里"观战的人"那一项（2026-11-21 去掉了，Evo 不再读；测试用它看是不是真的不读）。"""
     players = []
     for team, platform in zip(TEAMS, ("douyu", "bilibili", "douyin")):
         players += [{"id": f"{platform}-{n}", "name": f"{team[:1]}{n}号" if n > 1 else "kite</script>", "team": team,
@@ -53,7 +54,7 @@ def serve(folder, platforms=None, teams=None, main=None, off=False, streamers=No
                "teams": ["甲队"]}]
     if main:
         events[0]["main"] = main
-    if observers:  # 第一场赛事里观战的人
+    if observers:
         events[0]["observers"] = observers
     if nobody:  # 选手库是空的（只看另外加的主播时用）
         players = []
@@ -102,11 +103,17 @@ def main():
         and '<div class="watch-stage-box n1">' in raw and 'id="watch-screen"></div>' in raw and "function makeCell(index)" in raw
         and 'p.play + "?s=" + cell.index' in raw and 'data-filter="all"' in raw and '"[data-filter]"' in raw)
     css = (Path(panel_app.__file__).parent.parent / "panel" / "static" / "style.css").read_text(encoding="utf-8")
-    out["三屏（一大两小）：3 格，选中的那一格是大屏（只换样式里的位置，格子不动）；点小格子控制条上的按钮不换"] = (
+    out["三屏（一大两小）、四屏（一大三小）：选中的那一格是大屏（只换样式里的位置，格子不动）；点小格子控制条上的按钮不换"] = (
         ".watch-stage-box.n3 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 2; }" in css
         and ".watch-stage-box.n3 { aspect-ratio: 8 / 3; }" in css
-        and 'if (st.layout === 3 && e.target.closest && e.target.closest(".watch-controls")) return;' in raw
-        and 'st.layout === 3 ? "换到大屏" : "选这一格"' in raw)
+        and ".watch-stage-box.n4 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 3; }" in css
+        and ".watch-stage-box.n4 { aspect-ratio: 64 / 27; }" in css
+        and ".watch-stage-box:is(.n3, .n4) .watch-cell:not(.focus) { grid-column: 2; }" in css
+        and "function big() { return st.layout >= 3; }" in raw
+        and 'if (big() && e.target.closest && e.target.closest(".watch-controls")) return;' in raw
+        and 'big() ? "换到大屏" : "选这一格"' in raw)
+    out["多屏只有选中的那一格有声音（四屏的大屏也是）"] = (
+        "cell.video.muted = off || (multi() && cell.index !== st.focus);" in raw)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)
     start = NOW + timedelta(days=1)
     soon_head = re.findall(r'<div class="watch-head">.*?</div>', soon, re.S)[0]
@@ -275,19 +282,24 @@ def main():
     seen_side = seen[seen.find('<aside class="watch-side"'):seen.find("</aside>")]
     boxes = {re.search(r'class="watch-team-name es-ell">(.*?)</span>', box, re.S).group(1): box
              for box in re.findall(r"<details.*?</details>", seen_side, re.S)}
-    order = [(p["id"], p["team"], p["ob"]) for p in seen_data["players"]]
-    out["赛程里写了观战的人：他排在正在看的那支队的最后、名字后面有\"观战\"的标签，从自己的队里拿掉；别人没有这个标签；照样能选来看"] = (
-        order[:7] == [("douyin-1", "丙队", False), ("douyin-3", "丙队", False), ("bilibili-1", "丙队", True), ("douyu-1", "甲队", False),
-                      ("douyu-2", "甲队", False), ("douyu-3", "甲队", False), ("douyin-2", "甲队", True)]
-        and len(order) == 9 and len({pid for pid, _, _ in order}) == 9 and seen_data["selected"] == "bilibili-1"
-        and seen_side.count('class="watch-ob">观战</span>') == 2 and boxes["丙队"].count('class="watch-ob"') == 1
-        and boxes["甲队"].count('class="watch-ob"') == 1 and boxes["&lt;b&gt;乙队&lt;/b&gt;"].count('class="watch-ob"') == 0
-        and boxes["丙队"].count('class="watch-p"') == 3 and boxes["&lt;b&gt;乙队&lt;/b&gt;"].count('class="watch-p"') == 2)
+    order = [(p["id"], p["team"]) for p in seen_data["players"]]
+    out["\"观战\"去掉了（2026-11-21）：老赛程里写了观战的人也不读，每位都在自己的队里，页面上没有\"观战\"的标签"] = (
+        order[:6] == [("douyin-1", "丙队"), ("douyin-2", "丙队"), ("douyin-3", "丙队"), ("douyu-1", "甲队"), ("douyu-2", "甲队"), ("douyu-3", "甲队")]
+        and len(order) == 9 and all("ob" not in p for p in seen_data["players"]) and seen_data["selected"] == "bilibili-1"
+        and "watch-ob" not in seen and "观战" not in text(seen_side)
+        and boxes["丙队"].count('class="watch-p"') == 3 and boxes["&lt;b&gt;乙队&lt;/b&gt;"].count('class="watch-p"') == 3)
+    # ---- 主舞台最多 24 路（2026-11-21）----
+    serve(folder, main=[{"id": f"bilibili-9{n:02d}", "name": f"第 {n} 路", "platform": "bilibili", "room": f"9{n:02d}"} for n in range(1, 31)])
+    wide = client.get("/esports/live/watch").get_data(as_text=True)
+    stage = re.search(r'<details class="watch-team-box watch-main-box".*?</details>', wide, re.S).group(0)
+    out["主舞台最多 24 路：多出来的不要；这一栏最下面有一行\"没开播的 N 路\"（脚本填字，在播的排前面、没开播的收起来，点了才列出来）"] = (
+        stage.count('class="watch-p"') == 24 and stage.count("data-main-more") == 1 and 'aria-expanded="false" hidden' in stage
+        and sum(1 for p in page_data(wide)["players"] if p["main"]) == 24
+        and "var MAIN_FOLD = 4;" in wide and "st.mainOpen = !st.mainOpen; renderList();" in wide
+        and wide.count("data-main-more aria") == 1)
     serve(folder)
-    plain = page_data(client.get("/esports/live/watch").get_data(as_text=True))
-    out["没有人观战的赛事照旧：没有\"观战\"的标签，每位都在自己的队里"] = (
-        'class="watch-ob"' not in client.get("/esports/live/watch").get_data(as_text=True)
-        and not any(p["ob"] for p in plain["players"]) and len(plain["players"]) == 9)
+    out["没有主舞台的赛事没有\"没开播的 N 路\"那一行"] = (
+        "data-main-more aria" not in client.get("/esports/live/watch").get_data(as_text=True))
     serve(folder, nobody=True)
     none = client.get("/esports/streamers")
     out["名单里一位开直播的都没有：主播的看直播页回电竞页并说明，状态接口回 404"] = (
@@ -299,8 +311,7 @@ def main():
     out["主播的看直播页列的是名单里所有开直播的选手（带着队名），后面接另外加的主播；选手也能选来看"] = (
         [p["id"] for p in everyone["players"]][:3] == ["douyu-1", "douyu-2", "douyu-3"] and len(everyone["players"]) == 12
         and everyone["players"][0]["team"] == "甲队" and everyone["players"][-1]["id"] == "bilibili-903"
-        and everyone["players"][-1]["team"] == "" and everyone["selected"] == "douyu-1"
-        and not any(p["ob"] for p in everyone["players"]))
+        and everyone["players"][-1]["team"] == "" and everyone["selected"] == "douyu-1")
     serve(folder, streamers=STREAMERS, nobody=True)
     solo = client.get("/esports/streamers?p=huya-902").get_data(as_text=True)
     side = solo[solo.find('<aside class="watch-side"'):solo.find("</aside>")]

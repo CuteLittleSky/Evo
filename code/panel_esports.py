@@ -122,13 +122,12 @@ def safe_image(url):
 
 
 def member(player, team, main=False):
-    """看直播页上的一位（选手、主舞台的一路、主播）：id、名字、队名、平台、房间号、直播间地址、main、off（不开直播的选手）、
-    ob（在这场赛事里观战的人：排在他正在看的那支队里，带"观战"标签）；
+    """看直播页上的一位（选手、主舞台的一路、主播）：id、名字、队名、平台、房间号、直播间地址、main、off（不开直播的选手）；
     embed 是平台官方嵌入播放器的地址，play 是用 Evo 自己的播放器时问清晰度和播放地址的接口（都没有就是不能在窗口里播）。"""
     embed = EMBED.get(player["platform"])
     off = player["platform"] == esports_data.NO_STREAM  # 不开直播的选手：照样列在队里，标"不直播"，点不开
     return {"id": player["id"], "name": player["name"], "initial": player["name"][:1].upper(),
-            "team": team, "main": main, "off": off, "ob": bool(player.get("ob")), "platform": player["platform"],
+            "team": team, "main": main, "off": off, "platform": player["platform"],
             "platform_name": esports_data.NO_STREAM_NAME if off else live_status.NAMES[player["platform"]],
             "room": player["room"],
             "url": live_status.room_url(player["platform"], player["room"]),

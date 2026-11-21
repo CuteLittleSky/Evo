@@ -63,7 +63,7 @@ def players(data, streaming_only=False):
 
 
 def events(data, now=None):
-    """正在进行、即将开始的赛事里，有关注的人参赛（或在观战）的那几场：[(赛事, [关注的人, ...]), ...]，
+    """正在进行、即将开始的赛事里，有关注的人参赛的那几场：[(赛事, [关注的人, ...]), ...]，
     正在进行的在前，再照开始时间。没有关注任何人、没有赛事数据返回 []。"""
     wanted = set(ids())
     if not data or not wanted:

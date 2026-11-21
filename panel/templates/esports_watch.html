@@ -181,8 +181,6 @@
           <button type="button" class="watch-p" data-player="{{ p.id }}" aria-pressed="false" disabled>
             <span class="es-avatar" data-avatar aria-hidden="true">{{ p.initial }}</span>
             <span class="watch-p-name es-ell">{{ p.name }}</span>
-            {# 观战的人（赛程里这场赛事写的）：没上场、开着直播在看这支队比赛的选手，排在队里最后 #}
-            {% if p.ob %}<span class="watch-ob">观战</span>{% endif %}
             {% if p.off %}
             <span class="watch-p-time" data-time>{{ p.platform_name }}</span>
             {% else %}
@@ -195,6 +193,10 @@
           {% else %}
           <p class="watch-empty">名单里还没有这支队的选手</p>
           {% endfor %}
+          {# 主舞台最多 24 路（2026-11-21 用户定的）：在播的排前面、一行一路；没开播的收成这一行，点了才列出来（renderList） #}
+          {% if team.main %}
+          <button type="button" class="watch-more" data-main-more aria-expanded="false" hidden><span data-more-text></span><svg class="watch-more-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+          {% endif %}
         </div>
       </details>
       {% endfor %}
@@ -235,6 +237,7 @@
     var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
               apex: false, apexOk: false, lastTry: 0,
               layout: 1, focus: 0,  // 多屏同看：几格、选中的是第几格（播放器在各自的格子里，见 makeCell）
+              mainOpen: false,  // 主舞台那一栏里没开播的几路：点开了没有
               playFailed: {},  // Evo 自己的播放器：哪些人没播成
               accounts: data.accounts || {}};  // 要登录才能看高画质的平台：{平台: {logged_in, name}}
     function saved(key, fallback) { try { var v = localStorage.getItem(key); return v === null ? fallback : v; } catch (e) { return fallback; } }
@@ -281,6 +284,7 @@
       node.appendChild(img);
     }
 
+    var MAIN_FOLD = 4;  // 主舞台多于这么多路时，没开播的收起来（一两路的官方直播照旧都列着）
     function renderList() {
       var liveTotal = 0, shown = 0;
       document.querySelectorAll(".watch-team-box").forEach(function (box) {
@@ -321,6 +325,30 @@
           else if (n > 0) tag.append(el("span", "es-live-dot"), el("span", "num", n), main ? " 路在播" : " 人在播");
           else tag.textContent = main ? "没在播" : "没人在播";
         }
+        if (main) {
+          // 主舞台最多 24 路（2026-11-21 用户定的）：在播的排前面、一行一路；多于 MAIN_FOLD 路时没开播的收成最下面一行
+          // "没开播的 N 路"，点了才列出来（都列出来队伍就被挤到很下面）。还没查到谁在播时先只列前几路
+          var mainList = box.querySelector(".watch-players"), more = box.querySelector("[data-main-more]"), held = document.activeElement;
+          var mainRows = Array.prototype.slice.call(mainList.querySelectorAll(".watch-p-row")), quiet = 0;
+          var fold = mainRows.length > MAIN_FOLD;
+          mainRows.forEach(function (row, i) { if (!row.dataset.order) row.dataset.order = String(i); });
+          mainRows.sort(function (a, b) {
+            return (isLive(a.dataset.row) ? 0 : 1) - (isLive(b.dataset.row) ? 0 : 1) || a.dataset.order - b.dataset.order;
+          });
+          mainRows.forEach(function (row, i) {
+            var on = isLive(row.dataset.row);
+            if (!on) quiet++;
+            row.hidden = fold && !on && !st.mainOpen && (!!st.status || i >= MAIN_FOLD);
+          });
+          var placed = mainList.querySelectorAll(".watch-p-row");
+          if (mainRows.some(function (row, i) { return row !== placed[i]; })) {
+            mainRows.forEach(function (row) { mainList.insertBefore(row, more); });
+            if (held && mainList.contains(held)) held.focus();
+          }
+          more.hidden = !fold || !st.status || quiet === 0;
+          more.querySelector("[data-more-text]").textContent = (st.mainOpen ? "收起没开播的 " : "没开播的 ") + quiet + " 路";
+          more.setAttribute("aria-expanded", st.mainOpen ? "true" : "false");
+        }
         box.hidden = (st.filter === "live" && !!st.status && n === 0) || (fav && !box.querySelector(".watch-p"));
         if (!box.hidden && !fav) shown++;
       });
@@ -353,12 +381,14 @@
     }
 
     // ---------- 播放器那一块：1 / 2 / 3 / 4 格（多屏同看，2026-11-19 用户要的），每格一路 ----------
-    // 3 格是三屏（一大两小，2026-11-20）：选中的那一格是大的（只换样式，不动格子本身，画面不会重新加载）
+    // 3 格、4 格是一个大的 + 右边一列小的（三屏 2026-11-20；四屏 2026-11-21 从 2×2 改成一大三小，赛管提的）：
+    // 选中的那一格是大的（只换样式，不动格子本身，画面不会重新加载）
     // 格子：{index, id: 这一格放的是谁, key: 现在显示的是什么, player, seq, video, showSound, node, body, chips, dot, text, pick, close}
     // 选中的那一格（st.focus）有声音，别的格子静音；右边点一位在播的，就放进选中的那一格。st.sel 一直是选中那一格里的人
     var stageBox = document.querySelector(".watch-stage-box"), screen = $("watch-screen");
     var cells = [];
     function multi() { return st.layout > 1; }
+    function big() { return st.layout >= 3; }  // 三屏、四屏：有一个大屏，点小格子就把它换到大屏
     function makeCell(index) {
       var cell = { index: index, id: null, key: null, player: null, seq: 0, video: null, showSound: null };
       cell.node = el("div", "watch-cell");
@@ -384,8 +414,8 @@
       tools.append(cell.pick, cell.close);
       cell.node.append(cell.body, cell.chips, tools);
       cell.node.addEventListener("click", function (e) {
-        // 三屏：点小格子的画面就把它换到大屏；点它控制条上的按钮（暂停、清晰度……）不换，免得画面跳走
-        if (st.layout === 3 && e.target.closest && e.target.closest(".watch-controls")) return;
+        // 三屏、四屏：点小格子的画面就把它换到大屏；点它控制条上的按钮（暂停、清晰度……）不换，免得画面跳走
+        if (big() && e.target.closest && e.target.closest(".watch-controls")) return;
         if (multi() && st.focus !== cell.index) focusCell(cell.index);
       });
       return cell;
@@ -481,7 +511,7 @@
         build = function () {
           if (focused) return message("这一格是空的", anyLive ? "在右边点一位在播的" + noun + "，就放进这一格。" : "现在没有" + noun + "在播。");
           var box = message("这一格是空的");
-          var pick = el("button", "watch-secondary", st.layout === 3 ? "换到大屏" : "选这一格");
+          var pick = el("button", "watch-secondary", big() ? "换到大屏" : "选这一格");
           pick.type = "button";
           pick.addEventListener("click", function (e) { e.stopPropagation(); focusCell(cell.index); });
           box.append(pick);
@@ -546,7 +576,7 @@
         cell.text.textContent = p.name + " · " + (canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name);
       }
       cell.pick.hidden = !multi() || focused;
-      cell.pick.title = st.layout === 3 ? "换到大屏（声音跟着这一格）" : "选中这一格（声音跟着这一格）";
+      cell.pick.title = big() ? "换到大屏（声音跟着这一格）" : "选中这一格（声音跟着这一格）";
       cell.pick.setAttribute("aria-label", cell.pick.title);
       cell.close.hidden = !multi() || !cell.id;
     }
@@ -559,7 +589,7 @@
       if (!p) return;
       setAvatar($("watch-avatar"), p, live ? s : null);
       $("watch-name").textContent = p.name;
-      $("watch-team").textContent = p.team + (p.ob ? "（观战）" : "");
+      $("watch-team").textContent = p.team;
       $("watch-live-title").textContent = live ? (s.title || "") : "未开播";
       $("watch-room-dot").className = "es-dot pf-" + p.platform;
       $("watch-room-text").textContent = canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器 · 房间 " + p.room : p.platform_name + " 房间 " + p.room;
@@ -579,27 +609,31 @@
       if (!loginBtn.hidden) {
         loginBtn.textContent = account && account.logged_in ? p.platform_name + "：" + (account.name || "已登录") : "登录" + p.platform_name + "看原画";
         if (optionalLogin(p.platform)) {
-          loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有蓝光4M，登录以后能看原画";
+          loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有蓝光4M（30 帧），登录以后能看原画（主播推 60 帧就是 60 帧）";
         } else {
           loginBtn.title = account && account.logged_in ? "已经登录" + p.platform_name + "，点开可以退出登录" : p.platform_name + "不登录最高只有 720p，用手机扫码登录以后能看原画";
         }
       }
 
       $("watch-mates-label").textContent = p.main ? "主舞台" : "同队视角";
-      var mates = data.players.filter(function (x) { return x.team === p.team && !!x.main === !!p.main; }).map(function (m) {
+      // 主舞台最多 24 路：这一行只列在播的（没开播的在右边那一栏里收着）；队伍照旧把同队的都列出来
+      var mates = data.players.filter(function (x) {
+        return x.team === p.team && !!x.main === !!p.main && (!p.main || isLive(x.id));
+      }).map(function (m) {
         if (!isLive(m.id)) {
           var off = el("span", "watch-mate dis");
-          off.append(m.name, el("span", "watch-mate-sub", (m.ob ? "观战 · " : "") + (m.off ? m.platform_name : st.status ? "未开播" : "…")));
+          off.append(m.name, el("span", "watch-mate-sub", m.off ? m.platform_name : st.status ? "未开播" : "…"));
           return off;
         }
         var btn = el("button", "watch-mate" + (m.id === p.id ? " on" : ""));
         btn.type = "button";
         btn.setAttribute("aria-pressed", m.id === p.id ? "true" : "false");
-        btn.append(el("span", "es-dot pf-" + m.platform), m.name, el("span", "watch-mate-sub", (m.ob ? "观战 · " : "") + m.platform_name));
+        btn.append(el("span", "es-dot pf-" + m.platform), m.name, el("span", "watch-mate-sub", m.platform_name));
         btn.addEventListener("click", function () { select(m.id); });
         return btn;
       });
       $("watch-mates-list").replaceChildren.apply($("watch-mates-list"), mates);
+      if (!mates.length) $("watch-mates").hidden = true;
     }
 
     function renderStage() {
@@ -891,6 +925,7 @@
       hint.hidden = true;
 
       var playBtn = control("暂停", "pause"), muteBtn = control("静音", "sound"), fullBtn = control("全屏", "full");
+      muteBtn.classList.add("watch-mute-btn");
       var volume = el("input", "watch-volume");
       volume.type = "range";
       volume.min = "0";
@@ -1304,6 +1339,9 @@
     });
     document.querySelectorAll("[data-layout]").forEach(function (btn) {
       btn.addEventListener("click", function () { setLayout(parseInt(btn.dataset.layout, 10)); });
+    });
+    document.querySelectorAll("[data-main-more]").forEach(function (btn) {  // 主舞台里"没开播的 N 路"
+      btn.addEventListener("click", function () { st.mainOpen = !st.mainOpen; renderList(); });
     });
     document.querySelectorAll("[data-filter]").forEach(function (btn) {
       btn.addEventListener("click", function () {
