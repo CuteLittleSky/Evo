@@ -25,14 +25,19 @@ ffmpeg，只有测试版有这一栏，2026-11-20 用户定的内测发法）。
 这个文件不加载识别用的库。规则见 docs/面板.md"录像页"。
 """
 
+import atexit
 import json
 import os
 import shutil
 import subprocess
+import tempfile
+import threading
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, send_file, session, url_for
+from flask import (Blueprint, abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, session,
+                   url_for)
 
 import app_settings
 import data_move
@@ -67,6 +72,11 @@ CHECK_SOURCE = "lavfi:color=black:s=640x360:r=30"  # 检测编码器用的测试
 SIZE_NAMES = {"native": "原画面", "1080p": "1080p（推荐）", "720p": "720p"}
 QUALITY_NAMES = {"best": "很高", "high": "高", "standard": "标准（推荐）", "small": "省空间"}
 CODEC_NAMES = {"h264": "H.264", "av1": "AV1"}
+AUDIO_SOURCE_NAMES = {"game": "只录 Apex 的声音", "system": "电脑上所有的声音"}  # 2026-11-21 用户定的两档
+MIC_TEST_SECONDS = 5  # 测试麦克风录几秒（2026-11-21 用户要的，像 Zoom 那样：录一段、按滑块的音量放给自己听）
+MIC_TEST_DIR = Path(tempfile.gettempdir())  # 测试录音只放临时文件夹：每次一个新文件（上一段可能还被播放占着，Windows 删不掉），
+# 旧的能删就删，面板关掉时再删一遍
+MIC_FACTORY = None  # 测试用：换掉录音（默认 process_audio.ProcessAudio）
 FAMILY_NAMES = {"nvenc": "NVIDIA", "amf": "AMD", "qsv": "Intel"}
 MATCH_MINUTES = 20  # 估一局多大时按多少分钟算（打满一局约 20 分钟）
 LIMIT_RANGE = (1, 10000)  # 硬盘上限能填多少（GB）
@@ -345,7 +355,8 @@ def encoders(ffmpeg, run=False):
 def current_options(rules=None):
     """设置里现在的画质（和开录时一样按 recorder.options_from：没设过的、配置里已经没有的那一档用默认）。"""
     opts = recorder.options_from(app_settings.load(), rules)
-    return {"size": opts.size, "fps": opts.fps, "quality": opts.quality, "codec": opts.codec}
+    return {"size": opts.size, "fps": opts.fps, "quality": opts.quality, "codec": opts.codec,
+            "audio_source": opts.audio_source, "mic": opts.mic, "mic_volume": opts.mic_volume}
 
 
 def limit_gb():
@@ -422,6 +433,8 @@ def settings_view():
         "qualities": [{"value": k, "name": QUALITY_NAMES.get(k, k)} for k in rules["bits_per_pixel"]],
         "codecs": [{"value": k, "name": CODEC_NAMES.get(k, k), "ready": found is None or bool(found.get(k))}
                    for k in rules["encoders"]],
+        "audio_sources": [{"value": k, "name": AUDIO_SOURCE_NAMES.get(k, k)} for k in recorder.AUDIO_SOURCES],
+        "mic_volume_range": recorder.MIC_VOLUME, "mic_test_seconds": MIC_TEST_SECONDS,
         "current": opts, "estimates": estimates,
         "estimate": estimates.get(f"{opts['size']}|{opts['fps']}|{opts['quality']}|{opts['codec']}"),
         "limit": f"{limit:g}", "limit_range": LIMIT_RANGE,
@@ -429,6 +442,62 @@ def settings_view():
         "folder": str(base), "custom_folder": bool(app_settings.get("recording_dir")),
         "note": note if isinstance(note, dict) else None,
     }
+
+
+class MicTest:
+    """设置页的"测试麦克风"：录 MIC_TEST_SECONDS 秒默认麦克风（带实时音量），录完页面取回去按滑块的音量放。一次只录一段。"""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.rec, self.until, self.error = None, 0.0, None
+        self.count, self.path = 0, None
+
+    def clean(self, keep=None):
+        """删掉以前的测试录音（被占着删不掉的跳过，下次再删）。"""
+        for old in MIC_TEST_DIR.glob(f"evo_mic_test_{os.getpid()}_*.wav"):
+            if old != keep:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+
+    def start(self):
+        with self.lock:
+            if self.rec is not None and self.rec.is_alive():
+                return "正在录，等这一段录完"
+            factory = MIC_FACTORY
+            if factory is None:
+                import process_audio
+                factory = process_audio.ProcessAudio
+            self.count += 1
+            self.path = MIC_TEST_DIR / f"evo_mic_test_{os.getpid()}_{self.count}.wav"
+            self.clean()
+            rec = factory("mic", self.path, meter=True)
+            rec.start()
+            rec.ready.wait(10)
+            if rec.error:
+                self.rec, self.error = None, rec.error
+                return f"麦克风用不了：{rec.error}"
+            self.rec, self.until, self.error = rec, time.monotonic() + MIC_TEST_SECONDS, None
+            threading.Timer(MIC_TEST_SECONDS, rec.stop).start()
+            return None
+
+    def status(self):
+        rec = self.rec
+        if self.error:
+            return {"state": "error", "error": self.error}
+        if rec is None:
+            return {"state": "idle"}
+        if rec.is_alive():
+            return {"state": "recording", "left": max(0.0, round(self.until - time.monotonic(), 1)),
+                    "level": round(getattr(rec, "level", 0.0), 3)}
+        if rec.error:
+            return {"state": "error", "error": rec.error}
+        return {"state": "done" if self.path and self.path.exists() else "idle"}
+
+
+mic_test = MicTest()
+atexit.register(mic_test.clean)
 
 
 def _done(where, text, error=False, **extra):
@@ -459,16 +528,63 @@ def save_quality():
     rules = recorder.load_rules()
     form = request.form
     size, fps, quality, codec = form.get("size"), form.get("fps", type=int), form.get("quality"), form.get("codec")
+    audio_source = form.get("audio_source", recorder.Options.audio_source)
     if size not in rules["sizes"] or fps not in rules["fps"] or quality not in rules["bits_per_pixel"] \
-            or codec not in rules["encoders"]:
+            or codec not in rules["encoders"] or audio_source not in recorder.AUDIO_SOURCES:
         return _done("quality", "没保存：选项不对，刷新一下页面再试", error=True)
     found = encoders(_ffmpeg(), run=True)
     if found and not found.get(codec):
         return _done("quality", f"没保存：这台电脑的显卡编不了 {CODEC_NAMES.get(codec, codec)}", error=True)
     for key, value in (("recording_size", size), ("recording_fps", fps), ("recording_quality", quality),
-                       ("recording_codec", codec)):
+                       ("recording_codec", codec), ("recording_audio_source", audio_source)):
         app_settings.set_value(key, value)
     return _done("quality", "保存了：从下一局开始按这个录")
+
+
+@bp.post("/settings/recording/mic")
+def save_mic():
+    """录不录麦克风（开关）。"""
+    on = request.form.get("on") == "1"
+    app_settings.set_value("recording_mic", on)
+    return _done("mic", "打开了：从下一局开始录麦克风" if on else "关掉了：以后不录麦克风")
+
+
+@bp.post("/settings/recording/mic-volume")
+def save_mic_volume():
+    """麦克风音量滑块：松手时页面用脚本提交（不刷新页面），回答存下的值；没有脚本时跳回设置页。"""
+    lo, hi, _ = recorder.MIC_VOLUME
+    value = request.form.get("volume", type=int)
+    if value is None or not lo <= value <= hi:
+        if request.headers.get("X-Evo-Fetch") == "1":
+            return jsonify({"ok": False}), 400
+        return _done("mic", f"没保存：音量要在 {lo}% 到 {hi}% 之间", error=True)
+    app_settings.set_value("recording_mic_volume", value)
+    if request.headers.get("X-Evo-Fetch") == "1":
+        return jsonify({"ok": True, "volume": value})
+    return _done("mic", "保存了")
+
+
+@bp.post("/settings/recording/mic-test")
+def start_mic_test():
+    """开始测试麦克风：录 MIC_TEST_SECONDS 秒。回答 {ok, seconds} 或 {ok: false, error}。"""
+    problem = mic_test.start()
+    if problem:
+        return jsonify({"ok": False, "error": problem})
+    return jsonify({"ok": True, "seconds": MIC_TEST_SECONDS})
+
+
+@bp.get("/settings/recording/mic-test")
+def mic_test_status():
+    """测试录到哪了：{state: recording（还剩几秒、音量 0–1）/ done / error / idle}。"""
+    return jsonify(mic_test.status())
+
+
+@bp.get("/settings/recording/mic-test.wav")
+def mic_test_audio():
+    """测试录好的那一段（WAV）：页面取回去按滑块的音量放。"""
+    if mic_test.status()["state"] != "done":
+        abort(404)
+    return send_file(mic_test.path, mimetype="audio/wav", max_age=0)
 
 
 @bp.post("/settings/recording/limit")

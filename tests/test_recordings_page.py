@@ -12,7 +12,9 @@
 - 战绩页：有录像的局多一个"看录像"按钮，指到那个录像；没录像的局没有
 - 设置页"录像"一栏（假的 ffmpeg 和编码器检测）：没有 ffmpeg 时整栏不显示、打不开（正式版）；只有 H.264 时不显示编码格式；
   配置里有几种编码格式时（以后加回 AV1，假装这台电脑"编不了 AV1"）：编不了的不能选、不保存；
-  打开时检测编码器、记住；画质四项一起保存，选了编不了的 AV1、乱填的不保存；估一局多大；硬盘上限的范围；
+  打开时检测编码器、记住；画质四项一起保存，选了编不了的 AV1、乱填的不保存；声音两档（默认只录 Apex）；麦克风开关（默认关）、
+  音量滑块（松手保存、范围）、测试麦克风（假的麦克风：录的时候有音量、录完取得回 WAV、正在录时不能再点、麦克风用不了时说原因）；
+  估一局多大；硬盘上限的范围；
   保存位置（不是完整路径、在程序文件夹里的不行，填的留在输入框里；换了以后说原来的录像还在哪；改回默认）；关掉
 
 运行：python tests/test_recordings_page.py
@@ -23,6 +25,9 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
+import time
+import wave
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -68,7 +73,8 @@ def main():
         app_settings.set_value("recording_dir", None)
         shutil.rmtree(panel_recordings.folder(), ignore_errors=True)
         for key in ("recording_enabled", panel_recordings.CHECK_KEY, "recording_size", "recording_fps",
-                    "recording_quality", "recording_codec", "recording_limit_gb"):
+                    "recording_quality", "recording_codec", "recording_limit_gb", "recording_audio_source", "recording_mic",
+                    "recording_mic_volume"):
             app_settings.set_value(key, None)
 
 
@@ -86,6 +92,71 @@ def note(client, path, data, token):
     box = section(client.get("/settings").get_data(as_text=True))
     found = re.findall(r'<div class="setting-desc rec-note-line[^"]*"\s*role="(\w+)" id="rec-note-\w+">([^<]*)</div>', box)
     return box, (f"{found[0][0]}:{found[0][1]}" if found else "")
+
+
+class FakeMic(threading.Thread):
+    """假的麦克风（测试麦克风用）：录的时候 level 是 0.5，stop() 时写一段 0.2 秒的 WAV；error 不为空就是用不了。"""
+    error_next = None
+
+    def __init__(self, source, wav_path, meter=False):
+        super().__init__(daemon=True)
+        self.source, self.wav_path, self.meter = source, Path(wav_path), meter
+        self.ready, self.level, self.error = threading.Event(), 0.0, FakeMic.error_next
+        self._stop = threading.Event()
+
+    def run(self):
+        self.ready.set()
+        if self.error:
+            return
+        self.level = 0.5
+        self._stop.wait(5)
+        with wave.open(str(self.wav_path), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(b"\x00\x10" * 2 * 9600)
+
+    def stop(self):
+        self._stop.set()
+
+
+def mic_test_checks(client, token):
+    """设置页的"测试麦克风"（假的麦克风，测试只录 0.3 秒）。"""
+    out = {}
+    real = panel_recordings.MIC_FACTORY, panel_recordings.MIC_TEST_SECONDS
+    panel_recordings.MIC_FACTORY, panel_recordings.MIC_TEST_SECONDS = FakeMic, 0.3
+    try:
+        started = client.post("/settings/recording/mic-test", data={"token": token}).get_json()
+        during = client.get("/settings/recording/mic-test").get_json()
+        again = client.post("/settings/recording/mic-test", data={"token": token}).get_json()
+        time.sleep(0.6)
+        after = client.get("/settings/recording/mic-test").get_json()
+        audio = client.get("/settings/recording/mic-test.wav")
+        out[f"测试麦克风：开始（{started}）、录的时候有音量和剩几秒（{during}）、正在录时再点不行（{again}）"] = (
+            started.get("ok") is True and during.get("state") == "recording" and during.get("level") == 0.5
+            and 0 <= during.get("left", -1) <= 0.3 and again.get("ok") is False and "正在录" in again.get("error", ""))
+        out[f"测试麦克风：录完是 done（{after}），取得回那段 WAV（{audio.status_code}，{audio.mimetype}）"] = (
+            after.get("state") == "done" and audio.status_code == 200 and audio.mimetype == "audio/wav"
+            and audio.data[:4] == b"RIFF")
+        # 上一段还被占着（像页面正在放、这个回答还没关）时再测一次：每次一个新文件，照样能测
+        second = client.post("/settings/recording/mic-test", data={"token": token}).get_json()
+        time.sleep(0.6)
+        second_done = client.get("/settings/recording/mic-test").get_json()
+        audio.close()
+        out[f"上一段录音还被占着时再测一次也行（{second}，{second_done}）"] = (
+            second.get("ok") is True and second_done.get("state") == "done")
+        FakeMic.error_next = "找不到麦克风"
+        broken = client.post("/settings/recording/mic-test", data={"token": token}).get_json()
+        none_now = client.get("/settings/recording/mic-test.wav").status_code
+        out[f"麦克风用不了：说原因（{broken}），也取不到录音（{none_now}）"] = (
+            broken.get("ok") is False and "找不到麦克风" in broken.get("error", "") and none_now == 404)
+        nobody = client.post("/settings/recording/mic-test").status_code
+        out["没有口令不让开始测试"] = nobody != 200
+    finally:
+        FakeMic.error_next = None
+        panel_recordings.MIC_FACTORY, panel_recordings.MIC_TEST_SECONDS = real
+        panel_recordings.mic_test.error = None
+    return out
 
 
 def settings_checks(client, token, base):
@@ -152,6 +223,33 @@ def settings_checks(client, token, base):
             said.startswith("status:保存了") and app_settings.get("recording_size") == "720p"
             and app_settings.get("recording_fps") == 30 and app_settings.get("recording_quality") == "small"
             and '<option value="720p" selected>' in box and '<option value="30" selected>' in box)
+        mic_switch = re.findall(r'<button type="submit" class="switch"[^>]*aria-labelledby="rec-mic-name"', box)
+        out["声音默认只录 Apex；麦克风单独一个开关，默认关；音量滑块默认 100%、0–200%，有测试按钮"] = (
+            '<option value="game" selected>只录 Apex 的声音' in box and app_settings.get("recording_audio_source") == "game"
+            and len(mic_switch) == 1 and 'aria-checked="false"' in mic_switch[0]
+            and 'id="rec-mic-volume" name="volume" min="0" max="200"' in box and 'value="100"' in box
+            and 'id="rec-mic-test"' in box)
+        box, said = note(client, "/settings/recording/quality", {**good, "audio_source": "system"}, token)
+        out[f"选电脑上所有的声音：存下，页面上选着（{said}）"] = (
+            said.startswith("status:保存了") and app_settings.get("recording_audio_source") == "system"
+            and '<option value="system" selected>电脑上所有的声音' in box)
+        _, said = note(client, "/settings/recording/quality", {**good, "audio_source": "everything"}, token)
+        out["声音乱填的不保存"] = said.startswith("alert:没保存") and app_settings.get("recording_audio_source") == "system"
+        box, said = note(client, "/settings/recording/mic", {"on": "1"}, token)
+        mic_switch = re.findall(r'<button type="submit" class="switch"[^>]*aria-labelledby="rec-mic-name"', box)
+        out[f"打开录麦克风（{said}）"] = (
+            app_settings.get("recording_mic") is True and said.startswith("status:打开了") and 'aria-checked="true"' in mic_switch[0])
+        fetch = {"X-Evo-Fetch": "1"}
+        saved = client.post("/settings/recording/mic-volume", data={"volume": "150", "token": token}, headers=fetch)
+        wrong = [client.post("/settings/recording/mic-volume", data={"volume": v, "token": token}, headers=fetch).status_code
+                 for v in ("250", "-5", "abc")]
+        box = section(client.get("/settings").get_data(as_text=True))
+        out[f"麦克风音量：脚本提交 150 存下（{saved.get_json()}），超出范围、不是数的不存（{wrong}），页面上是 150%"] = (
+            saved.get_json() == {"ok": True, "volume": 150} and wrong == [400, 400, 400]
+            and app_settings.get("recording_mic_volume") == 150 and ">150%</output>" in box)
+        out.update(mic_test_checks(client, token))
+        note(client, "/settings/recording/mic", {"on": "0"}, token)
+        note(client, "/settings/recording/quality", good, token)  # 改回默认，后面的检查照旧
         _, said = note(client, "/settings/recording/quality", {**good, "codec": "av1"}, token)
         out[f"配置里没有的 AV1：不保存（{said}）"] = (
             said.startswith("alert:没保存：选项不对") and app_settings.get("recording_codec") == "h264")

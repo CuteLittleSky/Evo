@@ -76,6 +76,54 @@ class FakeAudio:
         self.packets = [(i * 480, self.start_qpc + i * 0.01) for i in range(int(seconds * 100))]  # 每包 10 毫秒
 
 
+class FakeSources:
+    """假的几路声音：每次调用（Apex 的进程号、"system" 或 "mic"）给一路新的 FakeAudio，嘀声的时刻按 beeps[来源]。"""
+
+    def __init__(self, beeps):
+        self.beeps, self.made = beeps, {}
+
+    def __call__(self, source, wav_path):
+        audio = FakeAudio(self.beeps.get(source, 9))(source, wav_path)
+        self.made[source] = audio
+        return audio
+
+
+def beep_times(ffmpeg, path, stream):
+    """MP4 里第 stream 条音轨上所有响声的开始时刻（秒，响声之间至少隔 0.3 秒）。"""
+    r = subprocess.run([ffmpeg, "-v", "error", "-i", str(path), "-map", f"0:a:{stream}", "-ac", "1", "-ar", "48000",
+                        "-f", "s16le", "-"], capture_output=True)
+    data = r.stdout
+    out, last = [], -1.0
+    for i in range(0, len(data) - 1, 2):
+        if abs(struct.unpack_from("<h", data, i)[0]) > 2000:
+            t = i / 2 / 48000
+            if t - last > 0.3:
+                out.append(round(t, 2))
+            last = t
+    return out
+
+
+def peak_near(ffmpeg, path, stream, t, window=0.15):
+    """MP4 第 stream 条音轨在 t 秒附近（前后 window 秒）最响的采样。"""
+    r = subprocess.run([ffmpeg, "-v", "error", "-i", str(path), "-map", f"0:a:{stream}", "-ac", "1", "-ar", "48000",
+                        "-f", "s16le", "-"], capture_output=True)
+    data = r.stdout
+    lo, hi = max(0, int((t - window) * 48000)), int((t + window) * 48000)
+    values = struct.unpack_from(f"<{max(0, min(hi, len(data) // 2) - lo)}h", data, lo * 2) if hi > lo else ()
+    return max((abs(v) for v in values), default=0)
+
+
+def audio_titles(ffmpeg, path):
+    """MP4 里每条音轨的名字（ffmpeg 显示成 name 或 title）。"""
+    _, err = recorder.run_ffmpeg(ffmpeg, ["-i", str(path)])
+    out = []
+    for block in re.split(r"\n\s+Stream #", err or "")[1:]:
+        if "Audio:" in block.split("\n")[0]:
+            m = re.search(r"^\s+(?:name|title)\s+:\s+(.+)$", block, re.M)
+            out.append(m.group(1).strip() if m else None)
+    return out
+
+
 def pure_checks(tmp):
     out = {}
     rules = recorder.load_rules()
@@ -88,6 +136,11 @@ def pure_checks(tmp):
     old = recorder.options_from({"recording_quality": "low", "recording_size": "4k", "recording_fps": "144",
                                  "recording_codec": "h265"}, rules)
     kept = recorder.options_from({"recording_quality": "small", "recording_size": "720p", "recording_fps": "30"}, rules)
+    sound = recorder.options_from({"recording_audio_source": "system", "recording_mic": True}, rules)
+    bad_sound = recorder.options_from({"recording_audio_source": "everything", "recording_mic": "yes"}, rules)
+    out["声音设置：默认只录 Apex、不录麦克风；选了电脑上所有的声音、麦克风照用；乱填的用默认"] = (
+        (default.audio_source, default.mic) == ("game", False) and (sound.audio_source, sound.mic) == ("system", True)
+        and (bad_sound.audio_source, bad_sound.mic) == ("game", False))
     out["画质设置：默认 1080p 60 帧标准；以前的、乱填的那一档用默认；设过的照用（帧数存成字符串也认）"] = (
         (default.size, default.fps, default.quality, default.codec) == ("1080p", 60, "standard", "h264")
         and (old.size, old.fps, old.quality, old.codec) == ("1080p", 60, "standard", "h264")
@@ -246,6 +299,35 @@ def record_checks(ffmpeg, tmp):
     out["上次崩了没拼的分段文件：拼成名字带'_未完成'的 MP4，分段文件删掉"] = (
         len(done) == 1 and done[0].name.endswith("_未完成.mp4") and done[0].stat().st_size > 0
         and not any((tmp / "lib4" / recorder.WORK_DIR_NAME).iterdir()))
+
+    # 6. 电脑上所有的声音 + 麦克风：第 1 条混好的（两声都有），原声各自另存一条，每条有名字，时刻都对得上画面；
+    #    麦克风音量 50%：混音里麦克风那一声是原声的一半，麦克风原声那条不变
+    sources = FakeSources({"system": 1.0, "mic": 2.0})
+    rec = recorder.Recording(ffmpeg, recorder.Options(**best, audio_source="system", mic=True, mic_volume=50), tmp / "lib6",
+                             log=quiet.append, rules=rules, audio_factory=sources)
+    rec.start(apex_pid=1234)
+    time.sleep(3.0)
+    rec.poll()
+    video6 = rec.finish()
+    meta6 = json.loads(video6.with_suffix(".json").read_text(encoding="utf-8")) if video6 else {}
+    first = meta6.get("first_frame", 0)
+    want = {k: round((a.start_qpc + beep) - (rec.t0_qpc + first), 2) for k, a, beep in
+            (("system", sources.made.get("system"), 1.0), ("mic", sources.made.get("mic"), 2.0)) if a}
+    mixed, system, mic = (beep_times(ffmpeg, video6, i) if video6 else [] for i in range(3))
+    titles = audio_titles(ffmpeg, video6) if video6 else []
+    out[f"电脑上所有的声音 + 麦克风：录了系统内录和麦克风（{sorted(sources.made)}），没录 Apex 的进程"] = (
+        sorted(sources.made) == ["mic", "system"])
+    out[f"三条音轨：混音 {mixed}、电脑上所有的声音 {system}、麦克风 {mic}（应在 {want}），名字 {titles}"] = (
+        len(mixed) == 2 and len(system) == 1 and len(mic) == 1 and want.get("system") is not None
+        and abs(system[0] - want["system"]) < 0.05 and abs(mic[0] - want["mic"]) < 0.05
+        and abs(mixed[0] - want["system"]) < 0.05 and abs(mixed[1] - want["mic"]) < 0.05
+        and titles == ["混音", "电脑上所有的声音", "麦克风"] and meta6.get("audio", {}).get("tracks") == ["mix", "system", "mic"])
+    mixed_mic = peak_near(ffmpeg, video6, 0, want.get("mic", 0)) if video6 else 0
+    raw_mic = peak_near(ffmpeg, video6, 2, want.get("mic", 0)) if video6 else 0
+    mixed_sys = peak_near(ffmpeg, video6, 0, want.get("system", 0)) if video6 else 0
+    raw_sys = peak_near(ffmpeg, video6, 1, want.get("system", 0)) if video6 else 0
+    out[f"麦克风音量 50%：混音里麦克风那一声 {mixed_mic}、原声 {raw_mic}（一半）；另一路不变（{mixed_sys} / {raw_sys}）"] = (
+        raw_mic > 0 and 0.4 < mixed_mic / raw_mic < 0.6 and raw_sys > 0 and 0.9 < mixed_sys / raw_sys < 1.1)
 
     # 5. 设置里选了 AV1、这块显卡编不了（这里用一个不存在的编码器假装）：改用 H.264 照样录，不是整局不录
     no_av1 = {**rules, "encoders": {**rules["encoders"], "av1": ["av1_evo_test_missing"]}}

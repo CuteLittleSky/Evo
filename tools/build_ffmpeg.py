@@ -51,6 +51,7 @@ ENABLE = {  # configure 的 --enable-<种类>=…（--disable-everything 以后�
         "settb", "setpts", "showinfo",  # 时间戳 = 抓到的时刻；读第一帧的时刻、画面大小
         "scale", "null", "anull", "aresample", "aformat",  # 缩略图缩小；ffmpeg 自己插的格式转换
         "color", "testsrc2", "realtime",  # 测试画面（检测编码器、tests/test_recorder.py）
+        "amix", "volume",  # 开了麦克风时把两路声音混成第 1 条音轨（2026-11-21）
     ],
     "encoder": [
         "h264_nvenc", "h264_amf", "h264_qsv",  # 显卡编码：NVIDIA、AMD、Intel

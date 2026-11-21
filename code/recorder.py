@@ -91,7 +91,15 @@ class Options:
     codec: str = "h264"  # config 里 encoders 的一项：现在只有 h264（AV1 2026-11-20 先拿掉了，见 config）
     quality: str = "standard"  # config 里 bits_per_pixel 的一项：best / high / standard / small
     audio: bool = True
+    audio_source: str = "game"  # 声音：game = 只录 Apex；system = 电脑上所有的声音（系统内录，2026-11-21 用户要的两档）
+    mic: bool = False  # 同时录麦克风（默认关）：开了以后第 1 条音轨是混好的，原声各自另存一条
+    mic_volume: int = 100  # 麦克风混进第 1 条音轨时的音量（%，设置页的滑块，0–200）；麦克风原声那条不动
     extra: dict = field(default_factory=dict)  # 测试用：直接指定 encoder、bitrate
+
+
+AUDIO_SOURCES = ("game", "system")
+MIC_VOLUME = (0, 200, 5)  # 麦克风音量滑块：最小、最大、一格（%）
+TRACK_TITLES = {"mix": "混音", "game": "游戏", "system": "电脑上所有的声音", "mic": "麦克风"}  # MP4 里每条音轨的名字
 
 
 def options_from(settings, rules=None):
@@ -110,7 +118,10 @@ def options_from(settings, rules=None):
                    fps=pick("recording_fps", rules["fps"], default.fps, int),
                    codec=pick("recording_codec", rules["encoders"], default.codec),
                    quality=pick("recording_quality", rules["bits_per_pixel"], default.quality),
-                   audio=bool(settings.get("recording_audio", default.audio)))
+                   audio=bool(settings.get("recording_audio", default.audio)),
+                   audio_source=pick("recording_audio_source", AUDIO_SOURCES, default.audio_source),
+                   mic=settings.get("recording_mic") is True,
+                   mic_volume=pick("recording_mic_volume", range(MIC_VOLUME[0], MIC_VOLUME[1] + 1), default.mic_volume, int))
 
 
 _user32 = ctypes.WinDLL("user32")
@@ -321,7 +332,9 @@ class Recording:
         self.audio_factory = audio_factory
         self.clock = clock
         self.proc = None
-        self.audio = None
+        self.audio = None  # 游戏（或电脑上所有的声音）
+        self.mic = None  # 麦克风
+        self.audio_note = None  # 拼 MP4 时每条音轨的说明（写进 .json）
         self.parts = 0
         self.events = []
         self.hud_changes = []  # 右上角变了的时刻（秒，从 t0 算起）：以后从录像里找击杀用
@@ -365,25 +378,38 @@ class Recording:
         self.t0_us, self.t0_qpc = time.time_ns() // 1000, time.perf_counter()
         self.work = self.out_dir / WORK_DIR_NAME / self.started.strftime("%Y%m%d_%H%M%S")
         self.work.mkdir(parents=True, exist_ok=True)
-        if opts.audio and apex_pid and self.rules.get("audio", True):
-            self._start_audio(apex_pid)
+        if opts.audio and self.rules.get("audio", True):
+            if opts.audio_source == "system":
+                self._start_audio("system")
+            elif apex_pid:
+                self._start_audio(apex_pid)
+            if opts.mic:
+                self._start_audio("mic")
         self._launch()
+        sounds = ([{"system": "电脑上所有的声音"}.get(opts.audio_source, "游戏声音")] if self.audio else []) + \
+            (["麦克风"] if self.mic else [])
         self.log(f"录像：开始（{'只抓游戏窗口' if opts.source == 'window' else '桌面复制' if opts.source == 'desktop' else '测试画面'}，"
                  f"{self.size[0]}×{self.size[1]} {opts.fps} 帧，{self.encoder}，{self.bitrate / 1e6:.0f} Mbps"
-                 f"{'，录游戏声音' if self.audio else ''}）")
+                 f"{'，录' + '和'.join(sounds) if sounds else ''}）")
 
-    def _start_audio(self, pid):
+    def _start_audio(self, source):
+        """开一路声音：source 是 Apex 的进程号、"system"（电脑上所有的声音）或 "mic"（麦克风）。录不了只记一句，不影响画面。"""
         factory = self.audio_factory
         if factory is None:
             import process_audio
             factory = process_audio.ProcessAudio
-        audio = factory(pid, self.work / "audio.wav")
+        mic = source == "mic"
+        audio = factory(source, self.work / ("mic.wav" if mic else "audio.wav"))
         audio.start()
         audio.ready.wait(15)
         if audio.error:
-            self.log(f"录像：游戏声音录不了（{audio.error}），只录画面")
+            what = "麦克风" if mic else {"system": "电脑上的声音"}.get(source, "游戏声音")
+            self.log(f"录像：{what}录不了（{audio.error}）")
             return
-        self.audio = audio
+        if mic:
+            self.mic = audio
+        else:
+            self.audio = audio
 
     def since_t0(self):
         return self.clock() - self.t0_us / 1e6
@@ -511,8 +537,9 @@ class Recording:
         self._stop_ffmpeg()
         if self._down_since is not None:
             self.outages.append([round(self._down_since, 2), round(self.since_t0(), 2)])
-        if self.audio:
-            self.audio.stop()
+        for audio in (self.audio, self.mic):
+            if audio:
+                audio.stop()
         parts = [p for p in sorted(self.work.glob("part_*.ts")) if p.stat().st_size > 0]
         if not parts:
             self.log("录像：一帧都没录到")
@@ -527,14 +554,8 @@ class Recording:
         folder = self.out_dir / self.started.strftime("%Y-%m")
         folder.mkdir(parents=True, exist_ok=True)
         out = folder / f"{self.started:%Y-%m-%d_%H%M%S}{'_' + label if label else ''}.mp4"
-        cmd = ["-y", *KEEP_GAPS, "-i", "concat:" + "|".join(p.name for p in parts)]
-        audio_note = None
-        packets = getattr(self.audio, "packets", None) if self.audio else None
-        if packets and (self.work / "audio.wav").exists():
-            offset = audio_offset(packets, AUDIO_RATE, start + self.t0_qpc)
-            align_wav(self.work / "audio.wav", self.work / "audio_aligned.wav", offset)
-            cmd += ["-i", "audio_aligned.wav", "-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "160k"]
-            audio_note = {"offset": round(offset, 4), "gaps": getattr(self.audio, "gaps", None)}
+        cmd = ["-y", *KEEP_GAPS, "-i", "concat:" + "|".join(p.name for p in parts)] + self._audio_args(start)
+        audio_note = self.audio_note
         cmd += ["-c:v", "copy", "-movflags", "+faststart", str(out)]
         code, err = run_ffmpeg(self.ffmpeg, cmd, timeout=600, cwd=self.work)
         if code != 0 or not out.exists():
@@ -557,12 +578,50 @@ class Recording:
         self.log(f"录像：存好了 {out}（{out.stat().st_size / 2 ** 20:.0f} MB，{len(self.events)} 个事件）")
         return out
 
+    def _audio_args(self, start):
+        """拼 MP4 时声音那部分的 ffmpeg 参数：每一路按自己的时刻对齐画面（align_wav）。只有一路：一条音轨；
+        游戏（或电脑上所有的声音）和麦克风都有：第 1 条是两路混好的（Evo 里、别的播放器默认放这条），原声各自另存一条
+        （剪辑时单独调），每条写上名字（TRACK_TITLES）。结果的说明放 self.audio_note（写进 .json）。"""
+        tracks = []  # [(名字, 对齐后的 WAV, 说明)]
+        for kind, audio, name in (("main", self.audio, "audio"), ("mic", self.mic, "mic")):
+            packets = getattr(audio, "packets", None) if audio else None
+            if packets and (self.work / f"{name}.wav").exists():
+                offset = audio_offset(packets, AUDIO_RATE, start + self.t0_qpc)
+                align_wav(self.work / f"{name}.wav", self.work / f"{name}_aligned.wav", offset)
+                title = "mic" if kind == "mic" else self.options.audio_source
+                tracks.append((title, f"{name}_aligned.wav",
+                               {"source": title, "offset": round(offset, 4), "gaps": getattr(audio, "gaps", None)}))
+        self.audio_note = None
+        if not tracks:
+            return []
+        args = []
+        for _, wav, _ in tracks:
+            args += ["-i", wav]
+        self.audio_note = {"tracks": ["mix"] * (len(tracks) > 1) + [t for t, _, _ in tracks],
+                           **{t: note for t, _, note in tracks}}
+        if len(tracks) == 1:
+            args += ["-map", "0:v", "-map", "1:a"]
+        else:
+            mix = self.rules.get("mix", {})
+            gain = {t: mix.get(t, 1.0) * (self.options.mic_volume / 100 if t == "mic" else 1) for t, _, _ in tracks}
+            inputs = "".join(f"[{i + 1}:a]volume={gain[t]:g}[a{i}];" for i, (t, _, _) in enumerate(tracks))
+            graph = inputs + "".join(f"[a{i}]" for i in range(len(tracks))) + \
+                f"amix=inputs={len(tracks)}:duration=longest:normalize=0[mix]"
+            args += ["-filter_complex", graph, "-map", "0:v", "-map", "[mix]"]
+            args += [x for i in range(len(tracks)) for x in ("-map", f"{i + 1}:a")]
+        for i, title in enumerate(self.audio_note["tracks"]):  # title 在 MP4 里是 name；有的播放器显示 handler_name，两个都写
+            name = TRACK_TITLES.get(title, title)
+            args += [f"-metadata:s:a:{i}", f"title={name}", f"-metadata:s:a:{i}", f"handler_name={name}"]
+        args += ["-disposition:a:0", "default", "-c:a", "aac", "-b:a", "160k"]
+        return args
+
     def abort(self):
         """不要这一局了：停下、删掉分段文件。"""
         self.stopping = True
         self._kill()
-        if self.audio:
-            self.audio.stop()
+        for audio in (self.audio, self.mic):
+            if audio:
+                audio.stop()
         shutil.rmtree(getattr(self, "work", self.out_dir / WORK_DIR_NAME / "_none"), ignore_errors=True)
 
 
