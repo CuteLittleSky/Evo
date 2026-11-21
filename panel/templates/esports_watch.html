@@ -528,7 +528,9 @@
       cell.chips.hidden = !(live && !st.closed);
       if (!cell.chips.hidden) {
         cell.dot.className = "es-dot pf-" + p.platform;
-        cell.text.textContent = canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name + " 房间 " + p.room;
+        // 写主播的名字（名单里给他留的那个）和平台，不写房间号（2026-11-21 用户要的：多屏时一眼看出哪一格是谁；
+        // 房间号在下面那一行，选中这一格就看得到）
+        cell.text.textContent = p.name + " · " + (canEmbed(p) && !canPlay(p) ? p.platform_name + "官方播放器" : p.platform_name);
       }
       cell.pick.hidden = !multi() || focused;
       cell.pick.title = st.layout === 3 ? "换到大屏（声音跟着这一格）" : "选中这一格（声音跟着这一格）";

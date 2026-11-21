@@ -1367,7 +1367,10 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-seg.watch-layout button { flex: none; padding: 0 10px; white-space: nowrap; }  /* 按字数定宽，不平分 */
 .watch-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
 .watch-chips { position: absolute; top: 12px; left: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; pointer-events: none; }
-.watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; background: rgb(8 9 12 / 0.72); color: #ECEEF2; }
+.watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; background: rgb(8 9 12 / 0.72); color: #ECEEF2;
+  min-width: 0; max-width: 100%; }
+.watch-chip > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  /* 名字太长：省略，不盖住右上角的按钮 */
+.watch-stage-box.multi .watch-chips { max-width: calc(100% - 104px); }
 /* 单屏、没全屏：平台和房间号写在播放器下面主播名字那一块（.watch-room），画面上不标（2026-11-21 用户要的） */
 .watch-stage-box.n1:not(:fullscreen) .watch-chips { display: none; }
 .watch-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
