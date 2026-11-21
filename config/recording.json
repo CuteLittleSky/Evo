@@ -5,7 +5,7 @@
   "_说明_tail_seconds": "一局结束（结算画面、回到大厅）以后再录几秒才停：淘汰画面、冠军横幅也录进去",
 
   "keyframe_seconds": 2,
-  "_说明_keyframe_seconds": "每隔几秒一个关键帧：播放时拖进度条能跳到的最小间隔",
+  "_说明_keyframe_seconds": "每隔几秒一个关键帧：播放时拖进度条能跳到的最小间隔，剪高光时片段开头最多早这么多秒。只按时间放（-force_key_frames）；按帧数的 -g 放宽到两倍只用来兜底，两套一样宽时会碰上、关键帧成对（2026-11-21，见 recorder.encoder_args）",
 
   "stall_seconds": 5,
   "stall_seconds_window": 30,

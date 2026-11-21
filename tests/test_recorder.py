@@ -137,6 +137,8 @@ def b_frame_checks(rules):
         [recorder.b_frames_wanted(rules, e) for e in ("h264_nvenc", "h264_amf", "h264_qsv")] == [3, 2, 0]
         and nv[nv.index("-bf") + 1] == "3" and nv[nv.index("-b_ref_mode") + 1] == "middle"
         and off[off.index("-bf") + 1] == "0" and "-b_ref_mode" not in off)
+    out["关键帧只按时间放（每 2 秒）：按帧数的 -g 放宽到两倍（60 帧时 240），两套碰上会成对"] = (
+        nv[nv.index("-g") + 1] == "240" and nv[nv.index("-force_key_frames") + 1] == "expr:gte(t,n_forced*2)")
 
     def fake_run(accepts_b):  # 假的 ffmpeg：accepts_b=False 像老显卡，开了 B 帧就报错
         tried = []
@@ -686,6 +688,9 @@ def highlight_record_checks(ffmpeg, tmp):
     out[f"关键帧：直接读 MP4 的索引，和 ffmpeg 解出来的一样（{keys}）"] = (
         bool(keys) and by_ffmpeg is not None and len(keys) == len(by_ffmpeg) >= 3
         and all(abs(a - b) < 1e-5 for a, b in zip(keys, by_ffmpeg)) and keys[0] == 0)
+    gaps = [round(b - a, 3) for a, b in zip(keys or [], (keys or [])[1:])]
+    out[f"关键帧每 2 秒一个、没有挨着的一对（间隔 {gaps}；以前 -g 和按时间的两套碰上时会差一两帧成对）"] = (
+        bool(gaps) and all(1.8 < g < 2.2 for g in gaps))
 
     picked = {k: {"on": False, "before": 0, "after": 0} for k in highlights.choices({}, rules)}
     picked["knock"] = {"on": True, "before": 1, "after": 1}

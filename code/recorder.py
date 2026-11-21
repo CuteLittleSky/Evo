@@ -207,8 +207,11 @@ def b_frames_wanted(rules, encoder):
 
 
 def encoder_args(encoder, fps, rate, keyframe_seconds, b_frames=0):
+    """关键帧只按时间放：-force_key_frames 每 keyframe_seconds 秒一个。-g（按帧数）放宽到两倍，只在按时间的那套
+    失灵时兜底：两套一样宽时，画面每秒稍多于 fps 帧会让第 fps × keyframe_seconds 帧比整秒早一点到，
+    两套各放一个、关键帧成对（2026-11-21 实测，见 docs/录像.md"实测踩过的坑"）。"""
     args = ["-c:v", encoder, "-b:v", str(rate), "-maxrate", str(int(rate * 1.5)), "-bufsize", str(rate * 2),
-            "-g", str(fps * keyframe_seconds), "-bf", str(b_frames),
+            "-g", str(fps * keyframe_seconds * 2), "-bf", str(b_frames),
             "-force_key_frames", f"expr:gte(t,n_forced*{keyframe_seconds})"]
     family = encoder.rsplit("_", 1)[1]
     if family == "nvenc":
