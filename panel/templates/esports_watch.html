@@ -36,6 +36,7 @@
         <button type="button" aria-pressed="false" data-layout="2">双屏</button>
         <button type="button" aria-pressed="false" data-layout="3">三屏</button>
         <button type="button" aria-pressed="false" data-layout="4">四屏</button>
+        <button type="button" aria-pressed="false" data-layout="4" data-grid="1" title="四格一样大（2×2）">四宫格</button>
       </div>
     </div>
 
@@ -237,6 +238,7 @@
     var st = {status: null, platforms: data.platforms, sel: data.selected, closed: false, filter: "all", failed: false,
               apex: false, apexOk: false, lastTry: 0,
               layout: 1, focus: 0,  // 多屏同看：几格、选中的是第几格（播放器在各自的格子里，见 makeCell）
+              grid: false,  // 4 格时：是不是四宫格（2×2，四格一样大）；不是就是四屏（一大三小）
               mainOpen: false,  // 主舞台那一栏里没开播的几路：点开了没有
               playFailed: {},  // Evo 自己的播放器：哪些人没播成
               accounts: data.accounts || {}};  // 要登录才能看高画质的平台：{平台: {logged_in, name}}
@@ -382,13 +384,14 @@
 
     // ---------- 播放器那一块：1 / 2 / 3 / 4 格（多屏同看，2026-11-19 用户要的），每格一路 ----------
     // 3 格、4 格是一个大的 + 右边一列小的（三屏 2026-11-20；四屏 2026-11-21 从 2×2 改成一大三小，赛管提的）：
-    // 选中的那一格是大的（只换样式，不动格子本身，画面不会重新加载）
+    // 选中的那一格是大的（只换样式，不动格子本身，画面不会重新加载）。
+    // 4 格还有一种"四宫格"（st.grid，2×2 四格一样大：原来的四屏，2026-11-21 用户要留着），没有大屏
     // 格子：{index, id: 这一格放的是谁, key: 现在显示的是什么, player, seq, video, showSound, node, body, chips, dot, text, pick, close}
     // 选中的那一格（st.focus）有声音，别的格子静音；右边点一位在播的，就放进选中的那一格。st.sel 一直是选中那一格里的人
     var stageBox = document.querySelector(".watch-stage-box"), screen = $("watch-screen");
     var cells = [];
     function multi() { return st.layout > 1; }
-    function big() { return st.layout >= 3; }  // 三屏、四屏：有一个大屏，点小格子就把它换到大屏
+    function big() { return st.layout === 3 || (st.layout === 4 && !st.grid); }  // 三屏、四屏：有一个大屏，点小格子就把它换到大屏
     function makeCell(index) {
       var cell = { index: index, id: null, key: null, player: null, seq: 0, video: null, showSound: null };
       cell.node = el("div", "watch-cell");
@@ -455,7 +458,7 @@
       if (cell.index === st.focus) st.sel = null;
       render();
     }
-    function setLayout(count) {
+    function setLayout(count, grid) {
       while (cells.length < count) {
         var cell = makeCell(cells.length);
         cells.push(cell);
@@ -467,9 +470,10 @@
         gone.node.remove();
       }
       st.layout = count;
+      st.grid = count === 4 && !!grid;
       if (st.focus >= count) { st.focus = 0; st.sel = cells[0].id; }
       document.querySelectorAll("[data-layout]").forEach(function (btn) {
-        var on = btn.dataset.layout === String(count);
+        var on = btn.dataset.layout === String(count) && !!btn.dataset.grid === st.grid;
         btn.classList.toggle("on", on);
         btn.setAttribute("aria-pressed", on ? "true" : "false");
       });
@@ -507,7 +511,7 @@
         };
       } else if (!p && multi()) {
         // 多屏时空着的格子：选中的那一格等着右边点人，别的格子给一个"选这一格"的按钮
-        key = "empty:" + focused + ":" + anyLive + ":" + st.layout;
+        key = "empty:" + focused + ":" + anyLive + ":" + st.layout + ":" + st.grid;
         build = function () {
           if (focused) return message("这一格是空的", anyLive ? "在右边点一位在播的" + noun + "，就放进这一格。" : "现在没有" + noun + "在播。");
           var box = message("这一格是空的");
@@ -637,7 +641,7 @@
     }
 
     function renderStage() {
-      stageBox.className = "watch-stage-box n" + st.layout + (multi() ? " multi" : "");
+      stageBox.className = "watch-stage-box n" + st.layout + (multi() ? " multi" : "") + (st.grid ? " grid" : "");
       cells.forEach(renderCell);
       renderInfo();
     }
@@ -1338,7 +1342,7 @@
       if (img.complete && img.naturalWidth === 0) fallback();
     });
     document.querySelectorAll("[data-layout]").forEach(function (btn) {
-      btn.addEventListener("click", function () { setLayout(parseInt(btn.dataset.layout, 10)); });
+      btn.addEventListener("click", function () { setLayout(parseInt(btn.dataset.layout, 10), !!btn.dataset.grid); });
     });
     document.querySelectorAll("[data-main-more]").forEach(function (btn) {  // 主舞台里"没开播的 N 路"
       btn.addEventListener("click", function () { st.mainOpen = !st.mainOpen; renderList(); });

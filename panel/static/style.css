@@ -1355,19 +1355,20 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 /* 三屏（一大两小，2026-11-20 用户要的）：左边一格大的占 2/3 宽，右边两格小的上下排；整块 24:9，三格都正好是 16:9。
    四屏（一大三小，2026-11-21 赛管提的、用户定的，原来是 2×2）：大的占 3/4 宽，右边三格小的上下排；整块 64:27，四格都是 16:9。
    选中的那一格就是大的（只换位置，格子本身不动，画面不重新加载）。小格子窄（主窗口里三屏 270px、四屏 200px 上下）：
-   音量滑杆、弹幕的两个按钮收起来（小格子本来就没有声音和弹幕），平台和主播的名字照样标着；四屏的小格子再收掉静音按钮 */
+   音量滑杆、弹幕的两个按钮收起来（小格子本来就没有声音和弹幕），平台和主播的名字照样标着；四屏的小格子再收掉静音按钮。
+   四宫格（.n4.grid，2026-11-21 用户要留着原来的 2×2）：四格一样大，整块还是 16:9，没有大屏 */
 .watch-stage-box.n3 { aspect-ratio: 8 / 3; }
 .watch-stage-box.n3 .watch-screen { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .watch-stage-box.n3 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 2; }
-.watch-stage-box.n4 { aspect-ratio: 64 / 27; }
-.watch-stage-box.n4 .watch-screen { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
-.watch-stage-box.n4 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 3; }
-.watch-stage-box:is(.n3, .n4) .watch-cell:not(.focus) { grid-column: 2; }
-.watch-stage-box:is(.n3, .n4) .watch-cell:not(.focus) :is(.watch-volume, .watch-danmaku-btn, .watch-dm-btn, .watch-dm-panel) { display: none; }
-.watch-stage-box.n4 .watch-cell:not(.focus) .watch-mute-btn { display: none; }
-.watch-stage-box:is(.n3, .n4) .watch-cell:not(.focus) .watch-chips { top: 8px; left: 8px; }
-.watch-stage-box:is(.n3, .n4) .watch-cell:not(.focus) .watch-controls { height: 40px; padding: 0 6px; }
-.watch-stage-box.n2 .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.watch-stage-box.n4:not(.grid) { aspect-ratio: 64 / 27; }
+.watch-stage-box.n4:not(.grid) .watch-screen { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+.watch-stage-box.n4:not(.grid) .watch-cell.focus { grid-column: 1; grid-row: 1 / span 3; }
+.watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) { grid-column: 2; }
+.watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) :is(.watch-volume, .watch-danmaku-btn, .watch-dm-btn, .watch-dm-panel) { display: none; }
+.watch-stage-box.n4:not(.grid) .watch-cell:not(.focus) .watch-mute-btn { display: none; }
+.watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) .watch-chips { top: 8px; left: 8px; }
+.watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) .watch-controls { height: 40px; padding: 0 6px; }
+.watch-stage-box.n2 .watch-screen, .watch-stage-box.n4.grid .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .watch-cell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #0E1016; color: #ECEEF2; }
 .watch-cell-screen { position: absolute; inset: 0; }
 .watch-stage-box.multi .watch-cell.focus::after { content: ""; position: absolute; inset: 0; border: 2px solid #FF5A5A; pointer-events: none; z-index: 2; }
@@ -1450,7 +1451,8 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-stage-box.n1:fullscreen .watch-player { position: relative; inset: auto; flex: none; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); }
 .watch-stage-box:fullscreen .watch-video { opacity: 0.999; }
 .watch-stage-box.n1:fullscreen .watch-chips { top: calc((100vh - min(100vh, 100vw * 9 / 16)) / 2 + 12px); left: calc((100vw - min(100vw, 100vh * 16 / 9)) / 2 + 12px); }
-/* 多屏全屏：格子铺满屏幕（2 格左右各半；三屏、四屏照样一个大的 + 右边一列小的），画面在各自的格子里按 16:9 居中（video 自己留黑边） */
+/* 多屏全屏：格子铺满屏幕（2 格左右各半；三屏、四屏照样一个大的 + 右边一列小的；四宫格 2×2），画面在各自的格子里按 16:9 居中（video 自己留黑边） */
+.watch-stage-box.n4.grid:fullscreen .watch-screen { grid-template-rows: repeat(2, minmax(0, 1fr)); }
 
 .watch-info { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .watch-avatar { width: 44px; height: 44px; font-size: 17px; }

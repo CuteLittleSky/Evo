@@ -95,23 +95,29 @@ def main():
     out["占满窗口、没有侧边栏（导航、主题按钮），有\"← 赛事\"能回去；写着赛事名、阶段和\"进行中\""] = (
         '<nav class="nav"' not in raw and 'id="theme-toggle"' not in raw and 'id="side"' not in raw
         and 'class="wrap watch-wrap"' in raw
-        and 'href="/esports"' in head and text(head).split() == ["电竞", "职业联赛", "第", "3", "周", "B", "组对", "C", "组", "进行中", "单屏", "双屏", "三屏", "四屏"]
+        and 'href="/esports"' in head and text(head).split() == ["电竞", "职业联赛", "第", "3", "周", "B", "组对", "C", "组", "进行中", "单屏", "双屏", "三屏", "四屏", "四宫格"]
         and "es-live-tag" in head)
-    out["多屏同看：顶上有\"单屏 / 双屏 / 三屏 / 四屏\"（默认单屏）；播放器那一块的格子由脚本画，每格问播放地址时带着是第几格"] = (
+    out["多屏同看：顶上有\"单屏 / 双屏 / 三屏 / 四屏 / 四宫格\"（默认单屏）；播放器那一块的格子由脚本画，每格问播放地址时带着是第几格"] = (
         [(m, on) for m, on in re.findall(r'aria-pressed="(true|false)" data-layout="(\d)"', head)]
-        == [("true", "1"), ("false", "2"), ("false", "3"), ("false", "4")]
+        == [("true", "1"), ("false", "2"), ("false", "3"), ("false", "4"), ("false", "4")]
+        and head.count('data-grid="1"') == 1 and 'data-layout="4" data-grid="1" title="四格一样大（2×2）">四宫格</button>' in head
         and '<div class="watch-stage-box n1">' in raw and 'id="watch-screen"></div>' in raw and "function makeCell(index)" in raw
         and 'p.play + "?s=" + cell.index' in raw and 'data-filter="all"' in raw and '"[data-filter]"' in raw)
     css = (Path(panel_app.__file__).parent.parent / "panel" / "static" / "style.css").read_text(encoding="utf-8")
     out["三屏（一大两小）、四屏（一大三小）：选中的那一格是大屏（只换样式里的位置，格子不动）；点小格子控制条上的按钮不换"] = (
         ".watch-stage-box.n3 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 2; }" in css
         and ".watch-stage-box.n3 { aspect-ratio: 8 / 3; }" in css
-        and ".watch-stage-box.n4 .watch-cell.focus { grid-column: 1; grid-row: 1 / span 3; }" in css
-        and ".watch-stage-box.n4 { aspect-ratio: 64 / 27; }" in css
-        and ".watch-stage-box:is(.n3, .n4) .watch-cell:not(.focus) { grid-column: 2; }" in css
-        and "function big() { return st.layout >= 3; }" in raw
+        and ".watch-stage-box.n4:not(.grid) .watch-cell.focus { grid-column: 1; grid-row: 1 / span 3; }" in css
+        and ".watch-stage-box.n4:not(.grid) { aspect-ratio: 64 / 27; }" in css
+        and ".watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) { grid-column: 2; }" in css
+        and "function big() { return st.layout === 3 || (st.layout === 4 && !st.grid); }" in raw
         and 'if (big() && e.target.closest && e.target.closest(".watch-controls")) return;' in raw
         and 'big() ? "换到大屏" : "选这一格"' in raw)
+    out["四宫格（2×2，四格一样大：原来的四屏）还留着，和四屏（一大三小）是两个按钮"] = (
+        ".watch-stage-box.n2 .watch-screen, .watch-stage-box.n4.grid .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }" in css
+        and ".watch-stage-box.n4.grid:fullscreen .watch-screen { grid-template-rows: repeat(2, minmax(0, 1fr)); }" in css
+        and 'st.grid = count === 4 && !!grid;' in raw and '(st.grid ? " grid" : "")' in raw
+        and 'setLayout(parseInt(btn.dataset.layout, 10), !!btn.dataset.grid);' in raw)
     out["多屏只有选中的那一格有声音（四屏的大屏也是）"] = (
         "cell.video.muted = off || (multi() && cell.index !== st.focus);" in raw)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)
