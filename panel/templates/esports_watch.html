@@ -14,7 +14,9 @@
 {% block top %}{% endblock %}
 
 {% block content %}
-<div class="watch">
+<div class="watch" id="watch">
+  {# 右边一栏收起过（顶上那一行最右边的按钮，记在这台电脑上）：画出来之前就收起，不先闪一下 #}
+  <script>try { if (localStorage.getItem("evo-watch-side") === "0") document.currentScript.parentNode.classList.add("side-off"); } catch (e) {}</script>
   <div class="watch-main">
     <div class="watch-head">
       <a class="watch-back" href="{{ url_for('esports.page') }}">
@@ -38,6 +40,12 @@
         <button type="button" aria-pressed="false" data-layout="4">四屏</button>
         <button type="button" aria-pressed="false" data-layout="4" data-grid="1" title="四格一样大（2×2）">四宫格</button>
       </div>
+      {# 收起 / 展开右边那一栏（2026-11-22 用户要的）：收起以后播放器那一块变大。两个图标按状态显示一个（样式表），名字由脚本写 #}
+      {% set side_name = "主播栏" if solo else "队伍栏" %}
+      <button type="button" class="watch-side-toggle" id="watch-side-toggle" aria-controls="watch-side" aria-expanded="true" title="收起右边的{{ side_name }}" aria-label="收起右边的{{ side_name }}" data-name="{{ side_name }}">
+        <svg class="i-close" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M15 4v16"></path><path d="M8 9l3 3-3 3"></path></svg>
+        <svg class="i-open" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M15 4v16"></path><path d="M11 15l-3-3 3-3"></path></svg>
+      </button>
     </div>
 
     {# Apex 在运行、这里又正在播的时候才显示（脚本每 10 秒问一次 /esports/game） #}
@@ -108,7 +116,7 @@
     </footer>
   </div>
 
-  <aside class="watch-side" aria-labelledby="h-watch-teams">
+  <aside class="watch-side" id="watch-side" aria-labelledby="h-watch-teams">
     <div class="watch-side-head">
       <div class="watch-side-title">
         <h2 id="h-watch-teams">{{ "主播" if solo else "队伍" }}</h2>
@@ -1392,6 +1400,21 @@
         renderList();
       });
     });
+    // 收起 / 展开右边那一栏（2026-11-22 用户要的）：记在这台电脑上，下次打开照旧
+    var sideToggle = $("watch-side-toggle");
+    function showSide(on) {
+      $("watch").classList.toggle("side-off", !on);
+      var label = (on ? "收起" : "展开") + "右边的" + sideToggle.dataset.name;
+      sideToggle.title = label;
+      sideToggle.setAttribute("aria-label", label);
+      sideToggle.setAttribute("aria-expanded", on ? "true" : "false");
+    }
+    sideToggle.addEventListener("click", function () {
+      var on = $("watch").classList.contains("side-off");
+      save("evo-watch-side", on ? "1" : "0");
+      showSide(on);
+    });
+    showSide(saved("evo-watch-side", "1") !== "0");
     $("watch-failed-retry").addEventListener("click", function () { if (st.sel) { delete st.playFailed[st.sel]; render(); } });
     $("watch-apex-keep").addEventListener("click", function () { st.apexOk = true; renderApex(); });
     $("watch-apex-close").addEventListener("click", function () { st.closed = true; render(); });

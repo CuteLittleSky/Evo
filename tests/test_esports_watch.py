@@ -134,6 +134,13 @@ def main():
         and ".watch-cell:fullscreen { width: 100vw; height: 100vh; background: #050506; }" in css
         and ".watch-cell:fullscreen .watch-cell-tools, .watch-stage-box.multi .watch-cell:fullscreen::after { display: none; }" in css
         and ".watch-stage-box:fullscreen" in css and "stageBox.requestFullscreen();  // 多屏时几格一起全屏" not in raw)
+    out["顶上那一行最右边能收起 / 展开右边那一栏，记在这台电脑上，画出来之前就收好；收起了播放器变大但不高过窗口"] = (
+        '<button type="button" class="watch-side-toggle" id="watch-side-toggle" aria-controls="watch-side" aria-expanded="true" title="收起右边的队伍栏"' in raw
+        and '<aside class="watch-side" id="watch-side"' in raw
+        and 'if (localStorage.getItem("evo-watch-side") === "0") document.currentScript.parentNode.classList.add("side-off");' in raw
+        and 'save("evo-watch-side", on ? "1" : "0");' in raw
+        and ".watch.side-off .watch-side { display: none; }" in css
+        and ".watch.side-off .watch-stage-box:not(:fullscreen) { align-self: center; --stage-h: max(270px, calc(100vh - 110px)); }" in css)
     out["多屏只有选中的那一格有声音（四屏的大屏也是）"] = (
         "cell.video.muted = off || (multi() && cell.index !== st.focus);" in raw)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)

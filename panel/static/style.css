@@ -1380,6 +1380,22 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-layout { flex: none; margin-left: auto; padding: 2px; }
 .watch-mark + .watch-layout { margin-left: 0; }
 .watch-seg.watch-layout button { flex: none; padding: 0 10px; white-space: nowrap; }  /* 按字数定宽，不平分 */
+/* 收起 / 展开右边那一栏的按钮（2026-11-22 用户要的）：在"单屏……四宫格"右边，和它一样高、一样的边框 */
+.watch-side-toggle { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--muted); cursor: pointer; }
+.watch-side-toggle:hover { background: var(--nav-on-bg); color: var(--text); }
+.watch-side-toggle:focus-visible { outline: 2px solid var(--p3-bg); outline-offset: 2px; }
+.watch-side-toggle .i-open, .watch.side-off .watch-side-toggle .i-close { display: none; }
+.watch.side-off .watch-side-toggle .i-open { display: block; }
+/* 右边一栏收起了：左边占满，播放器那一块跟着变大，但不高过窗口（减去标题栏和顶上那一行，下面的名字那一行往下滚才看得到），居中。
+   单屏平时给下面那几行留了 300 像素，收起了就不留（想看大的画面才收起）。全屏时不管这些 */
+.watch.side-off { grid-template-columns: minmax(0, 1fr); }
+.watch.side-off .watch-side { display: none; }
+.watch.side-off .watch-stage-box:not(:fullscreen) { align-self: center; --stage-h: max(270px, calc(100vh - 110px)); }
+.watch.side-off .watch-stage-box.n1:not(:fullscreen), .watch.side-off .watch-stage-box.n4.grid:not(:fullscreen) { max-width: calc(var(--stage-h) * 16 / 9); }
+.watch.side-off .watch-stage-box.n2:not(:fullscreen) { max-width: calc(var(--stage-h) * 32 / 9); }
+.watch.side-off .watch-stage-box.n3:not(:fullscreen) { max-width: calc(var(--stage-h) * 8 / 3); }
+.watch.side-off .watch-stage-box.n4:not(.grid):not(:fullscreen) { max-width: calc(var(--stage-h) * 64 / 27); }
 .watch-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
 .watch-chips { position: absolute; top: 12px; left: 12px; z-index: 1; display: flex; align-items: center; gap: 8px; pointer-events: none; }
 .watch-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 4px; font-size: 12px; background: rgb(8 9 12 / 0.72); color: #ECEEF2;
