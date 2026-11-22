@@ -1060,9 +1060,14 @@
         save("evo-watch-muted", video.muted ? "1" : "0");
         showSound();
       });
+      // 全屏：单屏是播放器那一块；多屏时只放大点的这一格（2026-11-22 用户要的，原来是几格一起全屏），
+      // 声音和弹幕也跟到这一格（选中它；三屏、四屏退出全屏以后它就是大屏）
       fullBtn.addEventListener("click", function () {
-        if (document.fullscreenElement) document.exitFullscreen();
-        else if (stageBox.requestFullscreen) stageBox.requestFullscreen();  // 多屏时几格一起全屏
+        if (document.fullscreenElement) { document.exitFullscreen(); return; }
+        var target = multi() ? cell.node : stageBox;
+        if (!target.requestFullscreen) return;
+        target.requestFullscreen();
+        if (multi() && st.focus !== cell.index) focusCell(cell.index);
       });
       qualityBtn.addEventListener("click", function () { setMenu(menu.hidden); });
       if (lookBtn) lookBtn.addEventListener("click", function () { setLook(look.hidden); });

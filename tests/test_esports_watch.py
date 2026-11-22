@@ -115,7 +115,6 @@ def main():
         and 'big() ? "换到大屏" : "选这一格"' in raw)
     out["四宫格（2×2，四格一样大：原来的四屏）还留着，和四屏（一大三小）是两个按钮"] = (
         ".watch-stage-box.n2 .watch-screen, .watch-stage-box.n4.grid .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }" in css
-        and ".watch-stage-box.n4.grid:fullscreen .watch-screen { grid-template-rows: repeat(2, minmax(0, 1fr)); }" in css
         and 'st.grid = count === 4 && !!grid;' in raw and '(st.grid ? " grid" : "")' in raw
         and 'setLayout(parseInt(btn.dataset.layout, 10), !!btn.dataset.grid);' in raw)
     out["控制条平时藏着：鼠标在画面上动一下才出来，4 秒没动、移出画面藏起来；暂停、菜单开着、鼠标停在上面、键盘选到时不藏"] = (
@@ -129,6 +128,12 @@ def main():
         'bar.append(playBtn, reloadBtn, muteBtn, volume, el("span", "grow"));' in raw
         and 'reloadBtn.addEventListener("click", function () { cell.key = null; render(); });' in raw
         and ".watch-stage-box.n4:not(.grid) .watch-cell:not(.focus) :is(.watch-mute-btn, .watch-reload-btn) { display: none; }" in css)
+    out["多屏时点哪一格的全屏，就只放大那一格（并选中它，声音跟过去）；单屏照旧是播放器那一块"] = (
+        "var target = multi() ? cell.node : stageBox;" in raw
+        and "if (multi() && st.focus !== cell.index) focusCell(cell.index);" in raw
+        and ".watch-cell:fullscreen { width: 100vw; height: 100vh; background: #050506; }" in css
+        and ".watch-cell:fullscreen .watch-cell-tools, .watch-stage-box.multi .watch-cell:fullscreen::after { display: none; }" in css
+        and ".watch-stage-box:fullscreen" in css and "stageBox.requestFullscreen();  // 多屏时几格一起全屏" not in raw)
     out["多屏只有选中的那一格有声音（四屏的大屏也是）"] = (
         "cell.video.muted = off || (multi() && cell.index !== st.focus);" in raw)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)

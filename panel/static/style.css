@@ -1457,8 +1457,15 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-stage-box.n1:fullscreen .watch-player { position: relative; inset: auto; flex: none; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); }
 .watch-stage-box:fullscreen .watch-video { opacity: 0.999; }
 .watch-stage-box.n1:fullscreen .watch-chips { top: calc((100vh - min(100vh, 100vw * 9 / 16)) / 2 + 12px); left: calc((100vw - min(100vw, 100vh * 16 / 9)) / 2 + 12px); }
-/* 多屏全屏：格子铺满屏幕（2 格左右各半；三屏、四屏照样一个大的 + 右边一列小的；四宫格 2×2），画面在各自的格子里按 16:9 居中（video 自己留黑边） */
-.watch-stage-box.n4.grid:fullscreen .watch-screen { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+/* 多屏时点某一格的全屏：只这一格占满屏幕（2026-11-22 用户要的，原来是几格一起全屏）。和单屏全屏一样：
+   画面缩成居中的 16:9 一块，控制条和标记压在画面上，黑边不用纯黑、视频不完全不透明（原因见上面）。
+   这一格右上角的两个小按钮、选中的红框不显示 */
+.watch-cell:fullscreen { width: 100vw; height: 100vh; background: #050506; }
+.watch-cell:fullscreen .watch-cell-screen { display: flex; align-items: center; justify-content: center; }
+.watch-cell:fullscreen .watch-player { position: relative; inset: auto; flex: none; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); }
+.watch-cell:fullscreen .watch-video { opacity: 0.999; }
+.watch-cell:fullscreen .watch-chips { top: calc((100vh - min(100vh, 100vw * 9 / 16)) / 2 + 12px); left: calc((100vw - min(100vw, 100vh * 16 / 9)) / 2 + 12px); }
+.watch-cell:fullscreen .watch-cell-tools, .watch-stage-box.multi .watch-cell:fullscreen::after { display: none; }
 
 .watch-info { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .watch-avatar { width: 44px; height: 44px; font-size: 17px; }
