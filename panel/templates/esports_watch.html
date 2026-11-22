@@ -5,8 +5,8 @@
    左边：赛事名、播放器、正在看的选手和三个去平台的按钮、同队视角；右边：队伍和选手，在播的可以点。
    名单先由服务器画好（都不能点）；谁在播由下面的脚本每 60 秒问一次 /esports/<赛事>/status，再把在播的点亮。
    能在窗口里播的：配置里有嵌入播放器的平台（B站，放它官方的播放器），和用 Evo 自己的播放器的平台（斗鱼：
-   mpegts.js 连面板的本机中转；抖音：mpegts.js 直接连抖音的视频服务器。控制条是自己的：播放 / 暂停、音量、
-   清晰度、全屏）。别的显示"去 X 看"的退路。
+   mpegts.js 连面板的本机中转；抖音：mpegts.js 直接连抖音的视频服务器。控制条是自己的：播放 / 暂停、刷新、音量、
+   清晰度、全屏；平时藏着，鼠标在画面上动一下才出来）。别的显示"去 X 看"的退路。
    B站不登录最高 720p：选手那一行有"登录 B站看原画"，扫码登录以后 B站也改用 Evo 自己的播放器（经过本机中转）。
    主播名单也用这一页（solo，2026-11-19；panel_esports.py 的 /esports/streamers）：左边一样，右边不分队伍，只有一列主播、
    在播的排前面；没有"同队视角"；页面上的"选手"都写成"主播"（noun） #}
@@ -879,6 +879,7 @@
       full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path>',
       close: '<path d="M6 6l12 12M18 6L6 18"></path>',
       sliders: '<path d="M4 7h8M18 7h2M4 17h2M12 17h8"></path><circle cx="15" cy="7" r="2.5"></circle><circle cx="9" cy="17" r="2.5"></circle>',
+      refresh: '<path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"></path><path d="M20 4v4.5h-4.5"></path>',
       target: '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"></circle>'
     };
     function icon(name) {
@@ -929,6 +930,9 @@
       hint.hidden = true;
 
       var playBtn = control("暂停", "pause"), muteBtn = control("静音", "sound"), fullBtn = control("全屏", "full");
+      // 刷新（2026-11-22 用户要的，照 PureLive 放在播放 / 暂停旁边）：这一格重新取地址、重新连，清晰度不变。画面卡住、延迟越拖越大时用
+      var reloadBtn = control("刷新（重新连接这一路直播）", "refresh");
+      reloadBtn.classList.add("watch-reload-btn");
       muteBtn.classList.add("watch-mute-btn");
       var volume = el("input", "watch-volume");
       volume.type = "range";
@@ -968,7 +972,7 @@
         look = buildDanmakuLook();
         look.hidden = true;
       }
-      bar.append(playBtn, muteBtn, volume, el("span", "grow"));
+      bar.append(playBtn, reloadBtn, muteBtn, volume, el("span", "grow"));
       if (danmakuBtn) bar.append(danmakuBtn, lookBtn);
       bar.append(quality, fullBtn);
       box.append(video, layer, wait, hint, bar);
@@ -1016,6 +1020,32 @@
         }
       }
 
+      // 控制条平时藏着（2026-11-22 用户要的，和各直播平台一样；做法照 PureLive）：鼠标在画面上一动就出来，
+      // 4 秒没动或者鼠标移出画面就淡出去，鼠标指针也跟着藏起来（样式表的 .ui-on）。
+      // 暂停了、还没连上或者断了、清晰度菜单或弹幕设置开着、鼠标停在控制条上、用键盘选到了控制条上的按钮时一直显示
+      var idle = null;
+      function holdBar() {
+        return video.paused || !wait.hidden || !menu.hidden || (!!look && !look.hidden)
+          || bar.matches(":hover") || !!bar.querySelector(":focus-visible");
+      }
+      function hideBar() {
+        clearTimeout(idle);
+        if (!box.isConnected) return;  // 这一格换了人、换了清晰度：这个播放器已经拆掉了
+        if (holdBar()) { idle = setTimeout(hideBar, 1000); return; }  // 等这些情况过去再藏
+        box.classList.remove("ui-on");
+      }
+      function showBar() {
+        box.classList.add("ui-on");
+        clearTimeout(idle);
+        idle = setTimeout(hideBar, 4000);
+      }
+      box.addEventListener("mousemove", showBar);
+      box.addEventListener("mouseleave", hideBar);
+      bar.addEventListener("focusin", showBar);
+      video.addEventListener("playing", showBar);  // 刚播起来时露 4 秒，让人知道控制条在哪
+      showBar();
+
+      reloadBtn.addEventListener("click", function () { cell.key = null; render(); });
       playBtn.addEventListener("click", function () { if (video.paused) tryPlay(); else video.pause(); });
       muteBtn.addEventListener("click", function () {
         video.muted = !(video.muted || video.volume === 0);

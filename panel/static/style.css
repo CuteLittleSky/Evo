@@ -1365,7 +1365,7 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-stage-box.n4:not(.grid) .watch-cell.focus { grid-column: 1; grid-row: 1 / span 3; }
 .watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) { grid-column: 2; }
 .watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) :is(.watch-volume, .watch-danmaku-btn, .watch-dm-btn, .watch-dm-panel) { display: none; }
-.watch-stage-box.n4:not(.grid) .watch-cell:not(.focus) .watch-mute-btn { display: none; }
+.watch-stage-box.n4:not(.grid) .watch-cell:not(.focus) :is(.watch-mute-btn, .watch-reload-btn) { display: none; }
 .watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) .watch-chips { top: 8px; left: 8px; }
 .watch-stage-box:is(.n3, .n4:not(.grid)) .watch-cell:not(.focus) .watch-controls { height: 40px; padding: 0 6px; }
 .watch-stage-box.n2 .watch-screen, .watch-stage-box.n4.grid .watch-screen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1426,7 +1426,13 @@ table.stats-table { width: 100%; border-collapse: collapse; }
 .watch-hint { font: inherit; position: absolute; left: 50%; bottom: 60px; transform: translateX(-50%); padding: 8px 14px; border: 1px solid rgb(236 238 242 / 0.28); border-radius: 8px; cursor: pointer;
   background: rgb(8 9 12 / 0.82); color: #ECEEF2; font-size: 13px; white-space: nowrap; }
 .watch-hint:focus-visible { outline: 2px solid #8EC0FF; outline-offset: 2px; }
-.watch-controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 10px; background: rgb(8 9 12 / 0.72); color: #ECEEF2; }
+.watch-controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 10px; background: rgb(8 9 12 / 0.72); color: #ECEEF2;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+/* 控制条平时藏着（2026-11-22 用户要的，和各直播平台一样）：鼠标在画面上动一下（脚本加 .ui-on，4 秒没动、移出画面去掉）
+   或者用键盘选到上面的按钮才出来；藏着时鼠标指针也藏起来，按钮上的指针照旧 */
+.watch-player.ui-on .watch-controls, .watch-controls:has(:focus-visible) { opacity: 1; pointer-events: auto; }
+.watch-player:not(.ui-on) { cursor: none; }
+@media (prefers-reduced-motion: reduce) { .watch-controls { transition: none; } }
 .watch-ctl { font: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; height: 32px; padding: 0 8px; border: 0; border-radius: 6px; cursor: pointer;
   background: transparent; color: #ECEEF2; font-size: 12px; white-space: nowrap; }
 .watch-ctl:hover:not(:disabled) { background: rgb(236 238 242 / 0.12); }

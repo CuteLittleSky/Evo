@@ -118,6 +118,17 @@ def main():
         and ".watch-stage-box.n4.grid:fullscreen .watch-screen { grid-template-rows: repeat(2, minmax(0, 1fr)); }" in css
         and 'st.grid = count === 4 && !!grid;' in raw and '(st.grid ? " grid" : "")' in raw
         and 'setLayout(parseInt(btn.dataset.layout, 10), !!btn.dataset.grid);' in raw)
+    out["控制条平时藏着：鼠标在画面上动一下才出来，4 秒没动、移出画面藏起来；暂停、菜单开着、鼠标停在上面、键盘选到时不藏"] = (
+        'box.addEventListener("mousemove", showBar);' in raw and 'box.addEventListener("mouseleave", hideBar);' in raw
+        and "idle = setTimeout(hideBar, 4000);" in raw
+        and 'return video.paused || !wait.hidden || !menu.hidden || (!!look && !look.hidden)' in raw
+        and '|| bar.matches(":hover") || !!bar.querySelector(":focus-visible");' in raw
+        and ".watch-player.ui-on .watch-controls, .watch-controls:has(:focus-visible) { opacity: 1; pointer-events: auto; }" in css
+        and ".watch-player:not(.ui-on) { cursor: none; }" in css)
+    out["控制条上播放 / 暂停旁边有\"刷新\"：这一格重新连（四屏的小格子收起来）"] = (
+        'bar.append(playBtn, reloadBtn, muteBtn, volume, el("span", "grow"));' in raw
+        and 'reloadBtn.addEventListener("click", function () { cell.key = null; render(); });' in raw
+        and ".watch-stage-box.n4:not(.grid) .watch-cell:not(.focus) :is(.watch-mute-btn, .watch-reload-btn) { display: none; }" in css)
     out["多屏只有选中的那一格有声音（四屏的大屏也是）"] = (
         "cell.video.muted = off || (multi() && cell.index !== st.focus);" in raw)
     soon = client.get("/esports/soon/watch").get_data(as_text=True)
