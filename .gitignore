@@ -35,6 +35,8 @@ __pycache__/
 # 虚拟环境（每台电脑自己装）
 .venv/
 venv/
+# 训练小模型用的环境（PyTorch 显卡版，只在开发电脑上，不进安装包；见 tools/train_digits.py）
+.venv-train/
 
 # ===== 打包输出（PyInstaller）=====
 build/
@@ -42,6 +44,7 @@ dist/
 
 # ===== 个人设置 =====
 .claude/settings.local.json
+.claude/launch.json
 
 # ===== Windows 系统文件 =====
 Thumbs.db
@@ -59,6 +62,13 @@ code/qr.py
 panel/templates/_cloud.html
 tests/test_cloud_sync.py
 tools/cloud_ping.py
+# 国内备用线路（2026-11-19）：evotracker.cn 连不上时经派圈助手的云环境取公开文件，用云同步的匿名登录，所以也只在本机
+code/cloud_relay.py
+tests/test_cloud_relay.py
 # 宣传片（onetake 做的，见 release/宣传片/分镜.md）：用到 onetake 的 motion.js（PolyForm Noncommercial 许可，不能放进 AGPL 的仓库），视频文件也很大，只留在本机
 release/宣传片/
 /paimiao_cloud/cloud/tests
+# 第二支宣传片（Evo × 派圈助手，2026-11-08）：同上，onetake 做的，只留在本机
+release/宣传片2/
+# 「看直播」视频封面（2026-11-19）：底图是真实的直播截图（有主播名字），只留在本机
+release/看直播封面/

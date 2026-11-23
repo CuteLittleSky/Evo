@@ -96,6 +96,13 @@ def install():
     except Exception as exc:
         _log(f"主机模式启动条件注入失败（不影响记录）：{exc!r}")
 
+    # 录像在主机模式下的适配（上游 0.7.x 的录像；选「OBS 投影」时录投影窗口）。挂不上只是照上游的行为录。
+    try:
+        from cloud.obs import recording as obs_recording
+        obs_recording.install()
+    except Exception as exc:
+        _log(f"主机模式录像注入失败（录像照上游的行为）：{exc!r}")
+
     # 通知模块的托盘早期启动（2026-11-08 代码审查 P2）：必须在**面板被打开之前**
     # 就能起发送线程。开机自启（--background）时 setup() 不会调 panel.open()，
     # panel_app 永远不导入，原来只在 register()（attach 时）起线程的写法在后台模式下
@@ -241,6 +248,15 @@ def attach(module):
     if not getattr(app, "_cloud_notice_installed", False):
         app._cloud_notice_installed = True
         cloud_notice.register(app, module)
+
+    # 侧边栏（上游 0.7.x 的 _side.html）里给注入的导航项补图标。挂不上只是没图标。
+    if not getattr(app, "_paimiao_side_icons_installed", False):
+        app._paimiao_side_icons_installed = True
+        try:
+            from cloud import side_icons
+            side_icons.install(app.jinja_env)
+        except Exception as exc:
+            _log(f"侧边栏图标注入失败（侧边栏照常显示）：{exc!r}")
 
     if not getattr(app, "_cloud_obs_page_installed", False):
         app._cloud_obs_page_installed = True

@@ -1,0 +1,353 @@
+{# 设置页的"录像"一栏（2026-11-20；panel_recordings.py 的 settings_view 和 /settings/recording…，规则见 docs/面板.md"设置页：录像"）。
+   开关默认关（原则 2）；打开以后才显示画质、硬盘上限、保存位置。改了从下一局开始生效。
+   保存的结果写在那一项下面（rec.note，只显示一次），保存完跳回这一栏（#h-video），页面最上面的提示看不到。
+   找不到 ffmpeg、录像也没开着时整栏不显示（rec.shown）：正式版不带 ffmpeg，只有测试版（0.7.0b，实验功能）有这一栏 #}
+{% set rec = rec_view if rec_view is defined else recording_settings() %}{# settings.html 已经取过（分类栏要知道显示不显示） #}
+{% from "_rec_icons.html" import ev_icon %}
+{% macro note(rec, where) -%}
+{% if rec.note and rec.note.where == where %}<div class="setting-desc rec-note-line {{ 'update-error' if rec.note.error else 'rec-saved' }}"
+  role="{{ 'alert' if rec.note.error else 'status' }}" id="rec-note-{{ where }}">{{ rec.note.text }}</div>{% endif %}
+{%- endmacro %}
+{% if rec.shown %}
+<section class="card settings-card" aria-labelledby="h-video">
+  <h2 id="h-video" class="rec-settings-title">录像 <span class="tag-beta">实验</span></h2>
+  <div class="setting">
+    <div class="setting-text">
+      <div class="setting-name" id="rec-name">录下每一局</div>
+      {% if rec.encoder and rec.enabled %}<div class="setting-desc">这台电脑用 {{ rec.encoder }}编码</div>{% endif %}
+      {% if rec.blocked %}<div class="setting-desc update-hint" id="rec-blocked">{{ rec.blocked }}</div>{% endif %}
+      {{ note(rec, "toggle") }}
+    </div>
+    <form method="post" action="{{ url_for('recordings.toggle') }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="on" value="{{ '0' if rec.enabled else '1' }}">
+      <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if rec.enabled else 'false' }}"
+              aria-labelledby="rec-name" {% if rec.blocked %}aria-describedby="rec-blocked"{% endif %}
+              {{ 'disabled' if rec.blocked and not rec.enabled }}>
+        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+        <span class="switch-state" aria-hidden="true">{{ '已开启' if rec.enabled else '已关闭' }}</span>
+      </button>
+    </form>
+  </div>
+
+  {% if rec.enabled %}
+  {# 剪高光（2026-11-21 用户定的，照 Outplayed 的设置页；panel_recordings.save_highlights、highlights.py）：录制模式、高光包括哪些事件
+     （带录像页那套图标的复选框）、折叠的"高级选项"里每种事件前后录几秒（两个滑块夹着事件的图标，往外拖是录得多，用户要的滑块）。
+     一起保存；录像页的"保存高光"也按这里的切 #}
+  <form method="post" action="{{ url_for('recordings.save_highlights') }}" class="rec-group" id="rec-highlights">
+    <input type="hidden" name="token" value="{{ token }}">
+    <div class="setting">
+      <div class="setting-text"><label class="setting-name" for="rec-mode">录制模式</label></div>
+      <select id="rec-mode" name="mode">
+        {% for one in rec.modes %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.mode }}>{{ one.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="setting rec-hl-pick" role="group" aria-labelledby="rec-hl-name" aria-describedby="rec-hl-lang">
+      <div class="setting-name" id="rec-hl-name">高光包括</div>
+      <div class="rec-hl-chips">
+        {% for e in rec.hl_events %}
+        <label class="rec-hl-chip {{ e.css }}">
+          <input type="checkbox" name="on_{{ e.kind }}" value="1" data-hl-on="{{ e.kind }}" {{ 'checked' if e.on }}>
+          {{ ev_icon(e.css, 16) }}<span>{{ e.name }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {# 用户 11-21 写的：英文、繁体现在认不出"击倒"那一行 #}
+      <p class="setting-desc rec-hl-lang" id="rec-hl-lang">击倒、助攻击倒等事件还在适配多语种中……欢迎加入<a href="{{ feedback_url }}" target="_blank" rel="noopener noreferrer">反馈群</a>帮助适配！</p>
+    </div>
+    <details class="move-data rec-hl-more" id="rec-hl-more">
+      <summary>高级选项：每种事件前后录几秒</summary>
+      <div class="rec-hl-rows">
+        {% for e in rec.hl_events %}
+        <div class="rec-hl-row {{ e.css }}{{ ' off' if not e.on }}" data-hl-row="{{ e.kind }}">
+          <span class="rec-hl-name">{{ e.name }}</span>
+          <output class="num rec-hl-value rec-hl-before-value" id="hl-before-{{ e.kind }}-v" for="hl-before-{{ e.kind }}">前 {{ '%g' | format(e.before) }} 秒</output>
+          <input type="range" class="rec-hl-before" id="hl-before-{{ e.kind }}" name="before_{{ e.kind }}" min="0" max="{{ rec.hl_max }}" step="1"
+                 value="{{ '%g' | format(e.before) }}" aria-label="{{ e.name }}：事件前录几秒" aria-valuetext="{{ '%g' | format(e.before) }} 秒" data-hl-side="前"
+                 style="--fill: {{ '%.1f' | format(e.before / rec.hl_max * 100) }}%">
+          <span class="rec-hl-mark" aria-hidden="true">{{ ev_icon(e.css, 14) }}</span>
+          <input type="range" class="rec-hl-after" id="hl-after-{{ e.kind }}" name="after_{{ e.kind }}" min="0" max="{{ rec.hl_max }}" step="1"
+                 value="{{ '%g' | format(e.after) }}" aria-label="{{ e.name }}：事件后录几秒" aria-valuetext="{{ '%g' | format(e.after) }} 秒" data-hl-side="后"
+                 style="--fill: {{ '%.1f' | format(e.after / rec.hl_max * 100) }}%">
+          <output class="num rec-hl-value" id="hl-after-{{ e.kind }}-v" for="hl-after-{{ e.kind }}">后 {{ '%g' | format(e.after) }} 秒</output>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn-text rec-hl-reset" name="reset" value="1">恢复默认的秒数</button>
+    </details>
+    <div class="setting">
+      <div class="setting-text">{{ note(rec, "highlights") }}</div>
+      <button type="submit" class="btn">保存</button>
+    </div>
+  </form>
+
+  {# 画质：四项一起保存；下面那一行随选的变（estimates 里先算好了每种组合，脚本只是查表） #}
+  <form method="post" action="{{ url_for('recordings.save_quality') }}" class="rec-group" id="rec-quality"
+        data-estimates='{{ rec.estimates | tojson }}'>
+    <input type="hidden" name="token" value="{{ token }}">
+    <div class="setting">
+      <div class="setting-text">
+        <label class="setting-name" for="rec-size">分辨率</label>
+      </div>
+      <select id="rec-size" name="size">
+        {% for one in rec.sizes %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.size }}>{{ one.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="setting">
+      <div class="setting-text"><label class="setting-name" for="rec-fps">帧数</label></div>
+      <select id="rec-fps" name="fps">
+        {% for one in rec.fps %}<option value="{{ one }}" {{ 'selected' if one == rec.current.fps }}>{{ one }} 帧</option>{% endfor %}
+      </select>
+    </div>
+    <div class="setting">
+      <div class="setting-text"><label class="setting-name" for="rec-quality-select">画质</label></div>
+      <select id="rec-quality-select" name="quality">
+        {% for one in rec.qualities %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.quality }}>{{ one.name }}</option>{% endfor %}
+      </select>
+    </div>
+    {% if rec.codecs | length > 1 %}
+    <div class="setting">
+      <div class="setting-text">
+        <label class="setting-name" for="rec-codec">编码格式</label>
+        <div class="setting-desc">H.264 哪里都能放；AV1 同样画质文件小约四成，Evo 里能放，有的播放器要另装插件</div>
+      </div>
+      <select id="rec-codec" name="codec">
+        {% for one in rec.codecs %}
+        <option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.codec }}{{ ' disabled' if not one.ready }}>{{ one.name }}{{ '（这台电脑的显卡编不了）' if not one.ready }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% else %}{# 只有一种（现在只有 H.264）：不让选，提交时带上它 #}
+    <input type="hidden" name="codec" value="{{ rec.codecs[0].value }}">
+    {% endif %}
+    {# 声音两档（2026-11-21 用户定的）：和画质一起保存 #}
+    <div class="setting">
+      <div class="setting-text">
+        <label class="setting-name" for="rec-audio">声音</label>
+      </div>
+      <select id="rec-audio" name="audio_source">
+        {% for one in rec.audio_sources %}<option value="{{ one.value }}" {{ 'selected' if one.value == rec.current.audio_source }}>{{ one.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="setting">
+      <div class="setting-text">
+        <div class="setting-desc" id="rec-estimate" aria-live="polite">{{ rec.estimate or '' }}</div>
+        {{ note(rec, "quality") }}
+      </div>
+      <button type="submit" class="btn" aria-describedby="rec-estimate">保存</button>
+    </div>
+  </form>
+
+  {# 麦克风（2026-11-21 用户要的，像 Zoom 那样）：开关；音量滑块（松手自动保存，录像时按它混进第一条音轨）；"测试"录 5 秒、
+     录的时候音量条跟着跳，录完按滑块的音量放给自己听（Web Audio 的增益，能放大到 200%），"再听一遍"不用重录 #}
+  <div class="rec-group" id="rec-mic">
+    <div class="setting">
+      <div class="setting-text">
+        <div class="setting-name" id="rec-mic-name">录麦克风</div>
+      </div>
+      <form method="post" action="{{ url_for('recordings.save_mic') }}">
+        <input type="hidden" name="token" value="{{ token }}">
+        <input type="hidden" name="on" value="{{ '0' if rec.current.mic else '1' }}">
+        <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if rec.current.mic else 'false' }}" aria-labelledby="rec-mic-name">
+          <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+          <span class="switch-state" aria-hidden="true">{{ '已开启' if rec.current.mic else '已关闭' }}</span>
+        </button>
+      </form>
+    </div>
+    <form method="post" action="{{ url_for('recordings.save_mic_volume') }}" class="setting" id="rec-mic-form"
+          data-test="{{ url_for('recordings.start_mic_test') }}" data-status="{{ url_for('recordings.mic_test_status') }}"
+          data-audio="{{ url_for('recordings.mic_test_audio') }}" data-seconds="{{ rec.mic_test_seconds }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <div class="setting-text">
+        <label class="setting-name" for="rec-mic-volume">麦克风音量</label>
+        <div class="setting-desc" id="rec-mic-status" aria-live="polite"></div>
+        <div class="rec-meter" aria-hidden="true"><span id="rec-mic-level"></span></div>
+      </div>
+      <div class="setting-actions inline rec-mic-actions">
+        <input type="range" id="rec-mic-volume" name="volume" min="{{ rec.mic_volume_range[0] }}" max="{{ rec.mic_volume_range[1] }}"
+               step="{{ rec.mic_volume_range[2] }}" value="{{ rec.current.mic_volume }}" aria-valuetext="{{ rec.current.mic_volume }}%">
+        <output for="rec-mic-volume" class="num volume-value" id="rec-mic-volume-value">{{ rec.current.mic_volume }}%</output>
+        <button type="button" class="btn" id="rec-mic-test">测试</button>
+        <button type="button" class="btn-text" id="rec-mic-replay" hidden>再听一遍</button>
+        <noscript><button type="submit" class="btn">保存</button></noscript>
+      </div>
+    </form>
+  </div>
+
+  <form method="post" action="{{ url_for('recordings.save_limit') }}" class="setting rec-group">
+    <input type="hidden" name="token" value="{{ token }}">
+    <div class="setting-text">
+      <label class="setting-name" for="rec-limit">硬盘上限</label>
+      <div class="setting-desc">当前有 <span class="num">{{ rec.count }}</span> 个录像，共 <span class="num">{{ rec.used }}</span>{% if rec.free %}，{{ rec.free }}{% endif %}。超过上限时，录完一局从最旧的删起</div>
+      {{ note(rec, "limit") }}
+    </div>
+    <div class="setting-actions inline rec-limit">
+      <input type="number" id="rec-limit" name="gb" value="{{ rec.limit }}" min="{{ rec.limit_range[0] }}" max="{{ rec.limit_range[1] }}"
+             step="any" inputmode="decimal" required>
+      <span class="rec-unit" aria-hidden="true">GB</span>
+      <button type="submit" class="btn">保存</button>
+    </div>
+  </form>
+
+  {# 选的位置不能用时：下面"更改保存位置…"展开着，原因写在输入框下面（不写在这一行） #}
+  {% set folder_failed = rec.note and rec.note.where == 'folder' and rec.note.error %}
+  <div class="setting">
+    <div class="setting-text">
+      <div class="setting-name">保存位置</div>
+      <div class="setting-path">{{ rec.folder }}</div>
+      {% if not folder_failed %}{{ note(rec, "folder") }}{% endif %}
+    </div>
+    <div class="setting-actions">
+      <form method="post" action="{{ url_for('recordings.show') }}">
+        <input type="hidden" name="token" value="{{ token }}">
+        <input type="hidden" name="next" value="{{ url_for('settings') }}#h-video">
+        <button type="submit" class="btn">打开文件夹</button>
+      </form>
+    </div>
+  </div>
+  <details class="move-data" id="rec-folder" {{ 'open' if folder_failed }}>
+    <summary>更改保存位置…</summary>
+    <p class="setting-desc">已经录好的不会搬过去，还留在原来的地方。</p>
+    <form method="post" action="{{ url_for('recordings.save_folder') }}" class="move-form">
+      <input type="hidden" name="token" value="{{ token }}">
+      <label class="label" for="rec-folder-input">存到哪个文件夹</label>
+      <div class="move-input">
+        <input type="text" id="rec-folder-input" name="folder" value="{{ rec.note.chosen if folder_failed and rec.note.chosen else '' }}"
+               placeholder="比如 D:\Evo 录像" autocomplete="off" spellcheck="false" {% if folder_failed %}aria-describedby="rec-note-folder"{% endif %}>
+        {% if in_app %}<button type="button" class="btn" data-pick-folder>浏览…</button>{% endif %}
+        <button type="submit" class="btn">保存</button>
+      </div>
+      {% if folder_failed %}{{ note(rec, "folder") }}{% endif %}
+    </form>
+    {% if rec.custom_folder %}
+    <form method="post" action="{{ url_for('recordings.save_folder') }}" class="rec-reset">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="reset" value="1">
+      <button type="submit" class="btn-text">改回默认位置（数据文件夹里的 recordings）</button>
+    </form>
+    {% endif %}
+  </details>
+  <script>
+    // 剪高光：滑块一动，旁边的"前 N 秒 / 后 N 秒"、填色的那一段（--fill）跟着变（读屏软件念"N 秒"）；没勾的事件那一行变淡（照样能调）
+    (function () {
+      var form = document.getElementById("rec-highlights");
+      if (!form) return;
+      form.querySelectorAll(".rec-hl-row input[type=range]").forEach(function (r) {
+        var out = document.getElementById(r.id + "-v");
+        r.addEventListener("input", function () {
+          out.textContent = r.dataset.hlSide + " " + r.value + " 秒";
+          r.setAttribute("aria-valuetext", r.value + " 秒");
+          r.style.setProperty("--fill", (r.value / r.max * 100) + "%");
+        });
+      });
+      form.querySelectorAll("[data-hl-on]").forEach(function (box) {
+        var row = form.querySelector('[data-hl-row="' + box.dataset.hlOn + '"]');
+        box.addEventListener("change", function () { if (row) row.classList.toggle("off", !box.checked); });
+      });
+    })();
+    // 画质那几项一改，下面那一行跟着换（每种组合的估算在 data-estimates 里，panel_recordings.estimate）
+    (function () {
+      var form = document.getElementById("rec-quality");
+      if (!form) return;
+      var table = JSON.parse(form.dataset.estimates || "{}"), out = document.getElementById("rec-estimate");
+      form.addEventListener("change", function () {
+        var f = form.elements;
+        var text = table[[f.size.value, f.fps.value, f.quality.value, f.codec.value].join("|")];
+        if (text) out.textContent = text;
+      });
+    })();
+    // 麦克风音量：拖动时数字跟着变，松手 0.3 秒后保存（不刷新页面）；正在放测试录音时音量马上跟着变。
+    // "测试"：录几秒（音量条跟着跳），录完取回来按滑块的音量放（Web Audio 增益，200% 能放大；放的时候音量条也跟着跳，
+    // 拖滑块能看出大小）；"再听一遍"不重录
+    (function () {
+      var form = document.getElementById("rec-mic-form");
+      if (!form) return;
+      var slider = document.getElementById("rec-mic-volume"), shown = document.getElementById("rec-mic-volume-value");
+      var status = document.getElementById("rec-mic-status"), level = document.getElementById("rec-mic-level");
+      var testBtn = document.getElementById("rec-mic-test"), replayBtn = document.getElementById("rec-mic-replay");
+      var headers = { "X-Evo-Fetch": "1" }, timer = null, ctx = null, buffer = null, gain = null, playing = null;
+      function say(text) { status.textContent = text; }
+      // 音量条按分贝：-60 dB 到 0 dB 对应 0–100%（正常说话大约三分之二，安静时一小截），和 Zoom、Discord 的一样
+      function show(peak) {
+        var db = peak > 0 ? 20 * Math.log10(peak) : -60;
+        level.style.width = Math.max(0, Math.min(100, Math.round((db + 60) / 60 * 100))) + "%";
+      }
+      slider.addEventListener("input", function () {
+        shown.textContent = slider.value + "%";
+        slider.setAttribute("aria-valuetext", slider.value + "%");
+        if (gain) gain.gain.value = slider.value / 100;
+      });
+      slider.addEventListener("change", function () {
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          fetch(form.action, { method: "POST", body: new FormData(form), headers: headers })
+            .then(function (r) { if (!r.ok) throw new Error(); })
+            .catch(function () { shown.textContent = "没存上"; });
+        }, 300);
+      });
+      function play() {
+        if (!buffer) return;
+        if (playing) { try { playing.stop(); } catch (e) {} }
+        var src = ctx.createBufferSource();
+        gain = ctx.createGain();
+        gain.gain.value = slider.value / 100;
+        src.buffer = buffer;
+        var meter = ctx.createAnalyser(), samples = new Float32Array(meter.fftSize);
+        src.connect(gain).connect(meter).connect(ctx.destination);
+        src.onended = function () {
+          if (playing === src) { playing = null; show(0); say("放完了。觉得小就往右拖，再点“再听一遍”"); }
+        };
+        playing = src;
+        src.start();
+        (function tick() {
+          if (playing !== src) return;
+          meter.getFloatTimeDomainData(samples);
+          var peak = 0;
+          for (var i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+          show(peak);
+          requestAnimationFrame(tick);
+        })();
+        say("正在放刚才录的（按现在的音量 " + slider.value + "%）");
+      }
+      function poll() {
+        fetch(form.dataset.status, { headers: headers }).then(function (r) { return r.json(); }).then(function (s) {
+          if (s.state === "recording") {
+            show(s.level);
+            var left = Math.ceil(s.left);
+            if (status.dataset.left !== String(left)) { status.dataset.left = String(left); say("正在录：说几句话，还剩 " + left + " 秒"); }
+            setTimeout(poll, 120);
+          } else if (s.state === "done") {
+            level.style.width = "0%";
+            fetch(form.dataset.audio + "?t=" + Date.now()).then(function (r) { return r.arrayBuffer(); })
+              .then(function (data) { return ctx.decodeAudioData(data); })
+              .then(function (decoded) { buffer = decoded; testBtn.disabled = false; replayBtn.hidden = false; play(); })
+              .catch(function () { testBtn.disabled = false; say("录好了，但放不出来"); });
+          } else {
+            level.style.width = "0%";
+            testBtn.disabled = false;
+            say(s.error ? "测试不了：" + s.error : "没录到");
+          }
+        }).catch(function () { testBtn.disabled = false; say("测试不了：Evo 没有回答"); });
+      }
+      testBtn.addEventListener("click", function () {
+        ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+        if (playing) { try { playing.stop(); } catch (e) {} playing = null; }
+        testBtn.disabled = true;
+        replayBtn.hidden = true;
+        delete status.dataset.left;
+        say("准备录音……");
+        var body = new FormData();
+        body.append("token", form.elements.token.value);
+        fetch(form.dataset.test, { method: "POST", body: body, headers: headers }).then(function (r) { return r.json(); })
+          .then(function (r) {
+            if (!r.ok) { testBtn.disabled = false; say(r.error || "测试不了"); return; }
+            poll();
+          })
+          .catch(function () { testBtn.disabled = false; say("测试不了：Evo 没有回答"); });
+      });
+      replayBtn.addEventListener("click", play);
+    })();
+  </script>
+  {% endif %}
+</section>
+{% endif %}

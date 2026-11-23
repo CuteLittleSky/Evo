@@ -1,5 +1,6 @@
 {
-  "name": "Evo 默认",
+  "name": "简洁音效",
   "by": "Evo（tools/make_sounds.py 合成）",
-  "license": "AGPL-3.0"
+  "license": "AGPL-3.0",
+  "order": 1
 }

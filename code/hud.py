@@ -32,6 +32,7 @@ from storage import name_key
 CONFIG_NAME = "hud.json"
 TOP_FIELDS = ("squads_left", "kills", "assists", "participation", "damage", "rp_delta")
 KP_ROW = ("kills", "assists", "participation")  # 右上角同一行（从左往右）：全是 0 时整行不显示
+COUNTED = ("kills", "assists")  # 录像上标出来的两项（击杀、助攻）：只会变多，变了就是一次
 TOP_LABELS = {"squads_left": "剩余小队", "kills": "击杀", "assists": "助攻", "participation": "老板分",
               "damage": "伤害", "rp_delta": "RP"}
 
@@ -120,6 +121,8 @@ class Hud:
         mates = self.cfg["teammates"]
         self.mate_templates = self.legends.scaled(mates["scale"])
         self.spectate_template = load_hud_template("spectate", lang)
+        self.knock_template = load_hud_template("knock", lang)  # 中间那一行的"击倒"（录像标事件用）；别的语言还没有
+        self.knock_assist_template = load_hud_template("knock_assist", lang)  # 它左边的"助攻"（助攻击倒）
         self.icon_template = load_hud_template("damage_icon", lang)
         icons = self.cfg["top_right"]["kp_row"]["icons"]
         self.kp_templates = {name: load_hud_template(icons[name]["template"], lang) for name in KP_ROW}  # 每一项前面的图标
@@ -145,6 +148,27 @@ class Hud:
         score, _, _ = best_match(gray_crop(frame, s["roi"], self.base, s.get("anchor")), self.spectate_template)
         return score >= s["min_similarity"]
 
+    def knock(self, frame):
+        """画面中间那一行"击倒 名字 +150"（自己击倒了对手）："击倒"两个字在横带里的位置（基准 x），没有返回 None。
+        这一行跟着名字长短左右挪，所以在一条横带里找（config/hud.json 的 knock）。只给录像标事件用，不进战绩。"""
+        k = self.cfg.get("knock")
+        if not k or self.knock_template is None:
+            return None
+        score, x, _ = best_match(gray_crop(frame, k["band"], self.base, k.get("anchor")), self.knock_template)
+        return x if score >= k["min_similarity"] else None
+
+    def knock_assist(self, frame, x):
+        """"击倒"（knock 给的位置 x）左边有没有"助攻，"：有 = 助攻击倒（队友击倒、自己有伤害："助攻，击倒 名字 +100"），
+        没有 = 自己击倒的（"击倒 名字 +150"）。在"击倒"左边 assist.left 宽里找"助攻"两个字（config/hud.json 的 knock.assist）。
+        没有参照图时当作不是。"""
+        k = self.cfg.get("knock") or {}
+        a = k.get("assist")
+        if not a or self.knock_assist_template is None:
+            return False
+        band = gray_crop(frame, k["band"], self.base, k.get("anchor"))
+        score, _, _ = best_match(band[:, max(0, x - a["left"]):x], self.knock_assist_template)
+        return score >= a["min_similarity"]
+
     def spectated_legend(self, frame):
         """观战时被观战的人用的传奇（编号），认不出返回 None。只在 spectating() 为真时问。"""
         return self.legends.identify(frame, self.cfg["spectate"]["player_box"])
@@ -158,6 +182,41 @@ class Hud:
     def top_snip(self, frame):
         top = self.cfg["top_right"]
         return Snip(frame, top["box"], self.base, top.get("anchor"))
+
+    def kp_snip(self, frame):
+        """右上角击杀 / 助攻 / 老板分那一行（kp_row 的 area）：录像找击杀用，这一行变了才存（比整块右上角小得多），
+        一局结束后用 read_kills 读。"""
+        top = self.cfg["top_right"]
+        return Snip(frame, top["kp_row"]["area"], self.base, top.get("anchor"))
+
+    def kp_cells(self, snip):
+        """击杀、助攻那两格：骷髅、握手图标右边的数字（基准大小的灰度图），{"kills": 图, "assists": 图}，图标不在的是 None。
+        只比外观。这一行靠右排、跟着前面数字的宽度左右挪（2026-11-20 那局录像：骷髅图标在基准 x 1575 左右），所以先找图标。
+        录像找击杀、助攻用：某一格变了才存这一行（match_recording._watch_kp）。"""
+        top = self.cfg["top_right"]
+        row = top["kp_row"]
+        icons = self._kp_icons(snip, row)
+        y, h = row["digits"]
+        return {name: snip.gray([icons[name][1] + 1, y, row["digit_width"], h]) if name in icons else None
+                for name in COUNTED}
+
+    def kill_cell(self, snip):
+        """击杀数那一格（kp_cells 的 kills）。"""
+        return self.kp_cells(snip)["kills"]
+
+    def read_kp(self, snip):
+        """读一块（kp_snip 或 top_snip）里的击杀数、助攻数：{"kills": 数, "assists": 数}。这一行没显示（都是 0）时都是 0；
+        显示着但读不出（或那一项的图标没找到）是 None。规则和 read_top 一样（先找每一项前面的图标）。
+        要用识别引擎：一局结束后才调用。"""
+        top = self.cfg["top_right"]
+        icons = self._kp_icons(snip, top["kp_row"])
+        if "kills" not in icons and "assists" not in icons:
+            return {name: 0 for name in COUNTED}
+        return {name: self._kp_number(snip, top, icons, name)[0] for name in COUNTED}
+
+    def read_kills(self, snip):
+        """击杀数（read_kp 的 kills）。"""
+        return self.read_kp(snip)["kills"]
 
     def mate_name_snip(self, frame, slot):
         mates = self.cfg["teammates"]

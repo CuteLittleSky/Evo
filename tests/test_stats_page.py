@@ -174,7 +174,8 @@ def main():
     panel_app.app.config["DB"] = path
 
     checks = {
-        "导航：总览、战绩、数据、赛季、设置": re.findall(r">\s*([^<>\s]+)\s*</a>", nav) == ["总览", "战绩", "数据", "赛季", "设置"],
+        "导航：总览、战绩、数据、赛季、设置":
+            re.findall(r'class="nav-label">([^<]+)</span>', nav) == ["总览", "战绩", "数据", "赛季", "设置"],
         "数据页打开时导航里\"数据\"是选中的": 'class="active"' in re.findall(r'<a href="/stats"[^>]*>', nav)[0],
         "没有对局：显示\"还没有任何对局记录\"": "还没有任何对局记录" in empty,
         "没有一起打过 2 局的队友：写明，不出空表": "还没有一起打过 2 局以上的队友" in lonely and "mates-table" not in lonely,

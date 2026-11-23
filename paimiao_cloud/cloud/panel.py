@@ -59,8 +59,19 @@ def inject():
     return data
 
 def nav_items():
+    """侧边栏的导航 + 「派喵云同步」。
 
-    base = getattr(MODULE, "NAV", None)
+    上游 0.7.x 起有自己的 `panel_app.nav_items()`（录像页只在打开了录像、或已经有录像时才列出来），
+    有它就先用它，不然直接拿 NAV 会把录像那一项的条件绕过去；老版本没有它时照旧读 NAV。"""
+    upstream_items = getattr(MODULE, "nav_items", None)
+    base = None
+    if callable(upstream_items):
+        try:
+            base = upstream_items()
+        except Exception:
+            base = None
+    if base is None:
+        base = getattr(MODULE, "NAV", None)
     if not base:
         return None
     base = tuple(base)

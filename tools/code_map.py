@@ -48,7 +48,7 @@ SECTIONS = [
         ("config/templates/", "参照图（外观检查用）：按画面放；legends/ 传奇头像、weapons/ 武器、hud/ 对局中，"
                               "en/、zh-TW/ 是英文、繁体游戏和简体不一样的那些")]),
     ("引擎", None, ["code/ocr.py"]),
-    ("页面", "程序", ["code/panel_app.py", "code/panel_seasons.py", "code/app_window.py"]),
+    ("页面", "程序", ["code/panel_app.py", "code/panel_seasons.py", "code/app_window.py", "code/splash.py"]),
     ("页面", "模板（panel/templates/）", ["panel/templates/*.html", "panel/templates/share/*.svg"]),
     ("页面", "图片、字体", [
         ("panel/static/", "样式表 style.css、字体，图标（legends/ 传奇头像由 tools/legend_icons.py 生成、ranks/ 段位、"
@@ -56,8 +56,10 @@ SECTIONS = [
         ("panel/prototype/", "最早的界面设计稿（只作参考，程序不用）")]),
     ("底座", None, [
         "code/evo_app.py", "code/paths.py", "code/source_run.py", "code/storage.py", "code/app_settings.py",
-        "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/icons.py", "code/sounds.py",
-        "code/webview2.py", "code/update_check.py", "code/updater.py"]),
+        "code/data_move.py", "code/autostart.py", "code/process_info.py", "code/evo_usage.py", "code/icons.py", "code/sounds.py",
+        "code/webview2.py", "code/update_check.py", "code/updater.py", "code/net_route.py"]),
+    ("录像", None, ["code/recorder.py", "code/match_recording.py", "code/highlights.py", "code/process_audio.py",
+                  "code/panel_recordings.py"]),
     ("诊断", None, ["code/evo_diag.py", "tools/diag_report.py", "tools/build_diag.py", "tools/diag.spec"]),
     # 只在本机、不进 git 的文件（.gitignore 里）扫不到，固定写一段
     ("小程序", None, "只在本机、不进 git（见 docs/小程序.md）：`miniprogram/`，和 Evo 里绑定、上传战绩的 "
@@ -68,23 +70,26 @@ SECTIONS = [
                            "榜单、地图轮换、派喵云同步、从派喵获取的段位…），`run_evo.py` / `build_evo.py` / "
                            "`runtime_hook.py` 是源码运行和打包的入口；规范见 AGENT_RULES.md")]),
     ("开发用的脚本（tools/）", "打包、安装、发布", [
-        "tools/build.py", "tools/evo.spec", "tools/install.py", "tools/release.py", "tools/publish.py",
+        "tools/build.py", "tools/evo.spec", "tools/build_ffmpeg.py", "tools/install.py", "tools/release.py", "tools/publish.py",
         "tools/code_path.py",
         (".github/workflows/", "GitHub Actions：发版时打包、建 GitHub Release、传 R2 和阿里云 OSS、"
                                "刷 ESA 缓存、通知 ApexPacks 更新 evo-latest.json"),
         (".github/esa/", "发版时刷新阿里云 ESA 缓存的小脚本（node，@alicloud/esa20240910）")]),
     ("开发用的脚本（tools/）", "做素材", [
-        "tools/make_icon.py", "tools/make_sounds.py", "tools/legend_icons.py", "tools/weapon_templates.py",
+        "tools/make_icon.py", "tools/make_sounds.py", "tools/splash_fonts.py", "tools/legend_icons.py", "tools/weapon_templates.py",
         "tools/feature_cards.py", "tools/window_shots.py"]),
     ("开发用的脚本（tools/）", "查问题、看数据", [
         "tools/ocr_probe.py", "tools/frame_capture.py", "tools/legend_capture.py", "tools/log_speed.py",
         "tools/demo_data.py", "tools/code_map.py", "tools/apex_capture_test.py",
-        "tools/backfill_teammates.py"]),
+        "tools/backfill_teammates.py", "tools/summary_check.py", "tools/rec_probe.py"]),
+    ("开发用的脚本（tools/）", "训练小模型", [
+        "tools/train_data.py", "tools/train_digits.py", "tools/train_web.py"]),
     ("测试（tests/）", None, [
         "tests/run_all.py", "tests/fake_game.py", "tests/test_*.py",
         ("tests/*.csv", "正确答案（整晚重放、数据页、武器）；队友名字的答案只在本机")]),
     ("其他", None, [
-        ("assets/", "素材原图：icon/ 图标、legends/ 传奇头像（各自的许可在 LICENSE.txt）、ranks/ 段位、sounds/ 提示音"),
+        ("assets/", "素材原图：icon/ 图标、legends/ 传奇头像（各自的许可在 LICENSE.txt）、ranks/ 段位、sounds/ 提示音、"
+                    "splash/ 窗口启动画面那行字的字体（只含用到的几个字，tools/splash_fonts.py 取）"),
         ("release/", "发版用：更新内容.txt、使用说明.txt（随安装包）、做图流程.md + 宣传图.json（新功能配图）"),
         ("docs/", "说明文档（什么时候读哪一份见 CLAUDE.md），images/ 是 README 的截图"),
         ("claude/", "进度和待办：progress.md、todo.md、progress_archive.md"),

@@ -65,6 +65,30 @@ class MissingShots(Exception):
     """找不到测试要用的截图（截图不在仓库里，只在开发者电脑上）。"""
 
 
+def screen_ready(tries=20):
+    """这台电脑现在用 dxcam 截不截得到屏幕。显示器息屏、锁屏、远程桌面断开时一张画面都拿不到（mss 照样能截），
+    和 Evo 的代码无关。要"真的截屏"的那几项检查这时候跳过截图那一项、在名字里说明，不算失败
+    （2026-11-20：夜里没人、显示器息屏时发版，这几项过不了；截屏的代码那时从 0.6.1 起没改过）。"""
+    import time
+
+    import dxcam
+    try:
+        cam = dxcam.create(output_color="BGR", processor_backend="numpy")
+    except Exception:  # noqa: BLE001  建都建不起来：也算截不到
+        return False
+    try:
+        for _ in range(tries):
+            if cam.grab(new_frame_only=False) is not None:
+                return True
+            time.sleep(0.05)
+        return False
+    finally:
+        try:
+            cam.release()
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+
 def shot(relative):
     """captures/ 里的一张截图的完整路径。找不到就抛出 MissingShots，让测试跳过。"""
     path = SHOTS / relative

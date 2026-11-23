@@ -29,8 +29,10 @@ import app_settings
 import autostart
 import calibration
 import data_move
+import evo_usage
 import game_aspect
 import game_lang
+import panel_recordings
 import ranks
 import screenshots
 import seasons
@@ -55,7 +57,8 @@ for _type, _ext in (("text/css", ".css"), ("text/javascript", ".js"), ("font/wof
 
 PER_PAGE = 20
 # 顶部导航：(页面, 显示名)。顺序也决定切换页面时，选中标签的底色从哪边滑过来
-NAV = (("overview", "总览"), ("matches", "战绩"), ("stats", "数据"), ("seasons.page", "赛季"), ("settings", "设置"))
+NAV = (("overview", "总览"), ("matches", "战绩"), ("recordings.page", "录像"), ("stats", "数据"),
+       ("seasons.page", "赛季"), ("settings", "设置"))
 MODES ={"ranked": "排位", "pubs": "匹配", "other": "其他"}
 # 修正表单里可以改的字段：(显示名, 最小值, 最大值)
 EDITABLE = {
@@ -182,6 +185,7 @@ app.config["DB"] = storage.DB_PATH
 if panel_cloud is not None:
     app.register_blueprint(panel_cloud.bp)  # 设置页"微信小程序"：绑定、解绑、立即同步（panel_cloud.py）
 app.register_blueprint(panel_seasons.bp)  # "赛季"页面：录入历史赛季数据（panel_seasons.py）
+app.register_blueprint(panel_recordings.bp)  # "录像"页面：整局录像的列表和播放（panel_recordings.py；内测中）
 
 
 # ---------- 数据库连接：每次网页请求打开一次，请求结束时关闭 ----------
@@ -233,6 +237,11 @@ def security_checks():
         return back_to_page()
 
 
+def nav_items():
+    """侧边栏的导航：录像页只在设置里打开了录像、或者已经有录像时显示（panel_recordings.visible；内测中，没打开的玩家看不到）。"""
+    return tuple(item for item in NAV if item[0] != "recordings.page" or panel_recordings.visible())
+
+
 @app.context_processor
 def template_globals():
     offer = update_check.available()
@@ -244,7 +253,7 @@ def template_globals():
         "token": app.config["TOKEN"],
         "is_demo": Path(app.config["DB"]).name != storage.DB_PATH.name,
         "db_name": Path(app.config["DB"]).name,
-        "nav": NAV,
+        "nav": nav_items(),
         "switch": page_switch(),
         "default_range": DEFAULT_RANGE,  # 范围按钮：默认的那个不写进网址（_range.html）
         # 检查更新：还没问过要不要自动检查 → 页面顶部问一次；已知有新版本 → 顶部提示条（一键更新的各个阶段见 updater.state）
@@ -261,6 +270,8 @@ def template_globals():
         # 多账号：认出了新的玩家名 → 弹窗问"是不是同一个人"；有 2 个以上账号时，右上角切换账号
         "name_question": name_question(),
         "account_view": account_view(),
+        # 侧边栏的「Evo 占用」（_usage.html，每一页都有）：用到时才量（一次约 5 毫秒），局部重画的片段不量
+        "usage_card": usage_card,
     }
 
 
@@ -368,12 +379,13 @@ def name_question():
 
 def page_switch():
     """这次是不是从另一个页面切过来的（看浏览器带来的"上一页"地址）。是的话播放切换动效：
-    内容从下往上淡入（enter），选中标签的底色从上一页的标签滑过来（shift = 从右边第几格过来，负数是左边）。
+    内容从下往上淡入（enter），侧边栏里选中那一项的底色从上一页的那一项滑过来（shift = 从下面第几项过来，负数是上面；
+    滑多远由 _side.html 里的脚本按实际位置量）。
     同一页里的操作（展开某一局、筛选、保存……）不播放。"""
     came_from = urlparse(request.referrer or "").path
     if came_from == request.path:
         return {"enter": False, "shift": 0}
-    paths = [url_for(endpoint) for endpoint, _ in NAV]
+    paths = [url_for(endpoint) for endpoint, _ in nav_items()]  # 按显示出来的算（"录像"可能藏着）
     shift = paths.index(came_from) - paths.index(request.path) if came_from in paths and request.path in paths else 0
     return {"enter": True, "shift": shift}
 
@@ -603,7 +615,7 @@ def stat_cards(rows):
         {"label": "场均击杀", "value": n["avg_kills"]},
         {"label": "场均伤害", "value": n["avg_damage"]},
         {"label": "前五率", "value": n["top5"]},
-        {"label": "胜率", "value": n["win_rate"], "accent": n["win_rate"] != "—"},  # 新赛季还没有对局时"—"不标红
+        {"label": "胜率", "value": n["win_rate"]},  # 原来用红色标出来，2026-11-19 用户要求不再标红，和别的几格一样
         {"label": "统计局数", "value": str(n["games"])},
     ]
 
@@ -1144,6 +1156,7 @@ def matches():
     return render_template(
         "matches.html",
         rows=rows,
+        recordings=panel_recordings.match_links(raw),  # 有录像的局：{编号: 录像}，行里多一个"看录像"的小按钮
         keep_shots=screenshots.keep_all(),  # 保留全部截图时，确认、删除一局不删截图，也不用提示
         total=total,
         page=page,
@@ -1523,6 +1536,7 @@ def sound_view():
     return {
         "packs": sounds.packs(),
         "pack": sounds.pack(),
+        "default_name": next((one["name"] for one in sounds.packs() if one["key"] == sounds.DEFAULT_PACK), "声音"),
         "custom": sounds.CUSTOM,
         "volume": sounds.volume(),
         "volume_range": (sounds.VOLUME_MIN, sounds.VOLUME_MAX, sounds.VOLUME_STEP),
@@ -1591,7 +1605,7 @@ def sound_file():
 
 @app.post("/settings/sound-file/clear")
 def sound_file_clear():
-    """"恢复默认"：这一声不用自己的文件了，用回 Evo 默认的。"""
+    """"恢复默认"：这一声不用自己的文件了，用回默认的那套。"""
     name = request.form.get("name")
     if name not in sounds.SOUNDS:
         abort(400)
@@ -1622,6 +1636,17 @@ def open_folder():
     os.startfile(target)
     flash(f"已在资源管理器中打开 {target}", "ok")
     return redirect(url_for("settings"))
+
+
+def usage_card():
+    """侧边栏「Evo 占用」要的东西（evo_usage.card）：现在的，和最近几局对局中的平均。"""
+    return evo_usage.card(app.config["DB"])
+
+
+@app.get("/usage")
+def usage_now():
+    """侧边栏「Evo 占用」（evo_usage.py）：页面开着时每 2 秒问一次，回格式化好的文字 {"cpu", "memory", "parts"}。"""
+    return jsonify(evo_usage.now_view(evo_usage.live().read()))
 
 
 @app.get("/settings/shots")

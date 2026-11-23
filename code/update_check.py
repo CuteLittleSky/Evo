@@ -33,6 +33,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import app_settings
+import net_route
 from storage import APP_VERSION
 
 UPDATE_URL = os.environ.get("EVO_UPDATE_URL", "https://tools.skycraft.cn/apex/api/battlestats/latest.json")
@@ -52,13 +53,26 @@ MAX_BYTES = 64 * 1024  # latest.json 只有几百字节，多的不读
 
 
 class UpdateError(Exception):
-    pass
+    def __init__(self, message, unreachable=False):
+        super().__init__(message)
+        self.unreachable = unreachable  # True：连不上（不是格式不对）
 
 
 def version_tuple(text):
-    """"0.10.2" → (0, 10, 2)，用来比较新旧；格式不对返回 None。"""
-    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", str(text or "").strip())
-    return tuple(int(x) for x in m.groups()) if m else None
+    """"0.10.2" → (0, 10, 2, 1, 0)，用来比较新旧；格式不对返回 None。
+    测试版（2026-11-20 起：录像的实验版 0.7.0b 只发 QQ 群）"0.7.0b" → (0, 7, 0, 0, 1)、"0.7.0b2" → (0, 7, 0, 0, 2)：
+    比之前的正式版都新（装着测试版不会被提醒更新回 0.6.x），比同号的正式版旧（正式 0.7.0 出来时能一键更新过去）。"""
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:b(\d*))?", str(text or "").strip())
+    if not m:
+        return None
+    major, minor, patch, test = m.groups()
+    return (int(major), int(minor), int(patch)) + ((1, 0) if test is None else (0, int(test or 1)))
+
+
+def is_test_version(text=None):
+    """是不是测试版（版本号带 b，如 "0.7.0b"）：只打包发给测试的玩家，不上架一键更新（tools/publish.py 会拒绝）。"""
+    m = re.fullmatch(r"\d+\.\d+\.\d+b\d*", str(APP_VERSION if text is None else text).strip())
+    return m is not None
 
 
 def safe_page(url):
@@ -107,7 +121,12 @@ def safe_download(info):
 def fetch_latest(timeout=TIMEOUT):
     """下载并检查 latest.json，返回 {"version", "date", "page", "notes", "download"}（download 没有时为 None）。
     连不上或格式不对抛出 UpdateError。"""
-    return _fetch_latest(UPDATE_URL, timeout)
+    try:
+        return _fetch_latest(UPDATE_URL, timeout)
+    except UpdateError as e:
+        if e.unreachable:  # 写明是连不上（原因是 net_route 说的那句短话，如"连接被重置""服务器回了 404"）
+            raise UpdateError(f"连不上更新服务器（{e}）", unreachable=True) from e
+        raise
 
 
 def _fetch_latest(url, timeout):
@@ -117,13 +136,13 @@ def _fetch_latest(url, timeout):
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read(MAX_BYTES)
     except OSError as e:
-        raise UpdateError("连不上更新服务器（网络不通，或者服务器暂时不可用）") from e
+        raise UpdateError(net_route.describe(e), unreachable=True) from e
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError:
         data = None
     if not isinstance(data, dict) or version_tuple(data.get("version")) is None:
-        raise UpdateError("更新服务器返回的版本信息格式不对")
+        raise UpdateError("版本信息格式不对")
     notes = data.get("notes") if isinstance(data.get("notes"), list) else []
     return {
         "version": str(data["version"]).strip(),
@@ -149,11 +168,12 @@ def check(timeout=TIMEOUT, attempts=1):
             break
         except UpdateError as e:
             error = e
+    note = None
     if latest is None:
         result = {"ok": False, "error": str(error), "checked_at": checked_at}
     else:
         newer = version_tuple(latest["version"]) > version_tuple(APP_VERSION)
-        result = {"ok": True, "latest": latest, "newer": newer, "checked_at": checked_at}
+        result = {"ok": True, "latest": latest, "newer": newer, "checked_at": checked_at, "note": note}
         app_settings.set_value("update_latest", latest if newer else None)
     app_settings.set_value("update_last_check", result)
     return result

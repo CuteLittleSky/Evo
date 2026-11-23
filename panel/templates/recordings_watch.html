@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% from "_legend.html" import legend_icon %}
+{% from "_rec_icons.html" import ev_icon %}
+{% block title %}{{ item.title }} · 录像 · Evo{% endblock %}
+
+{# 放一个录像（panel_recordings.watch）：播放器、自己画的时间轴（事件、断掉的那几段）、事件列表、高光片段、显示文件、删除。
+   高光片段（2026-11-21）也在这一页放：标题后面写片段的名字（击杀 1），下面"高光片段"里是这一局的每一段，正在放的那段标出来；
+   整局录像上"保存高光"（已经存过的不能再点，用户定的） #}
+
+{% block content %}
+<section class="card rec-watch" aria-labelledby="h-watch">
+  <div class="rec-watch-head">
+    <a class="btn-text rec-back" href="{{ url_for('recordings.page') }}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg>
+      录像
+    </a>
+    <div class="rec-watch-title">
+      <h2 id="h-watch"><span class="legend-label">{{ legend_icon(item.legend_icon) }}{{ item.title }}</span>{% if item.clip %}<span class="rec-watch-clip"> · {{ item.clip.name }}</span>{% endif %}{% if item.unfinished %} <span class="rec-tag inline">未完成</span>{% endif %}</h2>
+      <p class="note">{{ item.subtitle }}{% if item.clip %} · 整局的 <span class="num">{{ item.clip.range }}</span>{% endif %} · <span class="num">{{ item.clock }}</span> · <span class="num">{{ item.size_text }}</span></p>
+    </div>
+    {% if item.match %}
+    <a class="rec-match" href="{{ url_for('matches', open=item.match.id) }}">
+      <span class="badge {{ item.badge }}">{{ '#' ~ item.match.placement if item.match.placement else '—' }}</span>
+      <span>击杀 <span class="num">{{ item.match.kills if item.match.kills is not none else '—' }}</span></span>
+      <span>伤害 <span class="num">{{ '{:,}'.format(item.match.damage) if item.match.damage is not none else '—' }}</span></span>
+      <span class="rec-match-go">在战绩里看</span>
+    </a>
+    {% endif %}
+  </div>
+
+  <div class="rec-video">
+    <video id="rec-video" controls preload="metadata" src="{{ url_for('recordings.video', v=item.id) }}"
+           aria-label="{{ item.title }} 的录像"></video>
+  </div>
+
+  <div class="rec-timeline" id="rec-timeline" data-duration="{{ item.duration }}" data-lead="{{ lead }}"
+       {% if start is not none %}data-start="{{ start }}"{% endif %}>
+    <div class="rec-track" id="rec-track">
+      <span class="rec-played" aria-hidden="true"></span>
+      {% for o in item.outages %}
+      <span class="rec-gap" style="left: {{ '%.3f' | format(o.left) }}%; width: {{ '%.3f' | format(o.width) }}%" title="这 {{ '%.0f' | format(o.seconds) }} 秒没录到（切窗口等）" aria-hidden="true"></span>
+      {% endfor %}
+      <span class="rec-head-line" aria-hidden="true"></span>
+      {# 每个标记是一个圆，里面是事件的图标（_rec_icons.html，2026-11-21 用户要的，以前是一道颜色）。
+         挨得很近的事件合成一个标记（panel_recordings.group_marks）：画其中最要紧的那个的图标（击杀优先于击倒、助攻……）、角上写个数，悬停写出全部，点了从第一个前几秒开始放 #}
+      {% for m in item.marks %}
+      {% if m.events | length == 1 %}{% set e = m.events[0] %}
+      <button type="button" class="rec-mark {{ e.css }}" style="left: {{ '%.3f' | format(m.left) }}%" data-t="{{ m.t }}"
+              data-label="{{ m.label }}" aria-label="{{ e.label }}，{{ e.clock }}，从前 {{ lead }} 秒开始放">{{ ev_icon(e.css, 13) }}</button>
+      {% else %}
+      <button type="button" class="rec-mark rec-mark-group {{ m.css }}" style="left: {{ '%.3f' | format(m.left) }}%" data-t="{{ m.t }}"
+              data-label="{{ m.label }}"
+              aria-label="{{ m.events | length }} 个事件：{% for e in m.events %}{{ e.label }} {{ e.clock }}{{ '，' if not loop.last }}{% endfor %}；从前 {{ lead }} 秒开始放">
+        {{ ev_icon(m.css, 13) }}
+        <span class="rec-mark-count num" aria-hidden="true">{{ m.events | length }}</span>
+      </button>
+      {% endif %}
+      {% endfor %}
+    </div>
+    <div class="rec-ticks num" aria-hidden="true"><span>0:00</span><span id="rec-now">0:00</span><span>{{ item.clock }}</span></div>
+  </div>
+
+  {% if item.events %}
+  <ol class="rec-events" aria-label="这局的事件（点了从前 {{ lead }} 秒开始放）">
+    {% for e in item.events %}
+    <li><button type="button" class="rec-event {{ e.css }}" data-t="{{ e.t }}">{{ ev_icon(e.css, 16) }}<span class="num">{{ e.clock }}</span> {{ e.label }}</button></li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="note rec-no-events">这一局没有记下事件（倒地、成盒、冠军这些发生时才有）。</p>
+  {% endif %}
+
+  {% if clips or can_save %}
+  <section class="rec-clips" aria-labelledby="h-clips">
+    <div class="rec-clips-head">
+      <h3 id="h-clips">高光片段{% if clips %} <span class="num muted">{{ clips | length }}</span>{% endif %}</h3>
+      {% if clips %}<span class="note">共 <span class="num">{{ clip_total }}</span> · <span class="num">{{ clip_size }}</span></span>{% endif %}
+      <div class="rec-clips-actions">
+        {% if item.clip and full_id %}<a class="btn" href="{{ url_for('recordings.watch', v=full_id) }}">看整局</a>{% endif %}
+        {% if can_save %}
+        <form method="post" action="{{ url_for('recordings.save_clips') }}" id="rec-save-clips">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="v" value="{{ item.id }}">
+          <button type="submit" class="btn" {{ 'disabled' if clips }}>{{ '已保存高光' if clips else '保存高光' }}</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% if clip_note %}<p class="rec-clip-note {{ 'update-error' if clip_note.error else 'rec-saved' }}" role="{{ 'alert' if clip_note.error else 'status' }}">{{ clip_note.text }}</p>{% endif %}
+    {% if clips %}
+    <ul class="rec-clip-grid" role="list">
+      {% for c in clips %}{% set now = c.id == item.id %}
+      <li>
+        <a class="rec-clip{{ ' current' if now }}" href="{{ url_for('recordings.watch', v=c.id) }}"{% if now %} aria-current="page"{% endif %}>
+          <span class="rec-clip-thumb">
+            <img src="{{ url_for('recordings.thumb', v=c.id) }}" alt="" width="240" height="135" loading="lazy" onerror="this.classList.add('missing')">
+            <span class="rec-duration num">{{ c.clock }}</span>
+            {% if now %}<span class="rec-tag rec-clip-now">正在放</span>{% endif %}
+          </span>
+          <span class="rec-clip-body">
+            <span class="rec-clip-name">{{ c.clip.name }}</span>
+            <span class="rec-clip-range num">{{ c.clip.range }}</span>
+            <span class="rec-clip-icons" aria-hidden="true">{% for css in c.clip.kinds %}<span class="{{ css }}">{{ ev_icon(css, 14) }}</span>{% endfor %}</span>
+            <span class="sr-only">，整局的 {{ c.clip.range }}，{{ c.clock }}，有{{ c.events | map(attribute='label') | unique | join('、') }}</span>
+          </span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% elif not item.clip %}
+    <p class="note rec-no-clips">还没有保存高光</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <div class="actions rec-actions">
+    <form method="post" action="{{ url_for('recordings.show') }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="v" value="{{ item.id }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <button type="submit" class="btn">在资源管理器中显示</button>
+    </form>
+    {% if item.clip %}{# 删一段高光：回到整局，整局删了回到这一局别的片段 #}
+    {% set others = clips | rejectattr('id', 'equalto', item.id) | list %}
+    <form method="post" action="{{ url_for('recordings.delete') }}" id="rec-delete"
+          data-confirm="{{ '确定删除这一段高光吗？' ~ item.path.name ~ '（' ~ item.size_text ~ '）会从电脑上删掉，不能恢复。' }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="v" value="{{ item.id }}">
+      {% if full_id or others %}<input type="hidden" name="back" value="{{ full_id or others[0].id }}">{% endif %}
+      <button type="submit" class="btn btn-danger">删除这一段</button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('recordings.delete') }}" id="rec-delete"
+          data-confirm="{{ '确定删除这个录像吗？' ~ item.path.name ~ '（' ~ item.size_text ~ '）会从电脑上删掉，不能恢复。' ~ ('高光片段不删，还留着。' if clips else '') }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="hidden" name="v" value="{{ item.id }}">
+      <button type="submit" class="btn btn-danger">删除</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var video = document.getElementById("rec-video");
+    var box = document.getElementById("rec-timeline");
+    var track = document.getElementById("rec-track");
+    var played = track.querySelector(".rec-played");
+    var head = track.querySelector(".rec-head-line");
+    var now = document.getElementById("rec-now");
+    var lead = parseFloat(box.dataset.lead) || 0;
+    var duration = parseFloat(box.dataset.duration) || 0;
+
+    function clock(s) {
+      s = Math.max(0, Math.floor(s));
+      var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+      return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(sec).padStart(2, "0");
+    }
+    function length() { return isFinite(video.duration) && video.duration > 0 ? video.duration : duration; }
+    function jump(t, play) {
+      video.currentTime = Math.max(0, Math.min(t, length() - 0.1));
+      if (play) video.play().catch(function () {});
+    }
+    // 播放的位置：已放过的一段（scaleX，不改宽度，不重新排版）和竖线；拖的时候画手指着的位置（drag.t），不画播放器的
+    var drag = null;
+    function paintAt(t) {
+      var f = length() ? Math.max(0, Math.min(1, t / length())) : 0;
+      played.style.transform = "scaleX(" + f + ")";
+      head.style.left = (f * 100) + "%";
+      now.textContent = clock(t);
+    }
+    function paint() { paintAt(drag && drag.moved ? drag.t : video.currentTime); }
+    video.addEventListener("timeupdate", paint);
+    video.addEventListener("seeked", paint);
+    video.addEventListener("loadedmetadata", function () {
+      if (box.dataset.start) jump(parseFloat(box.dataset.start), false);
+      paint();
+    });
+    // 点事件（时间轴上的标记、下面的列表）：从它前几秒开始放
+    document.querySelectorAll(".rec-mark, .rec-event").forEach(function (b) {
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        jump(parseFloat(b.dataset.t) - lead, true);
+      });
+    });
+    // 点时间轴的空白处：跳到那里
+    function timeAt(x) {
+      var r = track.getBoundingClientRect();
+      return Math.max(0, Math.min(1, (x - r.left) / r.width)) * length();
+    }
+    track.addEventListener("click", function (e) {
+      if (track.dataset.dragged) { delete track.dataset.dragged; return; }  // 刚拖完松手，不算点
+      jump(timeAt(e.clientX), !video.paused);
+    });
+    // 拖时间轴（2026-11-21 用户要的）：按住移动超过 4 像素才算拖（只点一下照旧是点：标记从事件前几秒放，空白处跳过去）。
+    // 拖的时候先暂停，竖线、"已放过"和中间的时间跟着手走，画面也跟着换（上一次跳完了才跳下一次，免得一直解码跟不上）；
+    // 松手跳到那里，原来在放就接着放。拖出时间轴外也照样跟着（按住时把指针"抓"在时间轴上）
+    function seekTo(t) {
+      drag.want = t;
+      if (!video.seeking) video.currentTime = Math.min(t, length() - 0.1);
+    }
+    video.addEventListener("seeked", function () {
+      if (drag && drag.moved && Math.abs(drag.want - video.currentTime) > 0.05) video.currentTime = Math.min(drag.want, length() - 0.1);
+    });
+    track.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0 || !length()) return;
+      drag = { id: e.pointerId, x: e.clientX, t: timeAt(e.clientX), want: null, moved: false, playing: !video.paused };
+    });
+    track.addEventListener("pointermove", function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.moved) {
+        if (Math.abs(e.clientX - drag.x) < 4) return;
+        drag.moved = true;
+        track.setPointerCapture(e.pointerId);
+        track.classList.add("dragging");
+        video.pause();
+      }
+      drag.t = timeAt(e.clientX);
+      paintAt(drag.t);
+      seekTo(drag.t);
+    });
+    function endDrag(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var done = drag;
+      drag = null;
+      if (!done.moved) return;
+      track.classList.remove("dragging");
+      track.dataset.dragged = "1";  // 松手后浏览器还会补一个 click，跳过它
+      setTimeout(function () { delete track.dataset.dragged; }, 0);
+      jump(done.t, done.playing);
+      paintAt(done.t);
+    }
+    track.addEventListener("pointerup", endDrag);
+    track.addEventListener("pointercancel", endDrag);
+    // 保存高光：要几秒（整局里找关键帧、一段一段地切），按钮先变成"正在保存…"，不让再点
+    var save = document.getElementById("rec-save-clips");
+    if (save) save.addEventListener("submit", function () {
+      var b = save.querySelector("button");
+      b.disabled = true;
+      b.textContent = "正在保存…";
+      save.setAttribute("aria-busy", "true");
+    });
+    // 删除：先确认；删之前先让播放器放开文件（正在播放的文件 Windows 删不掉）
+    var del = document.getElementById("rec-delete");
+    del.addEventListener("submit", function (e) {
+      if (!confirm(del.dataset.confirm)) { e.preventDefault(); return; }
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    });
+  })();
+</script>
+{% endblock %}

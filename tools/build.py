@@ -5,7 +5,10 @@
    build/webview2 里没有就从微软下载，每次都核对是微软签名的
 3. 用 PyInstaller 按 evo.spec 打包（文件夹模式：一个很小的 Evo.exe + _internal 文件夹）
 4. 放入许可证：Evo 自己的 AGPL-3.0 许可证；pystray 的 LGPL 许可证（以及它引用的 GPL 全文）
-5. 打印打包结果的大小
+5. 放进录像用的精简版 ffmpeg（WITH_FFMPEG；先 python tools/build_ffmpeg.py 编好，在 dist/ffmpeg）：
+   Evo\\ffmpeg\\ 里是 ffmpeg.exe、它的许可证、BUILD.txt（源码地址、怎么编的）。0.7.0 起正式版也带（2026-11-21 用户定的：
+   录像直接做正式版，设置页照旧标"实验"、默认关）；不带时设置页找不到 ffmpeg 就不显示"录像"一栏
+6. 打印打包结果的大小
 
 需要先安装 PyInstaller（只在开发时用，不会装进程序里）：python -m pip install pyinstaller
 """
@@ -19,12 +22,23 @@ import urllib.request
 from pathlib import Path
 
 import code_path  # noqa: F401  先把 code/ 加进搜索路径，下面才能 import 程序代码（见 code_path.py）
+import update_check
+from storage import APP_VERSION
 from webview2 import SETUP as WEBVIEW2_SETUP  # 用源码运行时在 build/webview2 里，evo.spec 从这里打包
 
 ROOT = Path(__file__).resolve().parent.parent  # 项目文件夹（本文件在 tools/ 里）
 ICON = ROOT / "build" / "icon" / "evo.ico"
 DIST = ROOT / "dist" / "Evo"
 ICON_SIZES = [(s, s) for s in (16, 24, 32, 48, 64, 128, 256)]
+# 录像用的 ffmpeg 放进哪些版本："test" 只有测试版（版本号带 b）；"all" 每个版本都放；"none" 都不放。
+# 0.7.0b 只有测试版带，2026-11-21 用户定了录像直接做正式版 0.7.0，改成 "all"
+WITH_FFMPEG = "all"
+FFMPEG_BUILD = ROOT / "dist" / "ffmpeg"  # tools/build_ffmpeg.py 编好的
+FFMPEG_NOTE = """
+- ffmpeg\\ffmpeg.exe（录像用，只在测试版里）：FFmpeg（https://ffmpeg.org），GNU LGPL 2.1 或更新版本，
+  按 LGPL 的要求单独一个程序、没有改过源码；是 Evo 的 tools/build_ffmpeg.py 编的精简版，源码地址和编译参数见
+  ffmpeg\\BUILD.txt，它和静态链进去的库（libvpl 等）的许可证见 ffmpeg\\licenses
+"""
 # 微软的 WebView2 常青版引导程序（Evergreen Bootstrapper），微软允许随软件分发
 WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 
@@ -39,6 +53,8 @@ Evo 使用了以下第三方库，它们各自的许可证随库一起放在 _in
 - 其他主要依赖：RapidOCR（Apache 2.0）、ONNX Runtime（MIT）、OpenCV（Apache 2.0）、NumPy（BSD）、
   Flask（BSD）、Pillow（MIT-CMU）、dxcam（MIT）、PP-OCR 模型（Apache 2.0）
 - 面板字体 Chakra Petch：SIL Open Font License 1.1，见 _internal/panel/static/fonts/OFL.txt
+- 窗口启动画面上那行字的字体 Cinzel、思源宋体（Noto Serif SC，都只含用到的几个字）：SIL Open Font License 1.1，
+  见 _internal/assets/splash/OFL.txt
 - 面板里传奇名字前的小头像：来自 Apex Legends Wiki（https://apexlegends.wiki.gg/），不适用 AGPL-3.0，
   每个文件的许可不一样，见 _internal/panel/static/legends/LICENSE.txt
 - _internal/webview2/MicrosoftEdgeWebview2Setup.exe：微软的 Microsoft Edge WebView2 安装程序，按微软的许可随 Evo 分发。
@@ -146,11 +162,28 @@ def add_licenses():
     (folder / "README.txt").write_text(LICENSE_NOTE, encoding="utf-8")
 
 
+def with_ffmpeg():
+    return WITH_FFMPEG == "all" or (WITH_FFMPEG == "test" and update_check.is_test_version(APP_VERSION))
+
+
+def add_ffmpeg():
+    """放进录像用的精简版 ffmpeg（和它的许可证、BUILD.txt）。"""
+    if not (FFMPEG_BUILD / "ffmpeg.exe").exists():
+        raise SystemExit(f"{APP_VERSION} 要带录像用的 ffmpeg，但 {FFMPEG_BUILD} 里没有：先 python tools/build_ffmpeg.py")
+    shutil.copytree(FFMPEG_BUILD, DIST / "ffmpeg")
+    with open(DIST / "licenses" / "README.txt", "a", encoding="utf-8") as f:
+        f.write(FFMPEG_NOTE)
+    size = (DIST / "ffmpeg" / "ffmpeg.exe").stat().st_size
+    print(f"录像用的 ffmpeg：{size / 1024 ** 2:.1f} MB（WITH_FFMPEG = {WITH_FFMPEG!r}，版本 {APP_VERSION}）")
+
+
 def main():
     make_icon()
     get_webview2_setup()
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "tools/evo.spec"], cwd=ROOT, check=True)
     add_licenses()
+    if with_ffmpeg():
+        add_ffmpeg()
     files = [p for p in DIST.rglob("*") if p.is_file()]
     size = sum(p.stat().st_size for p in files)
     exe = DIST / "Evo.exe"

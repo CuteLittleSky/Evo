@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{# 所有页面共用的外框（各页 extends 它）：自己的标题栏、左边的侧边栏（导航、切换账号、Evo 占用、主题，_side.html）、顶部的提示条（更新、搬数据、公告、新玩家名……）、共用的脚本 -#}
 <html lang="zh-CN"{% if in_app %} class="in-app"{% endif %}>
 <head>
 <meta charset="utf-8">
@@ -14,6 +15,15 @@
       theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
     }
     document.documentElement.dataset.theme = theme;
+    // 侧边栏收起过：画页面之前就收起（每次换页都是重新打开一页，晚了会先展开再收起）。
+    // 在设置页点分类时自动收起的（evo-side-auto，2026-11-21 用户要的）：离开设置页就展开回来
+    try {
+      if (localStorage.getItem("evo-side-auto") && location.pathname !== "{{ url_for('settings') }}") {
+        localStorage.removeItem("evo-side-auto");
+        localStorage.removeItem("evo-side");
+      }
+      if (localStorage.getItem("evo-side") === "collapsed") document.documentElement.classList.add("side-collapsed");
+    } catch (e) {}
   })();
 </script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -42,46 +52,12 @@
 {% endfor %}
 <div class="window-frame" aria-hidden="true"></div>
 {% endif %}
-<div class="wrap">
+{# 看直播页（esports_watch.html）占满整个窗口、没有侧边栏：wrap_class 给外框加 class，top（侧边栏）整块换掉 #}
+<div class="wrap{% block wrap_class %}{% endblock %}">
 
-<header class="top">
-  <div class="brand">
-    <img src="{{ url_for('app_icon') }}" alt="" width="30" height="30">
-    <span class="brand-name">EVO</span>
-  </div>
-  <nav class="nav" aria-label="主导航">
-    {% for endpoint, label in nav %}
-    {# 选中标签的底色是单独的一块（nav-pill）：从别的页面切过来时，它从上一页的标签滑过来（见 style.css 的"动效"） #}
-    <a href="{{ url_for(endpoint) }}" class="{{ 'active' if request.endpoint == endpoint }}">
-      {%- if request.endpoint == endpoint %}<span class="nav-pill{{ ' slide' if switch.shift }}" style="--shift: {{ switch.shift }}"></span>{% endif %}{{ label -}}
-    </a>
-    {% endfor %}
-  </nav>
-  {% if is_demo %}
-  <div class="pill pill-warn" title="当前读取的是 {{ db_name }}，不是正式数据库">
-    <span class="dot"></span><span>演示数据</span>
-  </div>
-  {% endif %}
-  {% if account_view.accounts|length >= 2 %}
-  {# 有 2 个以上账号时：切换看哪个账号（总览、战绩跟着变）。选了就提交，和战绩页的传奇筛选一样 #}
-  <form method="post" action="{{ url_for('select_account') }}" class="account-switch">
-    <input type="hidden" name="token" value="{{ token }}">
-    <input type="hidden" name="next" value="{{ request.full_path }}">
-    <label class="account-label" for="account-select">账号</label>
-    <select id="account-select" name="account" onchange="this.form.submit()">
-      {% for a in account_view.accounts %}
-      <option value="{{ a.id }}" {{ 'selected' if account_view.current and account_view.current.id == a.id }}>{{ a.display_name }}{% if not a.confirmed %}（待确认）{% endif %}</option>
-      {% endfor %}
-      <option value="all" {{ 'selected' if account_view.all }}>全部账号</option>
-    </select>
-    <noscript><button type="submit" class="btn">切换</button></noscript>
-  </form>
-  {% endif %}
-  <button type="button" class="icon-btn" id="theme-toggle" aria-label="切换白天/黑夜">
-    <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4"></path><path d="M12 20 L12 22"></path><path d="M2 12 L4 12"></path><path d="M20 12 L22 12"></path><path d="M4.9 4.9 L6.3 6.3"></path><path d="M17.7 17.7 L19.1 19.1"></path><path d="M4.9 19.1 L6.3 17.7"></path><path d="M17.7 6.3 L19.1 4.9"></path></svg>
-    <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 14.5 A8 8 0 1 1 9.5 4 A6.5 6.5 0 0 0 20 14.5 Z"></path></svg>
-  </button>
-</header>
+{% block top %}
+{% include "_side.html" %}
+{% endblock %}
 
 <main class="page{{ ' page-enter' if switch.enter }}">
 {% import "_update.html" as upd with context %}
@@ -183,6 +159,40 @@
 
 {% block content %}{% endblock %}
 </main>
+<script>
+  // 侧边栏下面的「Evo 占用」（_usage.html）：点了在侧边栏右边展开（再点、点外面、Esc 收起）；每 2 秒问一次 /usage 换上新的数字，
+  // 窗口最小化、切到别的程序时不问。第一次打开时 CPU 要和一秒前比才有，所以一秒后先问一次
+  (function () {
+    var box = document.getElementById("usage-top");
+    if (!box) return;
+    var btn = document.getElementById("usage-open"), panel = document.getElementById("usage-panel");
+    function setOpen(open) {
+      panel.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    btn.addEventListener("click", function () { setOpen(panel.hidden); });
+    document.addEventListener("click", function (e) { if (!panel.hidden && !box.contains(e.target)) setOpen(false); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !panel.hidden) { setOpen(false); btn.focus(); }
+    });
+    var busy = false;
+    function update() {
+      if (busy || document.visibilityState !== "visible") return;
+      busy = true;
+      fetch("{{ url_for('usage_now') }}")
+        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          ["cpu", "memory", "parts"].forEach(function (key) {
+            box.querySelectorAll('[data-usage="' + key + '"]').forEach(function (el) { if (r[key]) el.textContent = r[key]; });
+          });
+        })
+        .catch(function () {})
+        .finally(function () { busy = false; });
+    }
+    setTimeout(update, 1000);
+    setInterval(update, 2000);
+  })();
+</script>
 {% if name_question %}
 {# 多账号：认出了新的玩家名，问"是不是同一个人"。打开页面时弹出（下面的脚本）；不选一项不能"确定"；
    "稍后再问"和按 Esc 一样，这个窗口开着期间不再弹，下次打开窗口再问 #}
@@ -267,12 +277,85 @@
     } catch (e) {}
     applyTheme();
     document.dispatchEvent(new CustomEvent("evo-theme"));  // 通知设置页的下拉框同步
+    var winApi = window.pywebview && window.pywebview.api;  // Evo 窗口：记下来，下次打开时启动画面用这个主题（app_window.py）
+    if (winApi && winApi.remember_theme) winApi.remember_theme(choice);
   };
   // 跟随系统时：Windows 切换深浅色，面板立即跟着变
   window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", applyTheme);
-  document.getElementById("theme-toggle").addEventListener("click", function () {
-    evoSetTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  // 视频全屏时按 Esc 退出（录像、看直播；2026-11-21）：浏览器自己会这样做，Evo 窗口（WebView2）里不一定，这里补上。
+  // 窗口跟着撑满屏幕、退出后回到原来的大小见 app_window.py 的 _set_fullscreen
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
   });
+  // 主题按钮：侧边栏展开时在标志右边，收起时在最下面（两个按钮，同一时间只显示一个）；看直播页没有侧边栏，也就没有
+  document.querySelectorAll("[data-theme-toggle]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      evoSetTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+    });
+  });
+
+  // 侧边栏展开 / 收起（_side.html）：记在 localStorage，换页、重新打开窗口都保持。
+  // 点按钮时侧边栏的宽度和右边的内容一起平滑过渡（startViewTransition：浏览器先拍下前后两张图再过渡，页面本身只排一次版）；
+  // Windows 设置里关了"动画效果"时直接切换
+  (function () {
+    var toggle = document.getElementById("side-toggle");
+    if (!toggle) return;
+    var root = document.documentElement;
+    function collapsed() { return root.classList.contains("side-collapsed"); }
+    function sync() {
+      var label = collapsed() ? "展开侧边栏" : "收起侧边栏";
+      toggle.setAttribute("aria-expanded", collapsed() ? "false" : "true");
+      toggle.setAttribute("aria-label", label);
+      toggle.dataset.tip = label;
+    }
+    // auto：设置页点分类时自动收起的（离开设置页会展开回来）；自己点按钮展开、收起的不算，记住自己选的。
+    // 返回 Promise：过渡动画播完时 resolve（设置页等收好了再滚到那一栏，不然内容区宽度在滚的时候变）
+    function setCollapsed(on, then, auto) {
+      try {
+        if (on) localStorage.setItem("evo-side", "collapsed");
+        else localStorage.removeItem("evo-side");
+        if (auto) localStorage.setItem("evo-side-auto", "1");
+        else localStorage.removeItem("evo-side-auto");
+      } catch (e) {}
+      function apply() { root.classList.toggle("side-collapsed", on); sync(); if (then) then(); }
+      if (collapsed() === on) { if (then) then(); return Promise.resolve(); }
+      if (!document.startViewTransition || reduceMotion.matches) { apply(); return Promise.resolve(); }
+      root.classList.add("side-moving");  // 只在这时给侧边栏和内容起名字（style.css），切换主题时还是整页淡入淡出
+      return document.startViewTransition(apply).finished.finally(function () { root.classList.remove("side-moving"); });
+    }
+    toggle.addEventListener("click", function () { setCollapsed(!collapsed()); });
+    // 设置页点分类时调用：展开着就收起（记作自动收起的）；已经收起的不动，也不改成"自动"
+    window.evoAutoCollapseSide = function () {
+      return collapsed() ? Promise.resolve() : setCollapsed(true, null, true);
+    };
+
+    // 只有图标的地方（收起时的每一项，和展开时标志右边的主题按钮）：鼠标指上去、用键盘移过去时在右边显示名字。
+    // 一块 fixed 的提示放到那一项右边（挂在每一项上会被会滚动的侧边栏裁掉）；点了、移开、滚动时收起
+    var side = document.getElementById("side"), tip = document.getElementById("side-tip");
+    function hideTip() { tip.hidden = true; }
+    function showTip(el) {
+      if (!el || !(collapsed() || el.hasAttribute("data-tip-always"))) { hideTip(); return; }
+      var r = el.getBoundingClientRect();
+      tip.textContent = el.dataset.tip;
+      tip.style.left = (r.right + 14) + "px";
+      tip.style.top = (r.top + r.height / 2) + "px";
+      tip.hidden = false;
+    }
+    side.addEventListener("mouseover", function (e) { showTip(e.target.closest("[data-tip]")); });
+    side.addEventListener("mouseleave", hideTip);
+    side.addEventListener("focusin", function (e) {
+      if (e.target.matches(":focus-visible")) showTip(e.target.closest("[data-tip]"));
+    });
+    side.addEventListener("focusout", hideTip);
+    side.addEventListener("click", hideTip);
+    side.addEventListener("scroll", hideTip);
+    // 收起时的人像按钮：先展开，再把焦点放到切换账号的下拉框上
+    var account = document.getElementById("side-account");
+    if (account) account.addEventListener("click", function () {
+      setCollapsed(false, function () { document.getElementById("account-select").focus(); });
+    });
+    sync();
+  })();
 
   // 同一页里的操作（展开某一局、筛选、保存……）会重新打开这一页：停在原来的滚动位置，不跳回顶部
   (function () {
@@ -411,7 +494,13 @@
         else if (what === "close") api().close();
       });
     });
-    window.addEventListener("pywebviewready", function () { api().is_maximized().then(showMaximized); });
+    window.addEventListener("pywebviewready", function () {
+      api().is_maximized().then(showMaximized);
+      // 网页画出来了（再等两帧）才拿掉窗口的启动画面（splash.py），顺便告诉窗口现在选的主题，下次打开时启动画面用一样的颜色
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { if (api().page_shown) api().page_shown(evoTheme()); });
+      });
+    });
   })();
 </script>
 {% endif %}

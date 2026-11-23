@@ -1,0 +1,59 @@
+{
+  "_说明": "录像（整局录像，见 code/recorder.py、docs/录像.md）的规则。玩家能在设置页改的（开关、分辨率、帧数、画质、编码格式、硬盘上限）存在 settings.json，这里是默认值和各档的数",
+
+  "tail_seconds": 3,
+  "_说明_tail_seconds": "一局结束（结算画面、回到大厅）以后再录几秒才停：淘汰画面、冠军横幅也录进去",
+
+  "keyframe_seconds": 2,
+  "_说明_keyframe_seconds": "每隔几秒一个关键帧：播放时拖进度条能跳到的最小间隔，剪高光时片段开头最多早这么多秒。只按时间放（-force_key_frames）；按帧数的 -g 放宽到两倍只用来兜底，两套一样宽时会碰上、关键帧成对（2026-11-21，见 recorder.encoder_args）",
+
+  "stall_seconds": 5,
+  "stall_seconds_window": 30,
+  "_说明_stall_seconds": "ffmpeg 这么久没出新帧就算卡住，结束它重开（切窗口、切显示模式、管理员确认框时桌面复制会失效，ffmpeg 直接退出，见 docs/录屏实测.md）。只抓游戏窗口时画面不动就没有新帧（游戏最小化、停在不动的画面），门槛放宽到 stall_seconds_window",
+
+  "restart_wait_seconds": [0, 0.5, 1, 2, 5],
+  "_说明_restart_wait_seconds": "连续重开时每次之前等多久（第一次马上重开常被拒：Windows 还没切换完，2026-11-19 实测），用完了就一直按最后一个数等",
+
+  "encoders": {
+    "h264": ["h264_nvenc", "h264_amf", "h264_qsv"]
+  },
+  "_说明_encoders": "每种编码格式按这个顺序试，用第一个能用的：NVIDIA > AMD > Intel（Overwolf 的建议）。没有硬件编码器的电脑不开放录像（不用 CPU 软编）。只列一种时设置页不显示\"编码格式\"那一项。AV1 2026-11-20 先拿掉了（用户定的）：录的时候分段写成 MPEG-TS，ffmpeg 9.0.2 的 TS 读写里没有 AV1（写进去读不回来，完整版也一样），要换了分段格式才能加回来：加一行 \"av1\": [\"av1_nvenc\", \"av1_amf\", \"av1_qsv\"]，精简版 ffmpeg 也要加回 AV1 的部分（tools/build_ffmpeg.py）",
+
+  "b_frames": {"nvenc": 3, "amf": 2},
+  "_说明_b_frames": "每两张参照帧之间最多插几个 B 帧（按显卡厂家，没写的不开）。B 帧前后两张都能借，同样码率更清楚、文件不变大。2026-11-21 实测（docs/录屏实测.md「B 帧」：11-20 那局缩成 1080p 60 帧、压成标准档 5.6 Mbps 和原片比 VMAF）：N 卡开 3 个（加 b_ref_mode middle）搜东西这类慢画面 92.8 → 94.1，打架 84.7 → 84.4（不变）；AMD 核显开 2 个慢画面 90.2 → 92.1、打架 78.1 → 80.1。Intel（qsv）没测过，先不开。检测编码器时开了 B 帧编不了（老显卡），自动不开（recorder.pick_encoder）",
+
+  "sizes": {"native": null, "1080p": [1920, 1080], "720p": [1280, 720]},
+  "_说明_sizes": "设置页的分辨率：native = 和游戏窗口一样大；别的是 Windows Graphics Capture 抓的时候就缩成这么大",
+
+  "fps": [60, 30],
+  "_说明_fps": "设置页能选的帧数",
+
+  "bits_per_pixel": {"best": 0.1, "high": 0.07, "standard": 0.045, "small": 0.028},
+  "codec_factor": {"h264": 1.0, "av1": 0.6},
+  "_说明_bits_per_pixel": "设置页的画质（很高 / 高 / 标准 / 省空间，按这个顺序列）。码率 = 宽 × 高 × 帧数 × 每像素的位数 × 编码格式的系数。默认 1080p 60 帧标准：约 5.6 Mbps，20 分钟一局约 840 MB（2026-11-20 用户看了样片选的：11-20 那局打架的 30 秒按几种码率重新压，这一档'不错'，但要给玩家选择的空间）；省空间约 3.5 Mbps、550 MB，高约 8.7 Mbps、1.2 GB，很高约 12 Mbps、1.7 GB。原画面 2560×1440 60 帧很高约 22 Mbps（11-19 实测游戏里码率用满，读右上角和原图 99% 一样）。AV1 同样画质约省四成",
+
+  "kills": {"level": 200, "change": 0.06, "max_snips": 400, "reads_per_frame": 2, "max_jump": 5},
+  "_说明_kills": "找击杀和助攻（match_recording.py；助攻 2026-11-20 加的，做法一样：看握手图标右边的助攻数）：对局中先找右上角击杀那一行的骷髅图标（hud.kill_cell，只比外观），只看它右边那个数字：亮度到 level 的白字和上一块存下的比，变了 change（比例）以上才存下这一行（hud.kp_snip，每块约 40 KB），一局最多 max_snips 块。2026-11-20 那局录像：整个击杀那一行背后是半透明的底，跟着画面一直变（几乎每帧都算变了），只看数字以后整局只存了 1 块，正是击杀数 0 → 1 那一刻（155.1 秒）。回到大厅后每截一张读 reads_per_frame 块（hud.read_kills，用识别引擎，每块约 0.01 秒）。击杀数只会变多：比上一个大就是一次击杀；一下子多出 max_jump 以上、或者紧接着下一块读到的比它小，当作读错不标",
+
+  "audio": true,
+  "_说明_audio": "录声音（process_audio.py）。设置页两档（2026-11-21 用户定的）：只录 Apex 这个程序的声音（默认）/ 电脑上所有的声音（系统内录：游戏、语音软件里的队友、音乐都在里面）；麦克风另开（默认关）",
+
+  "mix": {"game": 1.0, "system": 1.0, "mic": 1.0},
+  "_说明_mix": "开了麦克风时第 1 条音轨是混好的：每一路先乘这个音量再加起来（ffmpeg 的 amix，不自动减半）。原声各自另存一条",
+
+  "highlights": {
+    "events": {
+      "kill": {"on": true, "before": 30, "after": 10},
+      "knock": {"on": true, "before": 20, "after": 10},
+      "assist_knock": {"on": true, "before": 20, "after": 10},
+      "assist": {"on": false, "before": 15, "after": 5},
+      "champion": {"on": true, "before": 25, "after": 10},
+      "knocked": {"on": true, "before": 15, "after": 10},
+      "revived": {"on": false, "before": 15, "after": 10},
+      "respawned": {"on": false, "before": 9, "after": 20},
+      "dead": {"on": true, "before": 10, "after": 5}
+    },
+    "max_seconds": 60
+  },
+  "_说明_highlights": "自动剪高光（code/highlights.py，docs/录像.md 定下来的第 10 条，2026-11-21 用户定的）：哪些事件算高光（on，设置页按这个顺序列）、每种事件前后各录几秒（照 Outplayed 的默认；助攻击倒 Outplayed 没有，和击倒一样）。默认勾上击杀、击倒、助攻击倒、冠军、自己倒地、成盒。前后两段重叠的合成一段，开头挪到前面最近的关键帧（最多早 keyframe_seconds 秒）。设置页的滑块是 0 到 max_seconds 秒。玩家改的存在 settings.json 的 recording_highlights，录制模式（整局录像 / 只录高光）是 recording_mode"
+}

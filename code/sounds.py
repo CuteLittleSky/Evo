@@ -10,9 +10,11 @@
 声音包（2026-10-24 用户决定：整套切换，三声一起换）：
 - 随 Evo 发的：assets/sounds/<名字>/ 一个文件夹一套，里面 pack.json（name 显示的名字、by 作者、license 许可、
   order 排第几）和 match_end.wav、summary.wav、xp.wav（16 位 PCM，每段最长 MAX_SECONDS 秒）。
-  evo 是 Evo 自己合成的那套（tools/make_sounds.py，AGPL-3.0），永远排第一；缺哪一声就用 evo 的那一声
+  默认的那套（DEFAULT_PACK）永远排第一，三声必须齐全：别的声音包缺哪一声就用它的那一声。
+  2026-11-21 用户决定默认改成 woman（严肃女声），没选过声音包的老玩家也跟着换；之前默认是 evo
+  （Evo 自己合成的那套"简洁音效"，tools/make_sounds.py，AGPL-3.0）
 - 自己的文件（custom）：设置页给每一声选一个音频文件（MP3、WAV 等），窗口先转成 WAV
-  （panel/templates/settings.html），这里核对后存进数据文件夹的 sounds/custom/；没选的那一声用 evo 的
+  （panel/templates/settings.html），这里核对后存进数据文件夹的 sounds/custom/；没选的那一声用默认的那套
 音量（VOLUME_MIN–100%，默认 100）：winsound 不能调音量，所以另存一份调小了的副本（数据文件夹的 sounds/volume/）
 再放。设置改了以后面板先做好（prepare），记录程序找不到时自己做（几十毫秒）。
 
@@ -38,7 +40,7 @@ SETTING_KEY = "sounds_on"
 PACK_KEY = "sound_pack"  # 选的声音包
 VOLUME_KEY = "sound_volume"  # 音量（百分数）
 CUSTOM_NAMES_KEY = "sound_custom_files"  # 自己的文件：每一声原来叫什么（设置页显示）
-DEFAULT_PACK = "evo"
+DEFAULT_PACK = "woman"  # 严肃女声
 CUSTOM = "custom"
 CUSTOM_LABEL = "自己的文件"
 PACKS_DIR = ASSETS_DIR / "sounds"
@@ -77,7 +79,7 @@ def _pack_info(folder):
 
 
 def packs():
-    """能选的声音包，按设置页下拉框的顺序：[{"key", "name", "by"}]。Evo 默认排第一，"自己的文件"排最后。"""
+    """能选的声音包，按设置页下拉框的顺序：[{"key", "name", "by"}]。默认的那套排第一，"自己的文件"排最后。"""
     found = []
     for folder in sorted(PACKS_DIR.iterdir()) if PACKS_DIR.is_dir() else []:
         info = _pack_info(folder)
@@ -89,7 +91,7 @@ def packs():
 
 
 def pack():
-    """现在选的声音包；没选过、选的那套没有了（换版本时删掉了）都用 Evo 默认的。"""
+    """现在选的声音包；没选过、选的那套没有了（换版本时删掉了）都用默认的那套。"""
     choice = app_settings.get(PACK_KEY)
     return choice if choice in {one["key"] for one in packs()} else DEFAULT_PACK
 
@@ -117,7 +119,7 @@ def set_volume(value):
 
 
 def source(name, choice=None):
-    """这一声用哪个文件（还没调音量）：选的那套里有就用它，没有用 Evo 默认的。"""
+    """这一声用哪个文件（还没调音量）：选的那套里有就用它，没有用默认的那套。"""
     choice = choice or pack()
     mine = custom_path(name) if choice == CUSTOM else path(name, choice)
     return mine if mine.is_file() else path(name)
@@ -229,7 +231,7 @@ def save_custom(name, data, filename=None):
 
 
 def clear_custom(name):
-    """"恢复默认"：删掉这一声自己的文件，用回 Evo 默认的。"""
+    """"恢复默认"：删掉这一声自己的文件，用回默认的那套。"""
     if name not in SOUNDS:
         raise ValueError(f"没有这个提示音：{name}")
     custom_path(name).unlink(missing_ok=True)

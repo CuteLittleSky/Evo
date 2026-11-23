@@ -99,7 +99,7 @@
       <td class="muted">{{ r.time }}</td>
       <td>{{ r.mode }}</td>
       <td>{{ r.map }}</td>
-      <td><span class="legend-label">{{ legend_icon(r.legend_icon) }}{{ r.legend }}{% if r.needs_review %}<span class="tag-review">待确认</span>{% endif %}</span></td>
+      <td><span class="legend-label">{{ legend_icon(r.legend_icon) }}{{ r.legend }}{% if r.needs_review %}<span class="tag-review">待确认</span>{% endif %}{% if recordings and recordings.get(r.id) %}<a class="rec-link" href="{{ url_for('recordings.watch', v=recordings[r.id]) }}" aria-label="看第 {{ r.id }} 号对局的录像" data-label="看录像"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"></rect><path d="M16 10.5 21 7.5v9l-5-3"></path></svg></a>{% endif %}</span></td>
       <td class="right num">{{ r.kda }}</td>
       <td class="right num">{{ r.damage }}</td>
       <td class="right num">{{ r.survival }}</td>

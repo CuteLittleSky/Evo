@@ -28,6 +28,7 @@ import ctypes
 import hashlib
 import logging
 import multiprocessing
+import os
 import socket
 import sys
 import threading
@@ -50,6 +51,7 @@ from PIL import Image, ImageDraw, ImageOps  # noqa: E402
 import app_settings  # noqa: E402
 import autostart  # noqa: E402
 import data_move  # noqa: E402
+import evo_usage  # noqa: E402
 import storage  # noqa: E402
 import webview2  # noqa: E402
 from game_detect import GAME_PROCESSES, game_running  # noqa: E402
@@ -143,7 +145,7 @@ def start_update_checker(log, notify, stop, first_delay=UPDATE_FIRST_DELAY):
                     log(f"检查新版本：没查到（{result['error']}）")
                 elif result["newer"]:
                     version = result["latest"]["version"]
-                    log(f"检查新版本：发现 {version}")
+                    log(f"检查新版本：发现 {version}" + (f"（{result['note']}）" if result.get("note") else ""))
                     # 点过"以后再说"的版本、已经提醒过的版本都不再弹通知
                     if update_check.available() and app_settings.get("update_notified") != version:
                         notify(f"发现 Evo 新版本 {version}，打开 Evo 查看更新内容。", "Evo 有新版本")
@@ -226,7 +228,8 @@ def collect_process(stop, queue):
         from capture import NeedRestart
 
         try:
-            live_collect.collect(stop=stop, log=lambda msg: queue.put(("log", msg)), status=_QueueStatus(queue))
+            live_collect.collect(stop=stop, log=lambda msg: queue.put(("log", msg)), status=_QueueStatus(queue),
+                                 usage_root=os.getppid())  # 对局中的占用：从托盘程序算起（连同窗口）
         except NeedRestart as e:  # 刚把 Evo 设成「节能」（capture.py）：新开的记录程序才生效
             queue.put(("restart", str(e)))
     except Exception:  # noqa: BLE001 把出错信息交给托盘程序写进日志
@@ -302,6 +305,7 @@ class Recorder:
         # 名字不要改：设置页删截图时靠它认出"正在记录"，不动正在记录的文件夹（screenshots.recording_folder）
         self._proc = ctx.Process(target=collect_process, args=(self._stop, queue), name="evo-collect", daemon=True)
         self._proc.start()
+        evo_usage.mark(self._proc.pid, "record")  # 「Evo 占用」分开显示
         threading.Thread(target=self._read, args=(self._proc, queue, self.status), name="collect-reader",
                          daemon=True).start()
 
@@ -400,6 +404,7 @@ class PanelServer:
         self._window = ctx.Process(target=window_process, args=(url, self._focus, queue), name="evo-window",
                                    daemon=True)
         self._window.start()
+        evo_usage.mark(self._window.pid, "window")
         threading.Thread(target=self._watch_window, args=(self._window, queue, url), name="window-watch",
                          daemon=True).start()
         return url
