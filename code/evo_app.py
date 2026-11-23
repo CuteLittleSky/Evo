@@ -45,8 +45,8 @@ import source_run
 # 只在直接运行本文件时这样（记录、窗口子程序会继承环境变量），被别的代码 import 时不改
 INSTALLED_DATA = source_run.use_installed_data() if __name__ == "__main__" else None
 
-import pystray  # noqa: E402
-from PIL import Image, ImageDraw, ImageOps  # noqa: E402
+# pystray、PIL 只有托盘程序用：在 load_icons()、main() 里用到时才导入。记录、窗口子进程（spawn）会重新执行本文件顶部，
+# 放在这里会把它们白白带进子进程（2026-11-24 用户决定，省内存）
 
 import app_settings  # noqa: E402
 import autostart  # noqa: E402
@@ -190,6 +190,8 @@ def tell_user(text):
 
 def load_icons():
     """三种状态的图标：等待游戏、正在记录（右下角小红点）、已暂停（变灰）。"""
+    from PIL import Image, ImageDraw, ImageOps
+
     base, _ = base_icon(64)
 
     custom_rec = ASSETS_DIR / "icon" / "evo-recording.png"
@@ -527,6 +529,7 @@ def check_images(paths, log):
 
 def main():
     multiprocessing.freeze_support()  # 打包成 exe 后，子程序要靠这一行才能正常启动
+    import pystray  # 只有托盘程序用（见文件顶部的说明）；要在建图标之前导入，注入层的钩子在这时挂上
     parser = argparse.ArgumentParser(description="Evo：托盘图标 + 后台自动记录")
     parser.add_argument("--game", nargs="+", default=sorted(GAME_PROCESSES),
                         help="把哪些进程当作游戏（测试用，默认 Apex 的进程名）")

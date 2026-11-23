@@ -84,6 +84,13 @@ def install():
     except Exception as exc:
         _log(f"段位名兜底注入失败（不影响使用）：{exc!r}")
 
+    # 画面识别微调（总结页检查区域加高，16:10 / 4:3 下认得出总结页）。挂不上只是照上游识别。
+    try:
+        from cloud import screen_tune
+        screen_tune.install()
+    except Exception as exc:
+        _log(f"画面识别微调注入失败（识别照上游）：{exc!r}")
+
     try:
         from cloud.obs import inject as obs_inject
         obs_inject.install()
@@ -157,6 +164,27 @@ def install():
     except Exception as exc:
         _log(f"同一局去重注入失败（Evo 本身不受影响）：{exc!r}")
 
+    # 上游 process_audio 把线程的 _stop() 盖上了一个 Event，录完再问 is_alive() 必崩（设置页测麦克风）
+    try:
+        from cloud import audio_stop
+        audio_stop.install()
+    except Exception as exc:
+        _log(f"麦克风测试的线程注入失败（Evo 本身不受影响）：{exc!r}")
+
+    # 上游 set_value(键, None) 写成 JSON 的 null，下游 get(键, 默认值) 就拿不到默认值（录像页 500、每局开录报错）
+    try:
+        from cloud import settings_defaults
+        settings_defaults.install()
+    except Exception as exc:
+        _log(f"设置项默认值注入失败（Evo 本身不受影响）：{exc!r}")
+
+    # 队友名字的检查区域裁得太紧（带下划线的名字读不出），整条队友数据都不写库
+    try:
+        from cloud import mate_names
+        mate_names.install()
+    except Exception as exc:
+        _log(f"队友名字注入失败（Evo 本身不受影响）：{exc!r}")
+
     try:
         from cloud.stats import inject as stats_inject
         stats_inject.install()
@@ -175,6 +203,13 @@ def install():
     except Exception as exc:
         _log(f"赛季页识别自适应注入失败（按上游原样）：{exc!r}")
 
+    # Evo 窗口省内存（WebView2 启动参数、最小化时低内存模式）：只在窗口进程导入 pywebview 时生效
+    try:
+        from cloud import webview_memory
+        webview_memory.install()
+    except Exception as exc:
+        _log(f"窗口省内存注入失败（窗口照常）：{exc!r}")
+
     module = sys.modules.get("panel_app")
     if module is not None:
         _installed = True
@@ -185,10 +220,18 @@ def install():
     _installed = True
 
 def _install_flask_hook():
-
+    """等 flask 第一次被导入时再包 Flask.run（不主动 import）：记录子进程从不用 Flask，
+    原来这里无条件导入，会把 flask / werkzeug / jinja2 整套带进每个子进程（2026-11-24 省内存）。"""
     try:
-        from flask import Flask
+        from cloud import importhook
+        importhook.on_import("flask", _patch_flask_run, "bootstrap Flask.run")
     except Exception:
+        pass
+
+
+def _patch_flask_run(flask_module):
+    Flask = getattr(flask_module, "Flask", None)
+    if Flask is None or getattr(Flask.run, "_paimiao_flask_run", False):
         return
     original = Flask.run
 
@@ -206,6 +249,7 @@ def _install_flask_hook():
             _log(f"注入失败（Evo 本身不受影响）：{exc!r}")
         return original(self, *args, **kwargs)
 
+    run._paimiao_flask_run = True
     Flask.run = run
 
 def _log(message):

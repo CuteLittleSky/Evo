@@ -49,6 +49,7 @@ CARD_FORMATS = (
     (None, 1280, 720, 30),
 )
 UPGRADE_RETRY_SECONDS = 60.0
+PUMP_STALE_SECONDS = 1.5  # 录像时连续读：最新一帧比这还旧就当作没画面（采集卡掉了、在重连）
 
 
 class DirectShowCamera:
@@ -72,6 +73,14 @@ class DirectShowCamera:
         self._low_since = 0.0             # 退到低分辨率的时间点，用来算下次升分辨率的时机
         self._card_down = False           # 采集卡是否处于「没信号」状态：只在状态变化时记日志
         self._paimiao_obs_camera = True   # 和 ProjectorCamera 同一标记：探测时别被误 release
+        # 录像用的「连续读」（2026-11-23，见 cloud/obs/pipe_recording.py）：开录时后台线程按设备的帧率一直读，
+        # 最新一帧给 Evo 识别（grab）和录像（latest）共用；不录像时不开，和原来一样每次 grab 才读一帧
+        import threading as _threading
+        self._lock = _threading.Lock()
+        self._pump = None
+        self._pump_stop = None
+        self._latest = (None, 0.0)
+        _register(self)
         self._open()
 
     # ---------- 给上游用的接口 ----------
@@ -84,6 +93,47 @@ class DirectShowCamera:
         return self._height
 
     def grab(self, *args, **kwargs):
+        if self._pump is not None:  # 录像开着：用后台线程读到的最新一帧（读得太久以前的当作没画面）
+            frame, at = self._latest
+            return frame if frame is not None and time.monotonic() - at <= PUMP_STALE_SECONDS else None
+        with self._lock:
+            return self._grab_direct()
+
+    # ---------- 录像用的连续读（cloud/obs/pipe_recording.py） ----------
+    def start_pump(self):
+        """开始连续读（幂等）。设备每出一帧读一帧，cap.read() 自己会等下一帧，不会空转。"""
+        if self._pump is not None:
+            return
+        import threading as _threading
+        stop = _threading.Event()
+
+        def loop():
+            while not stop.is_set():
+                with self._lock:
+                    frame = self._grab_direct()
+                if frame is None:
+                    stop.wait(0.05)  # 没信号 / 在重连：歇一下
+                    continue
+                self._latest = (frame, time.monotonic())
+
+        self._pump_stop = stop
+        self._pump = _threading.Thread(target=loop, name="directshow-pump", daemon=True)
+        self._pump.start()
+
+    def stop_pump(self):
+        pump, stop = self._pump, self._pump_stop
+        if pump is None:
+            return
+        stop.set()
+        pump.join(3)
+        self._pump = self._pump_stop = None
+
+    def latest(self, max_age=PUMP_STALE_SECONDS):
+        """连续读到的最新一帧（BGR），太久以前的、还没读到的返回 None。"""
+        frame, at = self._latest
+        return frame if frame is not None and time.monotonic() - at <= max_age else None
+
+    def _grab_direct(self):
         if self._cap is None:
             if time.monotonic() >= self._next_try:
                 self._open()
@@ -133,7 +183,9 @@ class DirectShowCamera:
         return frame
 
     def release(self):
-        self._drop()
+        self.stop_pump()
+        with self._lock:
+            self._drop()
         self._next_try = 0.0
 
     def start(self, *args, **kwargs):
@@ -370,6 +422,21 @@ class DirectShowCamera:
 # ---------- 选设备 / 打开 / 给设置页用的状态 ----------
 
 OBS_NAME_HINT = devices_mod.OBS_NAME_HINT
+
+
+_ACTIVE = None  # 记录子进程里最近建的那台相机（弱引用）：录像从这里拿画面
+
+
+def _register(camera):
+    global _ACTIVE
+    import weakref
+    _ACTIVE = weakref.ref(camera)
+
+
+def active():
+    """记录子进程里正在用的 DirectShowCamera（采集卡 / OBS 虚拟摄像头），没有返回 None。"""
+    camera = _ACTIVE() if _ACTIVE is not None else None
+    return camera if camera is not None and camera._index is not None else None
 
 
 def pick_device(devices, wanted=""):

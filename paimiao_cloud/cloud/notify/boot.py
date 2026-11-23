@@ -26,7 +26,20 @@ _INSTALLED = False
 
 
 def install() -> bool:
-    """幂等（重复调用直接返回，不重复套壳）。bootstrap 早期可反复调用。"""
+    """幂等。pystray 已导入就马上装；还没有就等它第一次被导入时再装（托盘进程在 evo_app.py 顶部就导入，
+    早于创建图标）。不主动 import：记录子进程、窗口子进程从不用 pystray，主动导入会白占内存（2026-11-24）。"""
+    if _INSTALLED:
+        return True
+    try:
+        from cloud import importhook  # noqa: PLC0415
+        importhook.on_import("pystray", lambda _m: _install_now(), "notify.boot")
+        return True
+    except Exception:  # noqa: BLE001 挂不上就照旧直接装
+        return _install_now()
+
+
+def _install_now() -> bool:
+    """幂等（重复调用直接返回，不重复套壳）。"""
     global _INSTALLED
     if _INSTALLED:
         return True

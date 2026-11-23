@@ -544,18 +544,13 @@ def install():
             return False
         _INSTALLED = True
         return True
-    try:
-        _wrap_loader_if_needed()
-        _INSTALLED = True
-        return True
-    except _StillImporting:
-        # 正在导入上游（我们的 finder 被问到了）：只把状态记上，
-        # 换 loader 由 finder 那一层完成，这里不决定 _INSTALLED
-        return True
-    except ModuleNotFoundError:
-        pass                      # 上游还不认识，退到 finder
-    except Exception as exc:
-        _log(f"[总结页读数] 包住上游 loader 失败：{exc!r}")
+    # 2026-11-23：**不要**在这里 `_wrap_loader_if_needed()`。它内部会
+    # `importlib._bootstrap._load(spec)` 把上游 summary_page 整个执行一遍
+    # （summary_page 顶上 `import cv2` / rapidocr），于是连只开托盘 / 面板的进程也把
+    # OpenCV、OCR 全拉起来，白白多占几十 MB（用户报「内存怎么这么大」）。
+    # 正确时机是「真有进程导入 summary_page」——交给下面挂的 meta_path finder：
+    # `_Finder.find_spec` 会在那次导入时把 loader 包一层（_AfterImportLoader），
+    # 主进程启动时只挂 finder、绝不提前加载上游。
     try:
         _install_finder()
         return True               # 等子进程导入时才装好，_INSTALLED 到那时再置位

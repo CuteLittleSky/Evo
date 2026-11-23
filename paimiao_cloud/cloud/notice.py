@@ -336,26 +336,53 @@ def _terms_for_render() -> str:
         return ""
 
 def inject_card(source: str, branch: dict) -> str:
+    """设置页底部：把「关于 Evo」并进主列，放在「关于本分支 / 第三方许可」上面（2026-11-23 用户要求）。
 
+    用户明确要求**不要右栏**：设置页改成「左边分类 + 右边一整列设置」两列，
+    「关于 Evo」作为一张普通卡片排在主列末尾，「关于本分支 / 第三方许可」在它下面
+    （本分支卡片自带 <details>，默认折叠，展开才占地方）。
+
+    做法（纯注入）：把上游模板里的 `<aside class="card about-card">关于 Evo</aside>` 从右侧栏的
+    位置搬到 `settings-main` 的收尾 </div> 之前（也就是主列最底下），再把「关于本分支」卡片接在它后面；
+    同时在主列开头注入一小段样式把 settings-layout 固定成两列（去掉空着的右栏）。
+    幂等：卡片里有 id="h-branch"，插过一次就跳过。找不到 aside（上游改了结构）就退回
+    旧位置，只把分支卡片插在主列末尾，不让卡片丢。
+    """
     if not source or _CARD_SENTINEL in source:
         return source
-    anchor = _CARD_INJECT_AT
-    at = source.find(anchor)
-    if at < 0:
-        return source
-    if source.find(_CARD_INJECT_AT, at + 1) >= 0:
-        return source
-    pos = at + len(anchor)
-    depth = 1
-
-    for match in re.finditer(r"<div\b[^>]*>|</div>", source[pos:], re.I):
-        if match.group(0).lower().startswith("</div"):
-            depth -= 1
-            if depth == 0:
-                seam = pos + match.start()
-                return source[:seam] + card_html(branch) + source[seam:]
-        else:
-            depth += 1
+    card = card_html(branch)
+    # 主列的收尾 </div> 位置（用括号配对找）
+    seam = None
+    at = source.find(_CARD_INJECT_AT)
+    if at >= 0 and source.find(_CARD_INJECT_AT, at + 1) < 0:
+        pos = at + len(_CARD_INJECT_AT)
+        depth = 1
+        for match in re.finditer(r"<div\b[^>]*>|</div>", source[pos:], re.I):
+            if match.group(0).lower().startswith("</div"):
+                depth -= 1
+                if depth == 0:
+                    seam = pos + match.start()
+                    break
+            else:
+                depth += 1
+    m = re.search(r'<aside\b[^>]*aria-labelledby="h-about"[^>]*>', source)
+    if seam is not None and m:
+        close = source.find("</aside>", m.end())
+        if close >= 0:
+            end = close + len("</aside>")
+            aside_html = source[m.start():end]
+            style = ('<style>'
+                     '/* 设置页两列：分类 + 设置（去掉右栏，2026-11-23 用户要求） */'
+                     '.settings-layout{grid-template-columns:132px minmax(0,1fr)!important;'
+                     'grid-template-areas:"nav main"!important}'
+                     '.settings-main>.about-card{margin-top:0}'
+                     '</style>')
+            # 把 aside 搬到主列末尾（seam 在 aside 之前，索引不冲突），再接分支卡片
+            return (source[:seam] + style + aside_html + card
+                    + source[seam:m.start()] + source[end:])
+    # 兜底：只把分支卡片插在主列末尾
+    if seam is not None:
+        return source[:seam] + card + source[seam:]
     return source
 
 def patch_source(source: str, template: str, branch: dict, version: str = "") -> str:

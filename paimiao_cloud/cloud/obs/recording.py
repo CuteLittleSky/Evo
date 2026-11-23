@@ -14,10 +14,9 @@
   投影窗口重建了（OBS 重新打开投影）：上游断了重开时会重新调 find_window，自然拿到新的句柄。
   声音：电脑上没有 Apex 进程可以按进程录。设置里选的是「只录 Apex」时改成「电脑上所有的声音」
   （OBS 投影放出来的游戏声音就在里面），日志里说一次；选了「电脑上所有的声音」、麦克风照旧。
-- **OBS 虚拟摄像头 / 采集卡**：画面不在任何窗口里，Evo 是用 OpenCV（DirectShow）直接读设备的。
-  录像用的精简版 ffmpeg 没有 DirectShow 输入（`tools/build_ffmpeg.py` 只开了 gfxcapture / ddagrab），
-  设备也已经被记录程序占着。这两种来源**先不录**：开录时抛 RecordingUnavailable，
-  上游会在日志里写一次「录像：录不了（……）」，不会每局刷屏。
+- **OBS 虚拟摄像头 / 采集卡**：画面不在任何窗口里，Evo 是用 OpenCV（DirectShow）直接读设备的，设备被 Evo 占着。
+  由 Evo 把读到的画面经管道交给 ffmpeg 编码（`cloud/obs/pipe_recording.py`）。声音和投影一样改录系统声音。
+  ffmpeg 缺 rawvideo（上游的精简版）时开录抛 RecordingUnavailable，上游在日志里写一次「录像：录不了（……）」。
 
 挂法：`cloud/importhook.py` 等 `match_recording` 导入后包 `MatchRecorder.__init__`（`find_pid` 是构造参数的
 默认值，导入后再改模块里的 apex_pid 不生效）和 `recorder.find_window`、`recorder.Recording.start`。
@@ -89,9 +88,16 @@ def _after_import(module):
     except Exception as exc:  # noqa: BLE001
         _log(f"[主机模式录像] 找不到 recorder（录像照上游的行为）：{exc!r}")
         return
-    ok = [_patch_find_window(recorder), _patch_start(recorder), _patch_matchrecorder(module)]
+    try:
+        from cloud.obs import pipe_recording  # noqa: PLC0415
+        piped = pipe_recording.patch(recorder)
+    except Exception as exc:  # noqa: BLE001
+        piped = False
+        _log(f"[主机模式录像] 虚拟摄像头 / 采集卡的录像挂不上（这两种来源不录）：{exc!r}")
+    ok = [_patch_find_window(recorder), _patch_start(recorder, piped), _patch_matchrecorder(module)]
     if all(ok):
-        _log("[主机模式录像] 已接管：选「OBS 投影」时录投影窗口；虚拟摄像头 / 采集卡先不录")
+        _log("[主机模式录像] 已接管：OBS 投影录投影窗口"
+             + ("；虚拟摄像头 / 采集卡录 Evo 读到的画面" if piped else "；虚拟摄像头 / 采集卡不录"))
 
 
 def _patch_find_window(recorder):
@@ -113,7 +119,7 @@ def _patch_find_window(recorder):
     return True
 
 
-def _patch_start(recorder):
+def _patch_start(recorder, piped=False):
     cls = getattr(recorder, "Recording", None)
     real = getattr(cls, "start", None)
     if real is None:
@@ -123,21 +129,33 @@ def _patch_start(recorder):
         return True
     unavailable = getattr(recorder, "RecordingUnavailable", RuntimeError)
 
+    def system_audio(self):
+        opts = self.options
+        if getattr(opts, "audio_source", "game") == "game":
+            opts.audio_source = "system"
+            _log("[主机模式录像] 电脑上没有 Apex 进程，声音改录电脑上所有的声音", getattr(self, "log", None))
+
     def start(self, apex_pid=None):
         source = _source()
         if source in ("camera", "card"):
             what = "OBS 虚拟摄像头" if source == "camera" else "采集卡"
-            raise unavailable(f"画面来源是{what}，录像暂时只支持整屏和 OBS 投影")
+            if not piped:
+                raise unavailable(f"画面来源是{what}，这一版录不了")
+            from cloud.obs import pipe_recording  # noqa: PLC0415
+            pipe_recording.prepare(self, what, unavailable, getattr(self, "log", None))
+            system_audio(self)
+            try:
+                return real(self, None)  # 没有 Apex 进程：声音按「电脑上所有的声音」录
+            except BaseException:
+                pipe_recording.release(self)
+                raise
         if apex_pid == PROJECTOR:
             opts = self.options
             if getattr(opts, "source", "window") != "window":
                 pass  # 设置里改成了桌面复制、测试画面：照设置来
             elif projector_hwnd() is None:
                 raise unavailable("找不到 OBS 的投影窗口")
-            if getattr(opts, "audio_source", "game") == "game":
-                opts.audio_source = "system"
-                _log("[主机模式录像] 电脑上没有 Apex 进程，声音改录电脑上所有的声音（OBS 投影的声音在里面）",
-                     getattr(self, "log", None))
+            system_audio(self)
         return real(self, apex_pid)
 
     setattr(start, MARK, True)

@@ -583,6 +583,16 @@ def _capture_once(source: str) -> bytes:
 # ---------- 模板片段 ----------
 
 SECTION = """
+    <style>
+    /* 画面来源这一栏的布局（2026-11-23 用户反馈「文字竖排、界面很难看」）：
+       <select> 会按最长的选项（【主机】OBS源投影(需要窗口前台化)）把自己撑得很宽，
+       叠加 .setting-actions.inline 的 flex-shrink:0，会把左边说明文字挤成 0 宽（一字一行）。
+       这里只作用在 #obs：说明至少留 260px，放不下时下拉框和按钮换到下一行，下拉框限宽。 */
+    #obs .setting { flex-wrap: wrap; }
+    #obs .setting-text { flex: 1 1 260px; min-width: 0; }
+    #obs .setting-actions.inline { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; }
+    #obs .setting-actions select { max-width: 260px; }
+    </style>
     {# OBS 画面来源（cloud/obs/）：整屏 / OBS 投影 / OBS 虚拟摄像头。
        插在「提示音」前面（cloud/obs/page.py 的 ANCHOR）。这里只写条件，数据由 app_context_processor 给。 #}
     <section class="card settings-card" aria-labelledby="h-obs" id="obs">

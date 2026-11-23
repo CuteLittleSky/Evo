@@ -91,8 +91,9 @@ def install():
     日志里就不会出现「启动条件已接管」。所以 bootstrap 在 Flask.run 钩子里又补调一次。
     """
     global _INSTALLED, _FINDER
-    # 托盘回调的日志先装上：它和 evo_app 是否已导入无关，越早越好。
-    _patch_icon_run()
+    # 托盘回调的日志：等 pystray 第一次被导入时再装（托盘进程在 evo_app.py 顶部就导入，早于 setup）。
+    # 不主动 import：记录子进程从不用 pystray，主动导入会把它白白带进去（2026-11-24 省内存）
+    _defer_icon_run()
     module = sys.modules.get("evo_app")
     if module is not None and hasattr(module, "Recorder"):
         _after_import(module)
@@ -379,6 +380,15 @@ def _log(message):
             print(message)
         except Exception:
             pass
+
+
+def _defer_icon_run():
+    """pystray 已导入就马上包 Icon.run；还没有就等它被导入时再包（不主动导入）。"""
+    try:
+        from cloud import importhook  # noqa: PLC0415
+        importhook.on_import("pystray", lambda _m: _patch_icon_run(), "obs.trigger 托盘日志")
+    except Exception:  # noqa: BLE001 挂不上就照旧直接包
+        _patch_icon_run()
 
 
 def _patch_icon_run():
