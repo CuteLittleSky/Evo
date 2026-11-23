@@ -57,9 +57,67 @@ LABELS = {
 PARTIAL_SCORE = 0.4
 
 
+# ---- 普通版式（2026-11-23 修：普通局自己那张卡的急救 / 重生一直是「—」）----
+# 普通卡片同样两个行位上写的是「给予急救次数 / 给予重生次数」，而且和外卡**上下对调**：
+#   行位 y≈590：外卡「最后幸存」(respawns) ↔ 普通「给予急救次数」(revives)
+#   行位 y≈660：外卡「自我急救」(revives)  ↔ 普通「给予重生次数」(respawns)
+# （wildcard/rules.py 实测：给予急救次数 标签 y≈596、给予重生次数 标签 y≈666，
+#  和外卡两行的标签高度一致，所以 LINE_TOP 不用另配。）
+# 旧代码只认外卡标签，普通局读不到标签 → `_summarize` 里「框里没有最后幸存就清空」
+# 把普通局的这两项一律清成「—」。现在普通局用下面这套标签 / 框位再读一遍。
+from contextlib import contextmanager    # noqa: E402
+
+NORMAL_LABELS = {
+    "revives": "给予急救次数",
+    "respawns": "给予重生次数",
+}
+NORMAL_ROW_FRAMES = {
+    "revives": [738, 590, 240, 76],
+    "respawns": [738, 660, 240, 76],
+}
+# 普通局的急救 / 重生次数：常见的小数都算「本行的值」
+NORMAL_LABEL_VALUES = {
+    "revives": tuple(str(n) for n in range(10)),
+    "respawns": tuple(str(n) for n in range(10)),
+}
+# 普通版式里「标签在上、上一行数字在下」的是 y≈660 那一行（上一行是急救次数）
+NORMAL_ALLOW_ABOVE = {
+    "respawns": ("0", "1", "2"),
+}
+
+_LAYOUT = ["wildcard"]          # 栈顶是当前版式；默认外卡那套（旧行为不变）
+
+
+@contextmanager
+def layout(name):
+    """临时切换版式：`with rules.layout("normal"): ...`"""
+    _LAYOUT.append(name)
+    try:
+        yield
+    finally:
+        _LAYOUT.pop()
+
+
+def _normal(name):
+    return _LAYOUT[-1] == "normal" and name in NORMAL_LABELS
+
+
+def label_of(name):
+    return NORMAL_LABELS[name] if _normal(name) else LABELS.get(name, "")
+
+
+def own_values(name):
+    return NORMAL_LABEL_VALUES[name] if _normal(name) else LABEL_VALUES.get(name)
+
+
+def allow_above(name):
+    table = NORMAL_ALLOW_ABOVE if _normal(name) else ALLOW_ABOVE
+    return table.get(name) or ()
+
+
 def label_state(name, text):
     """这条文字是不是这一行的标签：`hit` 整段对上、`part` 只对上前半截、`None` 不是。"""
-    label = LABELS.get(name, "")
+    label = label_of(name)
     if label and text.endswith(label):
         return "hit"
     if label and text.endswith(label[:-1]):      # 「击杀/助攻」是「击杀/助攻/击倒」少认了一个字
@@ -76,7 +134,7 @@ def value_state(name, values):
     """
     if not values:
         return None
-    own = LABEL_VALUES.get(name) or ()
+    own = own_values(name) or ()
     return "full" if all(value in own for value in values) else "partial"
 
 
@@ -186,7 +244,8 @@ LOCATOR_FIELDS = ("kda", "survival_time", "revives", "respawns")
 
 def row_frame(field):
     """某个字段的整行框。"""
-    x, y, w, h = ROW_FRAMES.get(field) or [738, 372, 300, 76]
+    table = NORMAL_ROW_FRAMES if _normal(field) else ROW_FRAMES
+    x, y, w, h = table.get(field) or [738, 372, 300, 76]
     return [x, y, w, h]
 
 

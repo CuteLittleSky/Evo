@@ -206,7 +206,42 @@ def _read_rows(engine, img, cfg, save_crops):
             results[name] = read_with_candidates(engine, img, name, spec, base, save_crops)
         else:
             results[name] = read_cell(engine, img, name, spec, base, save_crops)
+    if "revives" in results and "respawns" in results:
+        heard = (_STATE.get("respawns") or {}).get("lines") or []
+        if not any("最后幸存" in t for t in heard):
+            # 不是外卡卡片：按普通版式（给予急救次数 / 给予重生次数，上下对调）再读一遍
+            try:
+                _read_normal_rows(engine, img, base, save_crops, results)
+            except Exception as exc:       # noqa: BLE001  读不到就照旧留空，不影响别的项
+                _log(f"[总结页读数] 普通版式急救/重生读取出错：{exc!r}")
     return results, results["revives"].get("wildcard") or 0
+
+
+def _read_normal_rows(engine, img, base, save_crops, results):
+    """普通卡片的「给予急救次数 / 给予重生次数」（2026-11-23 修：自己那张卡一直是「—」）。
+
+    只有在这一档**读到了普通标签**时才采用读数，并标 `layout=normal`；
+    标签都没读到（控制模式等卡片上根本没有这两行）就保持原样，交给 `_summarize` 清空。
+    外卡那次读数的 `_STATE` 先存一份，普通版式没读到标签时还原，排查信息不丢。
+    """
+    fields = base["fields"]
+    with rules.layout("normal"):
+        for name in ("revives", "respawns"):
+            spec = fields.get(name)
+            if spec is None:
+                continue
+            before_state, before_lines = _STATE.get(name), _LINES.get(name)
+            fresh = read_row(engine, img, name, spec, base, save_crops)
+            if not (_STATE.get(name) or {}).get("label"):
+                if before_state is not None:
+                    _STATE[name] = before_state
+                if before_lines is not None:
+                    _LINES[name] = before_lines
+                continue                       # 这一行没有普通标签：不采用
+            fresh = dict(fresh, layout="normal")
+            if fresh.get("value") is not None:
+                fresh["status"] = "ok"
+            results[name] = fresh
 
 
 def _read_row(engine, img, name, cfg):
@@ -342,7 +377,7 @@ def _take_value(name, spec, cfg, tail, above, lines, state=None, label_index=Non
 
     expect = spec.get("expect", "integer")
     bounds = spec.get("range")                          # 上游用的是 "range"，不是 "bounds"
-    own = rules.LABEL_VALUES.get(name)
+    own = rules.own_values(name)
     replace = (cfg or {}).get("fix_characters") or {}
     fix = lambda text: clean(text, replace)             # noqa: E731  上游的清洗要带替换表
 
@@ -359,10 +394,10 @@ def _take_value(name, spec, cfg, tail, above, lines, state=None, label_index=Non
             continue
         if own is not None and text in own:
             score = rules.PARTIAL_SCORE if state == "part" else 0.9
-            if label_index and text not in (rules.ALLOW_ABOVE.get(name) or ()):
+            if label_index and text not in rules.allow_above(name):
                 # 标签前面还有东西：这条多半是上一行的数字（标签在上、值在下）
                 score = rules.ABOVE_SCORE
-        elif text in (rules.ALLOW_ABOVE.get(name) or ()):
+        elif text in rules.allow_above(name):
             # 值是这类行「上一行的那种数」：可能是撞进框顶的上一行（见 rules 注释）→ 低分
             score = rules.ABOVE_SCORE
         else:
@@ -438,6 +473,8 @@ def _summarize(results, wildcard, *, key_fields, status_text):
         heard = (stats.get("respawns") or {}).get("lines") or []
         if not any("最后幸存" in t for t in heard):
             for name in ("revives", "respawns"):
+                if results[name].get("layout") == "normal":
+                    continue           # 普通版式读到了自己的标签：数是这一行的，保留
                 results[name] = dict(results[name], value=None, score=None,
                                      status="not_found", raw="")
     kda, squad = results.get("kda"), results.get("squad_kills")
