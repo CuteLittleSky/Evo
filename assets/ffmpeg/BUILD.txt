@@ -1,0 +1,31 @@
+Evo 录像用的精简版 ffmpeg 9.0.2（LGPL 2.1 或更新版本，见 licenses/）。
+源码：https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz（SHA-256 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e）
+怎么编的：Evo 的 tools/build_ffmpeg.py（https://github.com/Evo-Apex/Evo），MSYS2 UCRT64、gcc，静态链接 libvpl（Intel）；NVIDIA、AMD 的编码器只用头文件，运行时调用显卡驱动。只带 H.264。
+configure 参数：
+  --disable-everything
+  --disable-autodetect
+  --enable-static
+  --disable-shared
+  --pkg-config-flags=--static
+  --extra-ldflags=-static
+  --extra-libs=-lstdc++
+  --disable-doc
+  --disable-ffplay
+  --disable-ffprobe
+  --disable-network
+  --disable-debug
+  --enable-w32threads
+  --enable-d3d11va
+  --enable-ffnvcodec
+  --enable-nvenc
+  --enable-amf
+  --enable-libvpl
+  --enable-filter=gfxcapture,ddagrab,hwdownload,hwmap,format,settb,setpts,showinfo,scale,null,anull,aresample,aformat,color,testsrc2,realtime,amix,volume
+  --enable-encoder=h264_nvenc,h264_amf,h264_qsv,aac,mjpeg,wrapped_avframe,pcm_s16le
+  --enable-decoder=h264,aac,pcm_s16le,pcm_f32le,wrapped_avframe,rawvideo
+  --enable-muxer=mpegts,mp4,mov,null,image2,pcm_s16le
+  --enable-demuxer=mpegts,mov,wav,rawvideo
+  --enable-indev=lavfi
+  --enable-protocol=file,concat,pipe
+  --enable-parser=h264,aac,mjpeg
+  --enable-bsf=h264_mp4toannexb,aac_adtstoasc,extract_extradata,null
