@@ -51,6 +51,19 @@ PAD_SUMMARY = 12  # 总结页的名字区域往下多留的像素（34 → 46）
 PAD_HUD = 20      # 对局中左下角那两行（28 高的区域 → 48）：够把文字底部留进来
 MIN_SCORE = 0.8   # 名字的置信度门槛：上游 0.9 太严，实测加高后名字分数落在 0.79–0.85（0.9 时读出 4/10，0.8 时 8/10）
 
+# 上游原始尺寸：加高都按「只有还是原值时才改」来做（幂等），避免同一份 cfg 被 _widen 跑两次把框越加越高。
+SUMMARY_NAME_H_OLD = 34   # summary.json teammates.name.roi 的高（原值）
+HUD_NAME_H_OLD = 28       # hud.json teammates.slots[i].name 的高（原值）
+
+# 队友传奇头像（hud.json 的 teammates.slots[0].face）y 坐标偏低的修正（2026-11-24 查第 241 局录像发现的）。
+# 上游 slots[0].face = [62, 772, 66, 70]，但截图里最上面那个队友的脸实际在 y≈738–768，
+# 框偏低了十几像素 → 框到两行之间的空隙，最上面的队友传奇几乎每帧都认不出（实测相似度只有 ~0.36）。
+# 同局中间那个队友（slots[1].face y=838）是准的，能稳定认出 → 说明只是 slot0 一个标偏了。
+# 修正后实测 8 帧里 7 帧认出「万蒂奇」0.78–0.80（剩下 1 帧是观战/复活倒计时界面，布局本来就变，不读）。
+# 只对 teammates.slots[0] 生效（slot1 不动），按「把 y 从旧值挪到新值」做，避免重复偏移。
+FACE0_Y_OLD = 772  # 上游当前值（只在这个值时改，改过就不重复改）
+FACE0_Y_NEW = 754
+
 
 def _log(message):
     if message in _said:
@@ -72,18 +85,29 @@ def _widen(cfg):
     # summary.json： teammates.name.roi（34 高 → 46），并把名字门槛降到 MIN_SCORE（teammates.py 用它）
     name = mates.get("name")
     if isinstance(name, dict) and isinstance(name.get("roi"), list) and len(name["roi"]) == 4:
-        name["roi"] = [name["roi"][0], name["roi"][1], name["roi"][2], name["roi"][3] + PAD_SUMMARY]
+        if name["roi"][3] == SUMMARY_NAME_H_OLD:        # 只从原高改一次，幂等（见 constants 注释）
+            name["roi"] = [name["roi"][0], name["roi"][1], name["roi"][2], SUMMARY_NAME_H_OLD + PAD_SUMMARY]
+            changed += 1
         if "min_score" not in name or name.get("min_score", 0) > MIN_SCORE:
             name["min_score"] = MIN_SCORE
-        changed += 1
+            changed += 1
     # 总结页整体的 min_score（teammates.read_teammates 可能读 cfg["min_score"]）
     if isinstance(cfg.get("min_score"), (int, float)) and cfg["min_score"] > MIN_SCORE:
         cfg["min_score"] = MIN_SCORE
         changed += 1
-    # hud.json：teammates.slots[i].name（28 高 → 56）
+    # hud.json：teammates.slots[i].name（28 高 → 48）
     for slot in mates.get("slots") or []:
         if isinstance(slot, dict) and isinstance(slot.get("name"), list) and len(slot["name"]) == 4:
-            slot["name"] = [slot["name"][0], slot["name"][1], slot["name"][2], slot["name"][3] + PAD_HUD]
+            if slot["name"][3] == HUD_NAME_H_OLD:        # 只从原高改一次，幂等
+                slot["name"] = [slot["name"][0], slot["name"][1], slot["name"][2], HUD_NAME_H_OLD + PAD_HUD]
+                changed += 1
+    # hud.json：teammates.slots[0].face 的 y 偏低（把最上面那个队友的脸框偏到了两行之间）。
+    # 只改 slot0（slot1 是准的），且只在还是上游原值时改一次。
+    slots = mates.get("slots") or []
+    if slots and isinstance(slots[0], dict):
+        face = slots[0].get("face")
+        if isinstance(face, list) and len(face) == 4 and face[1] == FACE0_Y_OLD:
+            slots[0]["face"] = [face[0], FACE0_Y_NEW, face[2], face[3]]
             changed += 1
     return changed
 

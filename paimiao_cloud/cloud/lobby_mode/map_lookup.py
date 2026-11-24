@@ -66,6 +66,13 @@ from cloud import net_hosts
 # 这样自检时把 EVO_CLOUD_SERVER 指到本机假接口，这里也跟着走。
 API_PATH = "/maprotation?evo=true"
 TIMEOUT = 5.0
+# 网络失败时的重试次数与间隔（2026-11-24 加）。
+# 原因：地图回推**一局只算一次**（接在 on_summary_saved 上），之前失败一次这局的地图就永久空着。
+# 实测第 241 局就是撞上一次偶发的 SSL EOF（`UNEXPECTED_EOF_WHILE_READING`），
+# 而同一接口事后连测 8/8 全通 —— 纯属抖动，却丢了一张图。
+# 1.5 秒间隔、最多再试 2 次（共 3 次机会，最坏多花约 10 秒、都在网络线程里），足够扛过抖动，不像「卡住」。
+RETRIES = 2
+RETRY_DELAY = 1.5
 # 同一份响应用多久（秒）。地图轮换最短 15 分钟一片，缓存 5 分钟不会读到过期数据，
 # 又能让「一局结算 + 一局结算」共用一个请求。
 CACHE_TTL = 300.0
@@ -217,20 +224,31 @@ def _api_headers():
 
 
 def fetch(force=False):
-    """拿一份地图轮换数据（带缓存）。失败抛 Unavailable。"""
+    """拿一份地图轮换数据（带缓存）。失败抛 Unavailable。
+
+    网络失败会**短间隔重试**（见 RETRIES / RETRY_DELAY）：地图回推一局只算一次，
+    偶发抖动不能白白丢掉这一局的地图。每次尝试内部仍走 net_hosts 的换线逻辑。
+    """
     now = time.monotonic()
     if not force and _cache["data"] is not None and now - _cache["at"] < CACHE_TTL:
         return _cache["data"]
-    try:
-        req = urllib.request.Request(
-            _api_url(),
-            headers=_api_headers(),
-            method="GET",
-        )
-        with net_hosts.urlopen_with_failover(req, TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        raise Unavailable(str(exc)) from exc
+    last_exc = None
+    for attempt in range(RETRIES + 1):
+        try:
+            req = urllib.request.Request(
+                _api_url(),
+                headers=_api_headers(),
+                method="GET",
+            )
+            with net_hosts.urlopen_with_failover(req, TIMEOUT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < RETRIES:
+                time.sleep(RETRY_DELAY)
+                continue
+            raise Unavailable(str(last_exc)) from last_exc
     if not isinstance(data, dict):
         raise Unavailable("响应不是 JSON 对象")
     _cache["data"], _cache["at"] = data, now
